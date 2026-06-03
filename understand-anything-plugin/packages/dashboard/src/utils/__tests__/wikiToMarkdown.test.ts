@@ -78,7 +78,7 @@ describe("domainPageToMarkdown", () => {
     expect(md).toContain("### Create Order");
     expect(md).toContain("Flow for creating a new order.");
     expect(md).toContain("1. **Validate Input** — Check request payload.");
-    expect(md).toContain("📎 `src/OrderController.java:45-60`");
+    expect(md).toContain("📎 [src/OrderController.java:45-60](source://src/OrderController.java#L45-L60)");
     expect(md).toContain("2. **Save Order** — Persist order to database.");
     const pinCount = (md.match(/📎/g) || []).length;
     expect(pinCount).toBe(1);

@@ -1,0 +1,384 @@
+## Phase 0 — Detection and Prerequisites
+
+### Step 1 — Resolve PROJECT_ROOT and Determine Mode
+
+**Rule: Default is single-service. Batch mode requires explicit `--batch` or `--service=` flag.**
+
+```bash
+WIKI_SESSION_ID="$$-$(date +%s)"
+
+# Determine execution mode — explicit over implicit
+if echo "$ARGUMENTS" | grep -q '\-\-service='; then
+  # --service=<name> implies batch context (running from parent dir targeting a child)
+  MODE="single"
+  SERVICE_NAME=$(echo "$ARGUMENTS" | sed -n 's/.*--service=\([^ ]*\).*/\1/p')
+  PROJECT_ROOT=$(pwd)
+  SERVICE_ROOT="$PROJECT_ROOT/$SERVICE_NAME"
+  if [ ! -d "$SERVICE_ROOT" ]; then
+    echo "Error: Service directory \"${SERVICE_NAME}\" not found in $(pwd)"
+    echo "Available directories:"
+    ls -d */ 2>/dev/null | head -20
+    exit 1
+  fi
+elif echo "$ARGUMENTS" | grep -q '\-\-batch'; then
+  # Explicit batch mode — current directory is parent
+  MODE="batch"
+  PROJECT_ROOT=$(pwd)
+else
+  # DEFAULT: treat current directory as a single service
+  MODE="single"
+  SERVICE_ROOT=$(pwd)
+  SERVICE_NAME=$(basename "$SERVICE_ROOT")
+  PROJECT_ROOT=$(dirname "$SERVICE_ROOT")
+fi
+```
+
+Report the detected mode:
+> `Mode: <single|batch>. Service: <name|all>. Project root: "$PROJECT_ROOT"`
+
+### Step 2 — Worktree Redirect
+
+Apply the same worktree detection logic as `/understand`:
+
+```bash
+COMMON_DIR=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir 2>/dev/null)
+GIT_DIR=$(git -C "$PROJECT_ROOT" rev-parse --git-dir 2>/dev/null)
+if [ -n "$COMMON_DIR" ] && [ -n "$GIT_DIR" ]; then
+  COMMON_ABS=$(cd "$PROJECT_ROOT" && cd "$COMMON_DIR" 2>/dev/null && pwd -P)
+  GIT_ABS=$(cd "$PROJECT_ROOT" && cd "$GIT_DIR" 2>/dev/null && pwd -P)
+  if [ -n "$COMMON_ABS" ] && [ "$COMMON_ABS" != "$GIT_ABS" ]; then
+    MAIN_ROOT=$(dirname "$COMMON_ABS")
+    if [ -d "$MAIN_ROOT" ] && [ "${UNDERSTAND_NO_WORKTREE_REDIRECT:-0}" != "1" ]; then
+      echo "[understand-wiki] Detected git worktree. Redirecting to: $MAIN_ROOT"
+      PROJECT_ROOT="$MAIN_ROOT"
+    fi
+  fi
+fi
+```
+
+### Step 3 — Resolve Plugin Root
+
+```bash
+SKILL_REAL=$(realpath ~/.agents/skills/understand-wiki 2>/dev/null || readlink -f ~/.agents/skills/understand-wiki 2>/dev/null || echo "")
+SELF_RELATIVE=$([ -n "$SKILL_REAL" ] && cd "$SKILL_REAL/../.." 2>/dev/null && pwd || echo "")
+COPILOT_SKILL_REAL=$(realpath ~/.copilot/skills/understand-wiki 2>/dev/null || readlink -f ~/.copilot/skills/understand-wiki 2>/dev/null || echo "")
+COPILOT_SELF_RELATIVE=$([ -n "$COPILOT_SKILL_REAL" ] && cd "$COPILOT_SKILL_REAL/../.." 2>/dev/null && pwd || echo "")
+
+PLUGIN_ROOT=""
+for candidate in \
+  "${CLAUDE_PLUGIN_ROOT}" \
+  "$HOME/.understand-anything-plugin" \
+  "$SELF_RELATIVE" \
+  "$COPILOT_SELF_RELATIVE" \
+  "$HOME/.codex/understand-anything/understand-anything-plugin" \
+  "$HOME/.opencode/understand-anything/understand-anything-plugin" \
+  "$HOME/.pi/understand-anything/understand-anything-plugin" \
+  "$HOME/understand-anything/understand-anything-plugin"; do
+  if [ -n "$candidate" ] && [ -f "$candidate/package.json" ] && [ -f "$candidate/pnpm-workspace.yaml" ]; then
+    PLUGIN_ROOT="$candidate"
+    break
+  fi
+done
+
+if [ -z "$PLUGIN_ROOT" ]; then
+  echo "Error: Cannot find the understand-anything plugin root."
+  exit 1
+fi
+```
+
+### Step 3b — Dry-Run (When `--dry-run` is Present)
+
+If `$ARGUMENTS` contains `--dry-run`, run the planner and **stop** — no wiki-worker dispatch, no file writes:
+
+```bash
+SKILL_DIR="$PLUGIN_ROOT/skills/understand-wiki"
+if [ "$MODE" = "batch" ]; then
+  python3 "$SKILL_DIR/wiki_dry_run.py" "$PROJECT_ROOT"
+else
+  python3 "$SKILL_DIR/wiki_dry_run.py" "$SERVICE_ROOT"
+fi
+```
+
+Print the script output to the user and exit 0. See [Dry-Run Mode](wiki-quality-gate.md#dry-run-mode) for the expected report format.
+
+### Step 4 — Language Configuration
+
+```bash
+SKILL_DIR="$PLUGIN_ROOT/skills/understand-wiki"
+
+# Parse --language flag
+OUTPUT_LANGUAGE=""
+if echo "$ARGUMENTS" | grep -q '\-\-language'; then
+  OUTPUT_LANGUAGE=$(echo "$ARGUMENTS" | sed -n 's/.*--language[= ]\([^ ]*\).*/\1/p')
+fi
+
+# Normalize friendly names to ISO codes
+case "$OUTPUT_LANGUAGE" in
+  chinese) OUTPUT_LANGUAGE="zh" ;;
+  japanese) OUTPUT_LANGUAGE="ja" ;;
+  korean) OUTPUT_LANGUAGE="ko" ;;
+  english) OUTPUT_LANGUAGE="en" ;;
+  spanish) OUTPUT_LANGUAGE="es" ;;
+  french) OUTPUT_LANGUAGE="fr" ;;
+  german) OUTPUT_LANGUAGE="de" ;;
+esac
+
+# Fall back to config, then default
+if [ -z "$OUTPUT_LANGUAGE" ]; then
+  if [ -f "$SERVICE_ROOT/.understand-anything/config.json" ]; then
+    OUTPUT_LANGUAGE=$(python3 "$SKILL_DIR/wiki_json_reader.py" "$SERVICE_ROOT/.understand-anything/config.json" "outputLanguage" "en")
+  else
+    OUTPUT_LANGUAGE="en"
+  fi
+fi
+```
+
+Build `$LANGUAGE_DIRECTIVE`:
+```
+> **Language directive**: Generate all textual content in **{OUTPUT_LANGUAGE}**. Maintain technical accuracy while using natural, native-level phrasing. Keep technical terms in English when no standard translation exists.
+```
+
+### Step 4.5 — RPC Annotations Configuration
+
+Custom RPC frameworks are configured in `$SERVICE_ROOT/.understand-anything/config.json` under the `rpcAnnotations` field. This tells `/understand` (file-analyzer) which annotation pairs map to provider/consumer roles so the knowledge graph gets `provides_rpc` / `consumes_rpc` edges for cross-service matching.
+
+**Schema** — `rpcAnnotations` is an array of objects:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `provider` | string | yes | Provider annotation class name (e.g. `"@MoaProvider"`, `"@DubboService"`) |
+| `consumer` | string | yes | Consumer annotation class name (e.g. `"@MoaConsumer"`, `"@DubboReference"`) |
+| `type` | string | yes | Framework identifier used in graph tags and matchers (e.g. `"moa"`, `"dubbo"`, `"grpc"`) |
+| `interfaceField` | string | no | Annotation attribute that holds the RPC interface name; defaults to `"value"` |
+
+**Example `config.json`:**
+
+Parent-level batch config may also set `excludeServices` (basename list, case-sensitive) to skip shared libraries during service discovery:
+
+```json
+{ "excludeServices": ["common", "shared", "libs", "tools"] }
+```
+
+Service-level RPC annotations:
+
+```json
+{
+  "outputLanguage": "zh",
+  "rpcAnnotations": [
+    { "provider": "@DubboService", "consumer": "@DubboReference", "type": "dubbo" },
+    { "provider": "@MoaProvider", "consumer": "@MoaConsumer", "type": "moa", "interfaceField": "service" },
+    { "provider": "@GrpcService", "consumer": "@GrpcClient", "type": "grpc" }
+  ]
+}
+```
+
+**Behavior:**
+- Missing or empty `rpcAnnotations` → backward compatible; file-analyzer treats RPC annotations as ordinary dependencies; cross-service script matching has no RPC edges to match.
+- Non-empty `rpcAnnotations` → passed to wiki-worker and `/understand` so analyzers emit `provides_rpc` / `consumes_rpc` edges; `cross-service-matcher.py` matches consumers to providers by interface name across services.
+
+**Load and validate** (optional sanity check before generation):
+
+```bash
+python3 "$PLUGIN_ROOT/skills/understand-wiki/wiki_config_validator.py" \
+  "$SERVICE_ROOT/.understand-anything/config.json"
+```
+
+Or from Python: `load_and_merge_config(path)` returns `(config, valid, errors)`; invalid configs should be reported to the user before proceeding.
+
+**Resolve `$RPC_ANNOTATIONS` for dispatch:**
+
+```bash
+SKILL_DIR="$PLUGIN_ROOT/skills/understand-wiki"
+RPC_ANNOTATIONS="null"
+if [ -f "$SERVICE_ROOT/.understand-anything/config.json" ]; then
+  RPC_ANNOTATIONS=$(python3 "$SKILL_DIR/wiki_json_reader.py" "$SERVICE_ROOT/.understand-anything/config.json" "rpcAnnotations" "null")
+fi
+```
+
+### Step 5 — Prerequisite Verification (per service)
+
+For each target service (1 in single mode, N in batch mode):
+
+```bash
+SERVICE_UA="$SERVICE_ROOT/.understand-anything"
+
+# Check knowledge graph
+if [ ! -f "$SERVICE_UA/knowledge-graph.json" ]; then
+  echo "[understand-wiki] Service \"${SERVICE_NAME}\" has no knowledge graph."
+  echo "[understand-wiki] Triggering /understand for \"${SERVICE_NAME}\"..."
+  # Dispatch /understand on the service (the dispatching agent should handle this)
+  # After completion, verify KG exists
+  if [ ! -f "$SERVICE_UA/knowledge-graph.json" ]; then
+    echo "Error: /understand failed for \"${SERVICE_NAME}\". Cannot generate Wiki without KG."
+    exit 1
+  fi
+fi
+
+# Check domain graph
+if [ ! -f "$SERVICE_UA/domain-graph.json" ]; then
+  echo "[understand-wiki] Service \"${SERVICE_NAME}\" has no domain graph."
+  echo "[understand-wiki] Triggering /understand-domain for \"${SERVICE_NAME}\"..."
+  # Dispatch /understand-domain on the service
+  if [ ! -f "$SERVICE_UA/domain-graph.json" ]; then
+    echo "Error: /understand-domain failed for \"${SERVICE_NAME}\". Cannot generate Wiki without DG."
+    exit 1
+  fi
+fi
+```
+
+### Step 5a — Upstream KG/DG Staleness Check
+
+After KG and DG exist, verify they were generated from the current git HEAD. Wiki `meta.json` can be updated to the latest commit while graphs still reflect an older tree (silent stale upstream).
+
+Skip when `--force` is set:
+
+```bash
+SKILL_DIR="$PLUGIN_ROOT/skills/understand-wiki"
+
+if ! echo "$ARGUMENTS" | grep -q '\-\-force'; then
+  STALE_JSON=$(python3 "$SKILL_DIR/wiki_staleness_check.py" "$SERVICE_ROOT" 2>/dev/null)
+  if [ -n "$STALE_JSON" ]; then
+    KG_STALE=$(echo "$STALE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('should_regenerate',{}).get('kg') else 'false')")
+    DG_STALE=$(echo "$STALE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('should_regenerate',{}).get('dg') else 'false')")
+    echo "$STALE_JSON" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for w in d.get('warnings', []):
+    print(f'[understand-wiki] WARNING: {w}')
+"
+    if [ "$KG_STALE" = "true" ] || [ "$DG_STALE" = "true" ]; then
+      echo "[understand-wiki] Upstream data may be stale. Regenerate before Wiki generation:"
+      [ "$KG_STALE" = "true" ] && echo "  → Run /understand on \"${SERVICE_NAME}\" (knowledge graph)"
+      [ "$DG_STALE" = "true" ] && echo "  → Run /understand-domain on \"${SERVICE_NAME}\" (domain graph)"
+      echo "[understand-wiki] Use --force to skip this check and proceed anyway."
+      exit 1
+    fi
+  fi
+else
+  echo "[understand-wiki] --force: skipping upstream staleness check."
+fi
+```
+
+Commit hashes are read from `project.gitCommitHash` in each graph (or `meta.generatedFromCommit` / `.understand-anything/meta.json` as fallback). Compared with `git -C "$SERVICE_ROOT" rev-parse HEAD`.
+
+### Step 5b — Save DG Snapshot (for incremental diff)
+
+Before upstream triggers modify the DG, save a snapshot for later comparison:
+
+```bash
+DG_PATH="$SERVICE_UA/domain-graph.json"
+DG_SNAPSHOT="$SERVICE_UA/wiki/domain-graph.snapshot.json"
+
+if [ -f "$DG_PATH" ] && [ -f "$SERVICE_UA/wiki/meta.json" ]; then
+  mkdir -p "$SERVICE_UA/wiki"
+  cp "$DG_PATH" "$DG_SNAPSHOT"
+  echo "[understand-wiki] DG snapshot saved for incremental diff."
+else
+  echo "[understand-wiki] No existing wiki — will run full generation."
+fi
+```
+
+### Step 6 — Wiki State Check + Incremental Decision
+
+```bash
+SKILL_DIR="$PLUGIN_ROOT/skills/understand-wiki"
+WIKI_META="$SERVICE_UA/wiki/meta.json"
+DG_SNAPSHOT="$SERVICE_UA/wiki/domain-graph.snapshot.json"
+INCREMENTAL=false
+DIRTY_DOMAINS=""
+
+if [ -f "$WIKI_META" ] && ! echo "$ARGUMENTS" | grep -q '\-\-full'; then
+  WIKI_COMMIT=$(python3 "$SKILL_DIR/wiki_json_reader.py" "$WIKI_META" "gitCommitHash" "")
+  CURRENT_COMMIT=$(git -C "$SERVICE_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+  
+  if [ "$WIKI_COMMIT" = "$CURRENT_COMMIT" ] && [ -n "$WIKI_COMMIT" ]; then
+    echo "[understand-wiki] Wiki for \"${SERVICE_NAME}\" is up to date (commit: ${WIKI_COMMIT:0:8})."
+    echo "[understand-wiki] Use --full to force regeneration."
+    if [ "$MODE" = "single" ]; then
+      echo "Wiki is current. Options: (a) force rebuild with --full, (b) run --review only, (c) skip"
+    fi
+    # Skip to next service (batch) or stop (single)
+  elif [ -f "$DG_SNAPSHOT" ]; then
+    # DG exists and commit changed — attempt incremental update
+    DIFF_RESULT=$(python3 "$SKILL_DIR/wiki_diff_domains.py" \
+      --old "$DG_SNAPSHOT" \
+      --new "$SERVICE_UA/domain-graph.json" \
+      --kg "$SERVICE_UA/knowledge-graph.json" 2>&1)
+    DIFF_EXIT=$?
+    
+    if [ $DIFF_EXIT -ne 0 ]; then
+      echo "[understand-wiki] Incremental skipped: diff script error. Running full generation."
+    else
+      MODIFIED_COUNT=$(echo "$DIFF_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d['added'])+len(d['modified']))")
+      TOTAL_COUNT=$(echo "$DIFF_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d['added'])+len(d['modified'])+len(d['unchanged']))")
+      
+      if [ "$TOTAL_COUNT" -gt 0 ] && [ $((MODIFIED_COUNT * 100 / TOTAL_COUNT)) -gt 80 ]; then
+        echo "[understand-wiki] Incremental skipped: ${MODIFIED_COUNT}/${TOTAL_COUNT} domains modified (>80%). Running full generation."
+      elif [ "$MODIFIED_COUNT" -eq 0 ]; then
+        echo "[understand-wiki] No domain changes detected. Updating meta.json commit hash only."
+        INCREMENTAL=true
+        DIRTY_DOMAINS=""
+      else
+        INCREMENTAL=true
+        DIRTY_DOMAINS=$(echo "$DIFF_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(d['added']+d['modified']))")
+        echo "[understand-wiki] Incremental update: regenerating ${MODIFIED_COUNT} domain(s): $DIRTY_DOMAINS"
+      fi
+    fi
+  fi
+fi
+```
+
+### Step 7 — Build Service List (Batch Mode Only)
+
+```bash
+SKILL_DIR="$PLUGIN_ROOT/skills/understand-wiki"
+
+if [ "$MODE" = "batch" ]; then
+  EXCLUDE_SERVICES="[]"
+  PARENT_CONFIG="$PROJECT_ROOT/.understand-anything/config.json"
+  if [ -f "$PARENT_CONFIG" ]; then
+    EXCLUDE_SERVICES=$(python3 "$SKILL_DIR/wiki_json_reader.py" "$PARENT_CONFIG" "excludeServices" "[]")
+  fi
+
+  SERVICES=()
+  for dir in "$PROJECT_ROOT"/*/; do
+    dir_name=$(basename "$dir")
+    # Skip hidden dirs and common non-service dirs
+    case "$dir_name" in
+      .*|node_modules|dist|build|target|docs|scripts|tools) continue ;;
+    esac
+    # Skip directories listed in parent excludeServices (basename match, case-sensitive)
+    if echo "$EXCLUDE_SERVICES" | python3 -c "import sys,json; ex=set(json.load(sys.stdin)); print('skip' if sys.argv[1] in ex else 'ok')" "$dir_name" 2>/dev/null | grep -q skip; then
+      continue
+    fi
+    # Detect service indicators
+    if [ -d "$dir/.understand-anything" ] || [ -f "$dir/pom.xml" ] || [ -f "$dir/package.json" ] || [ -f "$dir/go.mod" ] || [ -f "$dir/Cargo.toml" ]; then
+      SERVICES+=("$dir_name")
+    fi
+  done
+  
+  echo "[understand-wiki] Found ${#SERVICES[@]} candidate services:"
+  printf "  - %s\n" "${SERVICES[@]}"
+  
+  # Filter to services that need generation
+  SERVICES_TO_GENERATE=()
+  for svc in "${SERVICES[@]}"; do
+    svc_meta="$PROJECT_ROOT/$svc/.understand-anything/wiki/meta.json"
+    if [ ! -f "$svc_meta" ] || echo "$ARGUMENTS" | grep -q '\-\-full'; then
+      SERVICES_TO_GENERATE+=("$svc")
+    else
+      svc_commit=$(python3 "$SKILL_DIR/wiki_json_reader.py" "$svc_meta" "gitCommitHash" "")
+      current=$(git -C "$PROJECT_ROOT/$svc" rev-parse HEAD 2>/dev/null || echo "unknown")
+      if [ "$svc_commit" != "$current" ]; then
+        SERVICES_TO_GENERATE+=("$svc")
+      fi
+    fi
+  done
+  
+  echo "[understand-wiki] Services needing Wiki generation: ${#SERVICES_TO_GENERATE[@]}"
+  if [ ${#SERVICES_TO_GENERATE[@]} -eq 0 ]; then
+    echo "All services up to date. Use --full to force regeneration."
+    # Skip to Phase 2 (parent update) if any services are already integrated
+  fi
+fi
+```

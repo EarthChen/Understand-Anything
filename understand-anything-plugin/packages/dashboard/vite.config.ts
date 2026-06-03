@@ -181,7 +181,11 @@ function readSourceFile(url: URL) {
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["src/**/__tests__/**/*.test.ts"],
+    environmentMatchGlobs: [
+      ["src/**/__tests__/**/*.test.tsx", "jsdom"],
+    ],
+    include: ["src/**/__tests__/**/*.test.{ts,tsx}"],
+    setupFiles: ["src/__tests__/setup-dom.ts"],
     alias: {
       "@understand-anything/core/schema": path.resolve(__dirname, "../core/src/schema.ts"),
       "@understand-anything/core/search": path.resolve(__dirname, "../core/src/search.ts"),
@@ -319,7 +323,11 @@ export default defineConfig({
               const q = url.searchParams.get("q") ?? "";
               const rawLimit = parseInt(url.searchParams.get("limit") ?? "20", 10);
               const limit = Math.min(100, Math.max(1, Number.isNaN(rawLimit) ? 20 : rawLimit));
-              sendJson(res, 200, ws.search(q, limit));
+              void ws.search(q, limit).then(
+                (results) => sendJson(res, 200, results),
+                (err: unknown) =>
+                  sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) }),
+              );
               return;
             }
             if (apiPath === "/source") {

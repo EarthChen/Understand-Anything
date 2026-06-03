@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import Fuse from "fuse.js";
 import { WikiDataService } from "../../wiki-api";
 
 function createTempDir(): string {
@@ -172,12 +173,12 @@ describe("WikiDataService", () => {
   });
 
   describe("search", () => {
-    it("returns empty for blank query", () => {
+    it("returns empty for blank query", async () => {
       const svc = new WikiDataService(tmpDir);
-      expect(svc.search("")).toEqual([]);
+      await expect(svc.search("")).resolves.toEqual([]);
     });
 
-    it("finds matching wiki pages by name", () => {
+    it("finds matching wiki pages by name", async () => {
       writeJson(path.join(tmpDir, "order-svc/.understand-anything/wiki/meta.json"), {
         gitCommitHash: "a", generatedAt: "t", version: "1", outputLanguage: "en",
       });
@@ -189,12 +190,12 @@ describe("WikiDataService", () => {
       });
 
       const svc = new WikiDataService(tmpDir);
-      const results = svc.search("order");
+      const results = await svc.search("order");
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].name).toBe("Order Management");
     });
 
-    it("respects limit parameter", () => {
+    it("respects limit parameter", async () => {
       writeJson(path.join(tmpDir, "svc/.understand-anything/wiki/meta.json"), {
         gitCommitHash: "a", generatedAt: "t", version: "1", outputLanguage: "en",
       });
@@ -204,8 +205,157 @@ describe("WikiDataService", () => {
       writeJson(path.join(tmpDir, "svc/.understand-anything/wiki/index.json"), { entries });
 
       const svc = new WikiDataService(tmpDir);
-      const results = svc.search("Item", 5);
+      const results = await svc.search("Item", 5);
       expect(results.length).toBeLessThanOrEqual(5);
+    });
+  });
+
+  describe("json cache", () => {
+    function setupParentWiki(): void {
+      writeJson(path.join(tmpDir, ".understand-anything/wiki/meta.json"), {
+        gitCommitHash: "a", generatedAt: "t", version: "1", outputLanguage: "en",
+      });
+      writeJson(path.join(tmpDir, ".understand-anything/wiki/overview.json"), {
+        name: "My System",
+        description: "A test system",
+        services: [],
+        techStack: [],
+      });
+    }
+
+    it("returns same data on repeated reads", () => {
+      setupParentWiki();
+      const svc = new WikiDataService(tmpDir);
+      const first = svc.getOverview();
+      const second = svc.getOverview();
+      expect(first).toEqual(second);
+      expect(first!.name).toBe("My System");
+    });
+
+    it("invalidates cache after TTL expires", () => {
+      vi.useFakeTimers();
+      setupParentWiki();
+      const svc = new WikiDataService(tmpDir, { cacheTtlMs: 60_000 });
+
+      expect(svc.getOverview()!.name).toBe("My System");
+
+      const readSpy = vi.spyOn(fs, "readFileSync");
+      const readsAfterFirst = readSpy.mock.calls.length;
+      svc.getOverview();
+      expect(readSpy.mock.calls.length).toBe(readsAfterFirst);
+
+      writeJson(path.join(tmpDir, ".understand-anything/wiki/overview.json"), {
+        name: "Updated System",
+        description: "Updated",
+        services: [],
+        techStack: [],
+      });
+
+      vi.advanceTimersByTime(61_000);
+      expect(svc.getOverview()!.name).toBe("Updated System");
+
+      readSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it("invalidates cache when file mtime changes", () => {
+      setupParentWiki();
+      const overviewPath = path.join(tmpDir, ".understand-anything/wiki/overview.json");
+      const svc = new WikiDataService(tmpDir);
+
+      expect(svc.getOverview()!.name).toBe("My System");
+
+      writeJson(overviewPath, {
+        name: "Mtime Updated",
+        description: "Changed on disk",
+        services: [],
+        techStack: [],
+      });
+      const future = new Date(Date.now() + 60_000);
+      fs.utimesSync(overviewPath, future, future);
+
+      expect(svc.getOverview()!.name).toBe("Mtime Updated");
+    });
+
+    it("evicts oldest entries when maxCacheSize is exceeded", () => {
+      setupParentWiki();
+      writeJson(path.join(tmpDir, ".understand-anything/wiki/architecture.json"), {
+        name: "Arch A",
+        description: "First architecture",
+        layers: [],
+      });
+      writeJson(path.join(tmpDir, ".understand-anything/wiki/index.json"), {
+        entries: [{ id: "wiki:overview", name: "Overview", type: "overview", summary: "Index entry" }],
+      });
+
+      const svc = new WikiDataService(tmpDir, { maxCacheSize: 2 });
+
+      svc.getOverview();
+      svc.getArchitecture();
+      svc.getGlobalIndex(); // should evict overview (oldest)
+
+      writeJson(path.join(tmpDir, ".understand-anything/wiki/overview.json"), {
+        name: "Evicted And Reloaded",
+        description: "After eviction",
+        services: [],
+        techStack: [],
+      });
+
+      expect(svc.getOverview()!.name).toBe("Evicted And Reloaded");
+    });
+  });
+
+  describe("async search", () => {
+    function setupSearchWiki(): void {
+      writeJson(path.join(tmpDir, "order-svc/.understand-anything/wiki/meta.json"), {
+        gitCommitHash: "a", generatedAt: "t", version: "1", outputLanguage: "en",
+      });
+      writeJson(path.join(tmpDir, "order-svc/.understand-anything/wiki/index.json"), {
+        entries: [
+          { id: "wiki:order", name: "Order Management", type: "domain", summary: "Manages orders" },
+        ],
+      });
+    }
+
+    it("returns correct results asynchronously", async () => {
+      setupSearchWiki();
+      const svc = new WikiDataService(tmpDir);
+      const results = await svc.search("order");
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].name).toBe("Order Management");
+    });
+
+    it("caches recent search results within TTL", async () => {
+      vi.useFakeTimers();
+      setupSearchWiki();
+      const svc = new WikiDataService(tmpDir);
+      const fuseSearch = vi.spyOn(Fuse.prototype, "search");
+
+      const first = await svc.search("order");
+      const second = await svc.search("order");
+
+      expect(first).toEqual(second);
+      expect(fuseSearch).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(31_000);
+      await svc.search("order");
+      expect(fuseSearch).toHaveBeenCalledTimes(2);
+
+      fuseSearch.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it("clears search cache when wiki cache is invalidated", async () => {
+      setupSearchWiki();
+      const svc = new WikiDataService(tmpDir);
+      const fuseSearch = vi.spyOn(Fuse.prototype, "search");
+
+      await svc.search("order");
+      svc.invalidateCache();
+      await svc.search("order");
+
+      expect(fuseSearch).toHaveBeenCalledTimes(2);
+      fuseSearch.mockRestore();
     });
   });
 

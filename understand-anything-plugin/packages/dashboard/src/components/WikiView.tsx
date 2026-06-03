@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { useDashboardStore } from "../store";
 import {
   serviceOverviewToMarkdown,
@@ -310,7 +310,16 @@ function WikiContent({
   return (
     <div className="flex-1 overflow-y-auto p-6 max-w-3xl">
       <article className="prose prose-sm prose-invert max-w-none wiki-markdown">
-        <ReactMarkdown components={components}>{markdown}</ReactMarkdown>
+        <ReactMarkdown
+          urlTransform={(url) =>
+            url.startsWith("source://") || url.startsWith("wiki://")
+              ? url
+              : defaultUrlTransform(url)
+          }
+          components={components}
+        >
+          {markdown}
+        </ReactMarkdown>
       </article>
     </div>
   );
@@ -362,6 +371,7 @@ export default function WikiView({ accessToken }: { accessToken: string }) {
       return;
     }
     setWikiLoading(true);
+    setWikiPageContent(null);
     const controller = new AbortController();
 
     let endpoint = "";
@@ -410,6 +420,8 @@ export default function WikiView({ accessToken }: { accessToken: string }) {
   const handleSelect = useCallback(
     (page: { type: WikiPageType; id: string; service?: string }) => {
       setWikiActivePage(page);
+      setWikiPageContent(null);
+      setWikiLoading(true);
 
       // Build breadcrumb
       const crumbs: Array<{ label: string; page: { type: string; id: string; service?: string } | null }> = [];
@@ -423,7 +435,7 @@ export default function WikiView({ accessToken }: { accessToken: string }) {
       crumbs.push({ label: entry?.name ?? page.id, page: null });
       setWikiBreadcrumb(crumbs);
     },
-    [setWikiActivePage, setWikiBreadcrumb, wikiIndex, wikiTopology],
+    [setWikiActivePage, setWikiPageContent, setWikiLoading, setWikiBreadcrumb, wikiIndex, wikiTopology],
   );
 
   const handleBreadcrumbNav = useCallback(

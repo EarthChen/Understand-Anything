@@ -41,10 +41,13 @@ export function serviceOverviewToMarkdown(overview: WikiServiceOverview): string
 function flowStepToMarkdown(step: WikiFlowStep): string {
   let line = `${step.order}. **${step.name}** — ${step.description}`;
   if (step.sourceRef) {
-    const range = step.sourceRef.lineRange
-      ? `:${step.sourceRef.lineRange[0]}-${step.sourceRef.lineRange[1]}`
+    const hash = step.sourceRef.lineRange
+      ? `#L${step.sourceRef.lineRange[0]}-L${step.sourceRef.lineRange[1]}`
       : "";
-    line += `\n   📎 \`${step.sourceRef.file}${range}\``;
+    const label = step.sourceRef.lineRange
+      ? `${step.sourceRef.file}:${step.sourceRef.lineRange[0]}-${step.sourceRef.lineRange[1]}`
+      : step.sourceRef.file;
+    line += `\n   📎 [${label}](source://${step.sourceRef.file}${hash})`;
   }
   return line;
 }

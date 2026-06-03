@@ -24,6 +24,25 @@ interface WikiSearchDocument {
   content?: string;
 }
 
+export interface WikiDataServiceOptions {
+  /** TTL for JSON file cache entries (default: 5 minutes). */
+  cacheTtlMs?: number;
+  /** Maximum number of cached JSON files (default: 100). */
+  maxCacheSize?: number;
+}
+
+interface JsonCacheEntry {
+  data: unknown;
+  cachedAt: number;
+  lastAccessedAt: number;
+  fileMtimeMs: number;
+}
+
+interface SearchCacheEntry {
+  results: WikiSearchResult[];
+  cachedAt: number;
+}
+
 const SEARCH_FUSE_OPTIONS: IFuseOptions<WikiSearchDocument> = {
   keys: [
     { name: "name", weight: 0.35 },
@@ -36,14 +55,27 @@ const SEARCH_FUSE_OPTIONS: IFuseOptions<WikiSearchDocument> = {
   ignoreLocation: true,
 };
 
+const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_MAX_CACHE_SIZE = 100;
+const SEARCH_CACHE_TTL_MS = 30 * 1000;
+const SEARCH_CACHE_MAX_ENTRIES = 10;
+const SEARCH_YIELD_CHUNK_SIZE = 10;
+
 export class WikiDataService {
   private projectRoot: string;
+  private cacheTtlMs: number;
+  private maxCacheSize: number;
   private topology: WikiTopology | null = null;
+  private topologyCachedAt: number | null = null;
+  private jsonCache = new Map<string, JsonCacheEntry>();
   private searchIndex: Fuse<WikiSearchDocument> | null = null;
   private searchDocs: WikiSearchDocument[] = [];
+  private searchResultCache = new Map<string, SearchCacheEntry>();
 
-  constructor(projectRoot: string) {
+  constructor(projectRoot: string, options?: WikiDataServiceOptions) {
     this.projectRoot = projectRoot;
+    this.cacheTtlMs = options?.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
+    this.maxCacheSize = options?.maxCacheSize ?? DEFAULT_MAX_CACHE_SIZE;
   }
 
   getProjectRoot(): string {
@@ -51,7 +83,13 @@ export class WikiDataService {
   }
 
   discoverWikis(): WikiTopology {
-    if (this.topology) return this.topology;
+    if (
+      this.topology &&
+      this.topologyCachedAt !== null &&
+      this.now() - this.topologyCachedAt <= this.cacheTtlMs
+    ) {
+      return this.topology;
+    }
 
     const parentWikiDir = path.join(this.projectRoot, ".understand-anything", "wiki");
     const hasParentWiki = fs.existsSync(path.join(parentWikiDir, "meta.json"));
@@ -83,6 +121,7 @@ export class WikiDataService {
       parentWikiDir: hasParentWiki ? parentWikiDir : null,
       services,
     };
+    this.topologyCachedAt = this.now();
     return this.topology;
   }
 
@@ -160,21 +199,42 @@ export class WikiDataService {
     return this.readJson<WikiDomainPage>(path.join(svc.wikiDir, "domains", `${slug}.json`));
   }
 
-  search(query: string, limit = 20): WikiSearchResult[] {
-    if (!query.trim()) return [];
+  async search(query: string, limit = 20): Promise<WikiSearchResult[]> {
+    const trimmed = query.trim();
+    if (!trimmed) return Promise.resolve([]);
+
+    const cacheKey = `${trimmed}\0${limit}`;
+    const cached = this.searchResultCache.get(cacheKey);
+    if (cached && this.now() - cached.cachedAt <= SEARCH_CACHE_TTL_MS) {
+      return cached.results;
+    }
+
+    await Promise.resolve();
     this.ensureSearchIndex();
     if (!this.searchIndex) return [];
 
-    const results = this.searchIndex.search(query.trim());
-    return results.slice(0, limit).map((r) => ({
-      id: r.item.id,
-      name: r.item.name,
-      type: r.item.type,
-      service: r.item.service,
-      summary: r.item.summary,
-      score: r.score ?? 0,
-      matchSnippet: r.item.summary.slice(0, 120),
-    }));
+    const rawResults = this.searchIndex.search(trimmed);
+    const sliced = rawResults.slice(0, limit);
+
+    const results: WikiSearchResult[] = [];
+    for (let i = 0; i < sliced.length; i++) {
+      if (i > 0 && i % SEARCH_YIELD_CHUNK_SIZE === 0) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      const r = sliced[i];
+      results.push({
+        id: r.item.id,
+        name: r.item.name,
+        type: r.item.type,
+        service: r.item.service,
+        summary: r.item.summary,
+        score: r.score ?? 0,
+        matchSnippet: r.item.summary.slice(0, 120),
+      });
+    }
+
+    this.setSearchCacheEntry(cacheKey, results);
+    return results;
   }
 
   getRelated(pageId: string): { pages: WikiIndexEntry[]; sourceRefs: Array<{ file: string; lineRange?: [number, number] }> } {
@@ -228,8 +288,69 @@ export class WikiDataService {
 
   invalidateCache(): void {
     this.topology = null;
+    this.topologyCachedAt = null;
+    this.jsonCache.clear();
     this.searchIndex = null;
     this.searchDocs = [];
+    this.searchResultCache.clear();
+  }
+
+  private now(): number {
+    return Date.now();
+  }
+
+  private getFileMtimeMs(filePath: string): number {
+    try {
+      return fs.statSync(filePath).mtimeMs;
+    } catch {
+      return 0;
+    }
+  }
+
+  private isCacheEntryValid(filePath: string, entry: JsonCacheEntry): boolean {
+    if (this.now() - entry.cachedAt > this.cacheTtlMs) return false;
+    const mtime = this.getFileMtimeMs(filePath);
+    return mtime <= entry.fileMtimeMs;
+  }
+
+  private evictOldestCacheEntry(): void {
+    let oldestKey: string | null = null;
+    let oldestAccess = Infinity;
+    for (const [key, entry] of this.jsonCache) {
+      if (entry.lastAccessedAt < oldestAccess) {
+        oldestAccess = entry.lastAccessedAt;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey !== null) this.jsonCache.delete(oldestKey);
+  }
+
+  private setCacheEntry(filePath: string, data: unknown, fileMtimeMs: number): void {
+    const now = this.now();
+    this.jsonCache.set(filePath, {
+      data,
+      cachedAt: now,
+      lastAccessedAt: now,
+      fileMtimeMs,
+    });
+    while (this.jsonCache.size > this.maxCacheSize) {
+      this.evictOldestCacheEntry();
+    }
+  }
+
+  private setSearchCacheEntry(key: string, results: WikiSearchResult[]): void {
+    if (this.searchResultCache.size >= SEARCH_CACHE_MAX_ENTRIES) {
+      let oldestKey: string | null = null;
+      let oldestAt = Infinity;
+      for (const [k, entry] of this.searchResultCache) {
+        if (entry.cachedAt < oldestAt) {
+          oldestAt = entry.cachedAt;
+          oldestKey = k;
+        }
+      }
+      if (oldestKey !== null) this.searchResultCache.delete(oldestKey);
+    }
+    this.searchResultCache.set(key, { results, cachedAt: this.now() });
   }
 
   private ensureSearchIndex(): void {
@@ -303,7 +424,17 @@ export class WikiDataService {
   private readJson<T>(filePath: string): T | null {
     try {
       if (!fs.existsSync(filePath)) return null;
-      return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+
+      const cached = this.jsonCache.get(filePath);
+      if (cached && this.isCacheEntryValid(filePath, cached)) {
+        cached.lastAccessedAt = this.now();
+        return cached.data as T;
+      }
+
+      const fileMtimeMs = this.getFileMtimeMs(filePath);
+      const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+      this.setCacheEntry(filePath, data, fileMtimeMs);
+      return data;
     } catch {
       return null;
     }
