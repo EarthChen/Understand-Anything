@@ -36,6 +36,36 @@ When analyzing a Spring Boot project, apply these additional conventions on top 
 
 **@Configuration bean definitions** — When a `@Configuration` class defines `@Bean` methods, create `configures` edges from the configuration class to the types it produces. These beans become available for injection throughout the application.
 
+### RPC Annotation Patterns (MOA / Dubbo)
+
+When the project config contains `rpcAnnotations`, apply these additional rules to recognize RPC service boundaries:
+
+**MOA framework (`@MoaProvider` / `@MoaConsumer`):**
+
+| Annotation | Role | Node Handling | Edge |
+|---|---|---|---|
+| `@MoaProvider` on a class implementing an interface | RPC service provider | Classify node as `service` type, add tags `rpc-provider`, `moa`; summary MUST list the interface name and exposed methods | `provides_rpc` edge: provider class → interface node (weight: 0.9) |
+| `@MoaConsumer` on an injected field/parameter | RPC service consumer | Keep the containing class's normal type; add tag `rpc-consumer` | `consumes_rpc` edge: consumer class → interface node (weight: 0.8) |
+
+**Dubbo framework (`@DubboService` / `@DubboReference`):**
+
+| Annotation | Role | Node Handling | Edge |
+|---|---|---|---|
+| `@DubboService` on a class implementing an interface | RPC service provider | Same as `@MoaProvider` above, with tag `dubbo` | `provides_rpc` edge (weight: 0.9) |
+| `@DubboReference` on an injected field | RPC service consumer | Same as `@MoaConsumer` above | `consumes_rpc` edge (weight: 0.8) |
+
+**Edge weight conventions for RPC:**
+- `provides_rpc`: 0.9 (strong structural relationship, same as `inherits`)
+- `consumes_rpc`: 0.8 (runtime dependency, same as `calls`)
+
+**Important behavioral rules:**
+1. When a class annotated with `@MoaProvider` or `@DubboService` implements an interface, create a `service` node for that class (not a `file` or `class` node), with the interface name in the summary.
+2. For `@MoaConsumer` / `@DubboReference` fields, create `consumes_rpc` edges from the class containing the injection to the interface being consumed. Do NOT create a plain `depends_on` edge for these — use `consumes_rpc` exclusively.
+3. The interface node (target of both `provides_rpc` and `consumes_rpc`) uses the ID format `class:<path>:<InterfaceName>`. If the interface definition file is not in this batch, emit the edge anyway — the merge script will resolve or drop it.
+4. In the provider node's summary, explicitly list all methods declared in the RPC interface (e.g., "Implements PaymentFacade RPC interface: createPayment(), queryPayment(), refund()"). This enables downstream cross-service matching at method level.
+
+**Detection logic:** Only apply RPC annotation rules when the dispatch prompt includes `rpcAnnotations` configuration. If `rpcAnnotations` is absent or empty, treat `@MoaProvider`/`@MoaConsumer`/`@DubboService`/`@DubboReference` as ordinary annotations (plain `depends_on` edges).
+
 ### Architectural Layers for Spring Boot
 
 Assign nodes to these layers when detected:

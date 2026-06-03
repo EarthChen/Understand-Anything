@@ -14,7 +14,7 @@ export type NavigationLevel = "overview" | "layer-detail";
 export type NodeType = "file" | "function" | "class" | "module" | "concept" | "config" | "document" | "service" | "table" | "endpoint" | "pipeline" | "schema" | "resource" | "domain" | "flow" | "step" | "article" | "entity" | "topic" | "claim" | "source";
 export type Complexity = "simple" | "moderate" | "complex";
 export type EdgeCategory = "structural" | "behavioral" | "data-flow" | "dependencies" | "semantic" | "infrastructure" | "domain" | "knowledge";
-export type ViewMode = "structural" | "domain" | "knowledge";
+export type ViewMode = "structural" | "domain" | "knowledge" | "wiki";
 export type DetailLevel = "file" | "class";
 
 export interface FilterState {
@@ -199,6 +199,18 @@ interface DashboardStore {
   setIsKnowledgeGraph: (value: boolean) => void;
   navigateToDomain: (domainId: string) => void;
   clearActiveDomain: () => void;
+
+  // Wiki view
+  wikiAvailable: boolean;
+  wikiIndex: { entries: Array<{ id: string; name: string; type: string; service?: string; summary: string }> } | null;
+  wikiActivePage: { type: "service" | "domain"; id: string } | null;
+  wikiPageContent: unknown | null;
+  wikiLoading: boolean;
+  setWikiAvailable: (available: boolean) => void;
+  setWikiIndex: (index: { entries: Array<{ id: string; name: string; type: string; service?: string; summary: string }> }) => void;
+  setWikiActivePage: (page: { type: "service" | "domain"; id: string } | null) => void;
+  setWikiPageContent: (content: unknown | null) => void;
+  setWikiLoading: (loading: boolean) => void;
 
   // Container expand/collapse + lazy layout caches
   expandedContainers: Set<string>;
@@ -713,6 +725,18 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
       focusNodeId: null,
     });
   },
+
+  // Wiki view state
+  wikiAvailable: false,
+  wikiIndex: null,
+  wikiActivePage: null,
+  wikiPageContent: null,
+  wikiLoading: false,
+  setWikiAvailable: (available) => set({ wikiAvailable: available }),
+  setWikiIndex: (index) => set({ wikiIndex: index }),
+  setWikiActivePage: (page) => set({ wikiActivePage: page }),
+  setWikiPageContent: (content) => set({ wikiPageContent: content }),
+  setWikiLoading: (loading) => set({ wikiLoading: loading }),
 
   expandedContainers: new Set<string>(),
   pendingFocusContainer: null,

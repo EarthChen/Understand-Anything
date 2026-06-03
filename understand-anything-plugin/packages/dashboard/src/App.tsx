@@ -5,6 +5,7 @@ import { useDashboardStore } from "./store";
 import GraphView from "./components/GraphView";
 import DomainGraphView from "./components/DomainGraphView";
 import KnowledgeGraphView from "./components/KnowledgeGraphView";
+import WikiView from "./components/WikiView";
 import SearchBar from "./components/SearchBar";
 import NodeInfo from "./components/NodeInfo";
 import LayerLegend from "./components/LayerLegend";
@@ -204,6 +205,20 @@ function Dashboard({ accessToken }: { accessToken: string }) {
       .catch(() => {});
   }, [setDomainGraph]);
 
+  // Detect wiki availability
+  const setWikiAvailable = useDashboardStore((s) => s.setWikiAvailable);
+  useEffect(() => {
+    const wikiMetaUrl = DEMO_MODE
+      ? null
+      : `/wiki/meta.json?token=${encodeURIComponent(accessToken)}`;
+    if (!wikiMetaUrl) return;
+    fetch(wikiMetaUrl)
+      .then((res) => {
+        if (res.ok) setWikiAvailable(true);
+      })
+      .catch(() => {});
+  }, [accessToken, setWikiAvailable]);
+
   return (
     <I18nProvider language={outputLanguage ?? "en"}>
       <ThemeProvider metaTheme={metaTheme}>
@@ -255,6 +270,7 @@ function DashboardContent({
   const setViewMode = useDashboardStore((s) => s.setViewMode);
   const isKnowledgeGraph = useDashboardStore((s) => s.isKnowledgeGraph);
   const domainGraph = useDashboardStore((s) => s.domainGraph);
+  const wikiAvailable = useDashboardStore((s) => s.wikiAvailable);
   const layoutIssues = useDashboardStore((s) => s.layoutIssues);
   const isMobile = useIsMobile();
   const { t } = useI18n();
@@ -477,6 +493,50 @@ function DashboardContent({
                 >
                   {t.drawer.structural}
                 </button>
+                {wikiAvailable && (
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("wiki")}
+                    title="Wiki"
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                      viewMode === "wiki"
+                        ? "bg-accent/20 text-accent"
+                        : "text-text-muted hover:text-text-secondary"
+                    }`}
+                  >
+                    Wiki
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+          {graph && !isKnowledgeGraph && !domainGraph && wikiAvailable && (
+            <>
+              <div className="w-px h-5 bg-border-subtle" />
+              <div className="flex items-center bg-elevated rounded-lg p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("structural")}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    viewMode !== "wiki"
+                      ? "bg-accent/20 text-accent"
+                      : "text-text-muted hover:text-text-secondary"
+                  }`}
+                >
+                  Graph
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("wiki")}
+                  title="Wiki"
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    viewMode === "wiki"
+                      ? "bg-accent/20 text-accent"
+                      : "text-text-muted hover:text-text-secondary"
+                  }`}
+                >
+                  Wiki
+                </button>
               </div>
             </>
           )}
@@ -635,20 +695,24 @@ function DashboardContent({
       <div className="flex-1 flex min-h-0 relative">
         {/* Graph area */}
         <div className="flex-1 min-w-0 min-h-0 relative">
-          {viewMode === "knowledge" ? (
+          {viewMode === "wiki" ? (
+            <WikiView accessToken={accessToken} />
+          ) : viewMode === "knowledge" ? (
             <KnowledgeGraphView />
           ) : viewMode === "domain" && domainGraph ? (
             <DomainGraphView />
           ) : (
             <GraphView />
           )}
-          <div className="absolute top-3 right-3 text-sm text-text-muted/60 pointer-events-none select-none">
-            {t.common.pressKeyboard}
-          </div>
+          {viewMode !== "wiki" && (
+            <div className="absolute top-3 right-3 text-sm text-text-muted/60 pointer-events-none select-none">
+              {t.common.pressKeyboard}
+            </div>
+          )}
         </div>
 
-        {/* Right sidebar — telescopes at narrower widths */}
-        <aside className="w-[260px] md:w-[300px] lg:w-[360px] shrink-0 bg-surface border-l border-border-subtle overflow-auto">
+        {/* Right sidebar — telescopes at narrower widths (hidden in wiki mode) */}
+        <aside className={`w-[260px] md:w-[300px] lg:w-[360px] shrink-0 bg-surface border-l border-border-subtle overflow-auto ${viewMode === "wiki" ? "hidden" : ""}`}>
           {sidebarContent}
         </aside>
 

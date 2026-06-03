@@ -13,9 +13,10 @@ export interface SearchOptions {
 
 const FUSE_OPTIONS: IFuseOptions<GraphNode> = {
   keys: [
-    { name: "name", weight: 0.4 },
-    { name: "tags", weight: 0.3 },
+    { name: "name", weight: 0.3 },
+    { name: "tags", weight: 0.2 },
     { name: "summary", weight: 0.2 },
+    { name: "knowledgeMeta.content", weight: 0.2 },
     { name: "languageNotes", weight: 0.1 },
   ],
   threshold: 0.4,

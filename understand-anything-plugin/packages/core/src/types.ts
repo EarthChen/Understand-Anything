@@ -6,10 +6,11 @@ export type NodeType =
   | "domain" | "flow" | "step"
   | "article" | "entity" | "topic" | "claim" | "source";
 
-// Edge types (35 total in 8 categories: Structural, Behavioral, Data flow, Dependencies, Semantic, Infrastructure/Schema, Domain, Knowledge)
+// Edge types (37 total in 8 categories: Structural, Behavioral, Data flow, Dependencies, Semantic, Infrastructure/Schema, Domain, Knowledge)
 export type EdgeType =
   | "imports" | "exports" | "contains" | "inherits" | "implements"  // Structural
   | "calls" | "subscribes" | "publishes" | "middleware"              // Behavioral
+  | "provides_rpc" | "consumes_rpc"                                  // RPC (cross-service)
   | "reads_from" | "writes_to" | "transforms" | "validates"         // Data flow
   | "depends_on" | "tested_by" | "configures"                       // Dependencies
   | "related" | "similar_to"                                         // Semantic
@@ -24,6 +25,97 @@ export interface KnowledgeMeta {
   backlinks?: string[];
   category?: string;
   content?: string;
+  service?: string;
+}
+
+// Wiki output file schemas
+export interface WikiDomainState {
+  lastGeneratedAt: string;
+  nodeCount: number;
+  flowCount: number;
+}
+
+export interface WikiMeta {
+  gitCommitHash: string;
+  generatedAt: string;
+  version: string;
+  outputLanguage: string;
+  serviceCount?: number;
+  domainStates?: Record<string, WikiDomainState>;
+  rpcEdgeHash?: string;
+}
+
+export interface WikiIndexEntry {
+  id: string;
+  name: string;
+  type: "overview" | "architecture" | "domain" | "flow" | "step" | "service";
+  service?: string;
+  summary: string;
+}
+
+export interface WikiIndex {
+  entries: WikiIndexEntry[];
+}
+
+export interface WikiServiceOverview {
+  name: string;
+  description: string;
+  techStack: string[];
+  modules: string[];
+  entryPoints: string[];
+}
+
+export interface WikiFlowStep {
+  order: number;
+  name: string;
+  description: string;
+  sourceRef?: { file: string; lineRange?: [number, number] };
+}
+
+export interface WikiFlow {
+  id: string;
+  name: string;
+  summary: string;
+  steps: WikiFlowStep[];
+}
+
+export interface WikiDomainPage {
+  id: string;
+  name: string;
+  summary: string;
+  entities: string[];
+  flows: WikiFlow[];
+  crossServiceCalls?: CrossServiceCall[];
+}
+
+export interface CrossServiceCall {
+  caller: {
+    service: string;
+    node: string;
+    file?: string;
+    method: string;
+  };
+  callee: {
+    service: string;
+    node: string;
+    interface?: string;
+    method: string;
+  };
+  type: "moa_rpc" | "dubbo_rpc" | "http" | "kafka" | "database" | "unknown";
+  evidence: "script-matched" | "llm-discovered" | "user-override";
+  detail?: string;
+}
+
+// RPC annotation config
+export interface RpcAnnotationConfig {
+  provider: string;
+  consumer: string;
+  type: string;
+}
+
+// Extended project config with RPC annotations and Wiki settings
+export interface ProjectConfigExtended extends ProjectConfig {
+  rpcAnnotations?: RpcAnnotationConfig[];
 }
 
 // Optional domain metadata for domain/flow/step nodes

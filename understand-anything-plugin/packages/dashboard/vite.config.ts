@@ -180,6 +180,12 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/__tests__/**/*.test.ts"],
+    alias: {
+      "@understand-anything/core/schema": path.resolve(__dirname, "../core/src/schema.ts"),
+      "@understand-anything/core/search": path.resolve(__dirname, "../core/src/search.ts"),
+      "@understand-anything/core/types": path.resolve(__dirname, "../core/src/types.ts"),
+      "@understand-anything/core": path.resolve(__dirname, "../core/src/index.ts"),
+    },
   },
 
   // FIX 1 — bind only to localhost, not 0.0.0.0
@@ -253,7 +259,8 @@ export default defineConfig({
             pathname === "/diff-overlay.json" ||
             pathname === "/meta.json" ||
             pathname === "/config.json" ||
-            pathname === "/file-content.json";
+            pathname === "/file-content.json" ||
+            pathname.startsWith("/wiki/");
 
           if (!isProtectedEndpoint) {
             next();
@@ -264,6 +271,29 @@ export default defineConfig({
           // Requests without a matching ?token= get a 403.
           if (url.searchParams.get("token") !== ACCESS_TOKEN) {
             sendJson(res, 403, { error: "Forbidden: missing or invalid token" });
+            return;
+          }
+
+          if (pathname.startsWith("/wiki/")) {
+            const wikiPath = pathname.slice("/wiki/".length);
+            if (wikiPath.includes("..") || wikiPath.includes("~")) {
+              sendJson(res, 400, { error: "Invalid wiki path" });
+              return;
+            }
+            const candidates = graphFileCandidates(`wiki/${wikiPath}`);
+            for (const candidate of candidates) {
+              if (fs.existsSync(candidate)) {
+                try {
+                  const raw = JSON.parse(fs.readFileSync(candidate, "utf-8"));
+                  sendJson(res, 200, raw);
+                  return;
+                } catch {
+                  sendJson(res, 500, { error: "Failed to read wiki file" });
+                  return;
+                }
+              }
+            }
+            sendJson(res, 404, { error: `Wiki file not found: ${wikiPath}` });
             return;
           }
 

@@ -1,0 +1,280 @@
+import type {
+  WikiMeta,
+  WikiIndex,
+  WikiIndexEntry,
+  WikiDomainPage,
+  WikiServiceOverview,
+  WikiFlow,
+  WikiFlowStep,
+} from "./types.js";
+
+export interface ValidationIssue {
+  file: string;
+  severity: "error" | "warning";
+  message: string;
+}
+
+export interface WikiValidationResult {
+  passed: boolean;
+  issues: ValidationIssue[];
+  stats: {
+    pagesValidated: number;
+    domainsFound: number;
+    flowsFound: number;
+    coveragePercent: number;
+  };
+}
+
+export function validateWikiMeta(data: unknown, filePath: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!data || typeof data !== "object") {
+    issues.push({ file: filePath, severity: "error", message: "meta.json is not a valid object" });
+    return issues;
+  }
+  const meta = data as Record<string, unknown>;
+  if (!meta.gitCommitHash || typeof meta.gitCommitHash !== "string") {
+    issues.push({ file: filePath, severity: "error", message: "Missing or invalid gitCommitHash" });
+  }
+  if (!meta.generatedAt || typeof meta.generatedAt !== "string") {
+    issues.push({ file: filePath, severity: "error", message: "Missing or invalid generatedAt" });
+  }
+  if (!meta.version || typeof meta.version !== "string") {
+    issues.push({ file: filePath, severity: "error", message: "Missing or invalid version" });
+  }
+  if (!meta.outputLanguage || typeof meta.outputLanguage !== "string") {
+    issues.push({ file: filePath, severity: "error", message: "Missing or invalid outputLanguage" });
+  }
+  if (meta.domainStates !== undefined) {
+    if (typeof meta.domainStates !== "object" || meta.domainStates === null || Array.isArray(meta.domainStates)) {
+      issues.push({ file: filePath, severity: "error", message: "domainStates must be an object" });
+    } else {
+      for (const [domainId, state] of Object.entries(meta.domainStates as Record<string, unknown>)) {
+        const s = state as Record<string, unknown>;
+        if (typeof s.lastGeneratedAt !== "string") {
+          issues.push({ file: filePath, severity: "error", message: `domainStates['${domainId}'].lastGeneratedAt must be a string` });
+        }
+        if (typeof s.nodeCount !== "number") {
+          issues.push({ file: filePath, severity: "error", message: `domainStates['${domainId}'].nodeCount must be a number` });
+        }
+        if (typeof s.flowCount !== "number") {
+          issues.push({ file: filePath, severity: "error", message: `domainStates['${domainId}'].flowCount must be a number` });
+        }
+      }
+    }
+  }
+  return issues;
+}
+
+export function validateWikiIndex(data: unknown, filePath: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!data || typeof data !== "object") {
+    issues.push({ file: filePath, severity: "error", message: "index.json is not a valid object" });
+    return issues;
+  }
+  const index = data as Record<string, unknown>;
+  if (!Array.isArray(index.entries)) {
+    issues.push({ file: filePath, severity: "error", message: "index.entries is not an array" });
+    return issues;
+  }
+  if (index.entries.length === 0) {
+    issues.push({ file: filePath, severity: "error", message: "index.entries is empty" });
+    return issues;
+  }
+  const validTypes = new Set(["overview", "architecture", "domain", "flow", "step", "service"]);
+  for (let i = 0; i < index.entries.length; i++) {
+    const entry = index.entries[i] as Record<string, unknown>;
+    if (!entry.id || typeof entry.id !== "string") {
+      issues.push({ file: filePath, severity: "error", message: `entries[${i}] missing id` });
+    }
+    if (!entry.name || typeof entry.name !== "string") {
+      issues.push({ file: filePath, severity: "error", message: `entries[${i}] missing name` });
+    }
+    if (!entry.type || !validTypes.has(entry.type as string)) {
+      issues.push({ file: filePath, severity: "error", message: `entries[${i}] invalid type: ${entry.type}` });
+    }
+    if (!entry.summary || typeof entry.summary !== "string") {
+      issues.push({ file: filePath, severity: "warning", message: `entries[${i}] missing summary` });
+    }
+  }
+  return issues;
+}
+
+export function validateWikiDomainPage(data: unknown, filePath: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!data || typeof data !== "object") {
+    issues.push({ file: filePath, severity: "error", message: "Domain page is not a valid object" });
+    return issues;
+  }
+  const page = data as Record<string, unknown>;
+  if (!page.id || typeof page.id !== "string") {
+    issues.push({ file: filePath, severity: "error", message: "Missing id" });
+  }
+  if (!page.name || typeof page.name !== "string") {
+    issues.push({ file: filePath, severity: "error", message: "Missing name" });
+  }
+  if (!page.summary || typeof page.summary !== "string") {
+    issues.push({ file: filePath, severity: "error", message: "Missing summary" });
+  }
+  if (!Array.isArray(page.flows)) {
+    issues.push({ file: filePath, severity: "error", message: "Missing flows array" });
+  } else {
+    for (let i = 0; i < page.flows.length; i++) {
+      const flow = page.flows[i] as Record<string, unknown>;
+      if (!flow.id || typeof flow.id !== "string") {
+        issues.push({ file: filePath, severity: "error", message: `flows[${i}] missing id` });
+      }
+      if (!flow.name || typeof flow.name !== "string") {
+        issues.push({ file: filePath, severity: "error", message: `flows[${i}] missing name` });
+      }
+      if (!Array.isArray(flow.steps) || flow.steps.length === 0) {
+        issues.push({ file: filePath, severity: "warning", message: `flows[${i}] has no steps` });
+      } else {
+        for (let j = 0; j < (flow.steps as unknown[]).length; j++) {
+          const step = (flow.steps as Record<string, unknown>[])[j];
+          if (typeof step.order !== "number") {
+            issues.push({ file: filePath, severity: "error", message: `flows[${i}].steps[${j}] missing order` });
+          }
+          if (!step.description || typeof step.description !== "string") {
+            issues.push({ file: filePath, severity: "warning", message: `flows[${i}].steps[${j}] missing description` });
+          }
+        }
+      }
+    }
+  }
+  // Content non-empty check
+  if (page.summary && typeof page.summary === "string" && (page.summary as string).length < 10) {
+    issues.push({ file: filePath, severity: "warning", message: "Summary is too short (< 10 chars)" });
+  }
+  return issues;
+}
+
+export function validateWikiServiceOverview(data: unknown, filePath: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!data || typeof data !== "object") {
+    issues.push({ file: filePath, severity: "error", message: "service.json is not a valid object" });
+    return issues;
+  }
+  const svc = data as Record<string, unknown>;
+  if (!svc.name || typeof svc.name !== "string") {
+    issues.push({ file: filePath, severity: "error", message: "Missing service name" });
+  }
+  if (!svc.description || typeof svc.description !== "string") {
+    issues.push({ file: filePath, severity: "error", message: "Missing service description" });
+  }
+  if (!Array.isArray(svc.techStack)) {
+    issues.push({ file: filePath, severity: "warning", message: "Missing techStack array" });
+  }
+  return issues;
+}
+
+/**
+ * Validate coverage: every domain node in domain-graph should have a corresponding wiki page.
+ */
+export function validateCoverage(
+  domainNodeIds: string[],
+  wikiDomainFiles: string[]
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const wikiDomains = new Set(wikiDomainFiles.map((f) => f.replace(/\.json$/, "")));
+  for (const nodeId of domainNodeIds) {
+    const domainSlug = nodeId.replace(/^domain:/, "");
+    if (!wikiDomains.has(domainSlug)) {
+      issues.push({
+        file: "coverage",
+        severity: "error",
+        message: `Domain '${nodeId}' has no corresponding wiki page (expected domains/${domainSlug}.json)`,
+      });
+    }
+  }
+  return issues;
+}
+
+/**
+ * Validate source references: ensure files referenced in wiki actually exist.
+ */
+export function validateSourceRefs(
+  refs: Array<{ file: string; lineRange?: [number, number] }>,
+  existingFiles: Set<string>
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  for (const ref of refs) {
+    if (!existingFiles.has(ref.file)) {
+      issues.push({
+        file: "source-refs",
+        severity: "warning",
+        message: `Referenced source file does not exist: ${ref.file}`,
+      });
+    }
+  }
+  return issues;
+}
+
+/**
+ * Run all Quality Gate Layer 1 validations on a service wiki directory.
+ */
+export function runQualityGateLayer1(opts: {
+  meta: unknown;
+  index: unknown;
+  serviceOverview: unknown;
+  domainPages: Array<{ filename: string; data: unknown }>;
+  domainNodeIds: string[];
+  sourceFiles: Set<string>;
+}): WikiValidationResult {
+  const allIssues: ValidationIssue[] = [];
+
+  allIssues.push(...validateWikiMeta(opts.meta, "meta.json"));
+  allIssues.push(...validateWikiIndex(opts.index, "index.json"));
+  allIssues.push(...validateWikiServiceOverview(opts.serviceOverview, "service.json"));
+
+  let flowsFound = 0;
+  for (const { filename, data } of opts.domainPages) {
+    const pageIssues = validateWikiDomainPage(data, `domains/${filename}`);
+    allIssues.push(...pageIssues);
+    if (data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).flows)) {
+      flowsFound += ((data as Record<string, unknown>).flows as unknown[]).length;
+    }
+  }
+
+  const wikiDomainFiles = opts.domainPages.map((p) => p.filename);
+  allIssues.push(...validateCoverage(opts.domainNodeIds, wikiDomainFiles));
+
+  // Collect source refs from domain pages for reference validation
+  const sourceRefs: Array<{ file: string; lineRange?: [number, number] }> = [];
+  for (const { data } of opts.domainPages) {
+    if (data && typeof data === "object") {
+      const page = data as Record<string, unknown>;
+      if (Array.isArray(page.flows)) {
+        for (const flow of page.flows as Record<string, unknown>[]) {
+          if (Array.isArray(flow.steps)) {
+            for (const step of flow.steps as Record<string, unknown>[]) {
+              if (step.sourceRef && typeof step.sourceRef === "object") {
+                const ref = step.sourceRef as Record<string, unknown>;
+                if (ref.file && typeof ref.file === "string") {
+                  sourceRefs.push({ file: ref.file as string, lineRange: ref.lineRange as [number, number] | undefined });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  allIssues.push(...validateSourceRefs(sourceRefs, opts.sourceFiles));
+
+  const errors = allIssues.filter((i) => i.severity === "error");
+  const coverageIssues = allIssues.filter((i) => i.file === "coverage" && i.severity === "error");
+  const totalDomains = opts.domainNodeIds.length;
+  const coveredDomains = totalDomains - coverageIssues.length;
+  const coveragePercent = totalDomains > 0 ? Math.round((coveredDomains / totalDomains) * 100) : 100;
+
+  return {
+    passed: errors.length === 0,
+    issues: allIssues,
+    stats: {
+      pagesValidated: opts.domainPages.length + 2, // +meta +index
+      domainsFound: opts.domainPages.length,
+      flowsFound,
+      coveragePercent,
+    },
+  };
+}
