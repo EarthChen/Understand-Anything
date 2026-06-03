@@ -6,6 +6,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { WikiDataService } from "./wiki-api";
+import { readWikiSourceFile } from "./wiki-source";
 
 // Generate a one-time token when the server process starts.
 // This token is printed to the terminal and must be in the URL
@@ -319,6 +320,16 @@ export default defineConfig({
               const rawLimit = parseInt(url.searchParams.get("limit") ?? "20", 10);
               const limit = Math.min(100, Math.max(1, Number.isNaN(rawLimit) ? 20 : rawLimit));
               sendJson(res, 200, ws.search(q, limit));
+              return;
+            }
+            if (apiPath === "/source") {
+              const result = readWikiSourceFile(
+                ws.getProjectRoot(),
+                url.searchParams.get("file") ?? "",
+                url.searchParams.get("start"),
+                url.searchParams.get("end"),
+              );
+              sendJson(res, result.statusCode, result.payload);
               return;
             }
 

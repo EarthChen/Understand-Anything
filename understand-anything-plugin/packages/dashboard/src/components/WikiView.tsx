@@ -9,6 +9,7 @@ import {
   crossDomainToMarkdown,
 } from "../utils/wikiToMarkdown";
 import { WikiLinkRenderer, type WikiLinkNavigation } from "./WikiLinkRenderer";
+import { WikiSourcePanel } from "./WikiSourcePanel";
 
 function crossDomainSlug(id: string): string {
   return id.replace(/^(?:wiki:)?(?:cross-domain|domain):/, "");
@@ -514,28 +515,12 @@ export default function WikiView({ accessToken }: { accessToken: string }) {
           onSourceOpen={handleSourceOpen}
         />
         {sourcePanel && (
-          <div className="w-80 border-l border-border bg-surface overflow-y-auto">
-            <div className="flex items-center justify-between p-2 border-b border-border">
-              <span className="text-xs text-text-muted truncate">
-                📎 {sourcePanel.path}
-                {sourcePanel.lineRange && `:${sourcePanel.lineRange[0]}-${sourcePanel.lineRange[1]}`}
-              </span>
-              <button
-                type="button"
-                onClick={() => setSourcePanel(null)}
-                className="text-text-muted hover:text-text text-xs px-1"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="p-2 text-xs text-text-muted">
-              <p>Source preview panel.</p>
-              <p className="mt-1">File: <code className="text-accent">{sourcePanel.path}</code></p>
-              {sourcePanel.lineRange && (
-                <p>Lines: {sourcePanel.lineRange[0]}–{sourcePanel.lineRange[1]}</p>
-              )}
-            </div>
-          </div>
+          <WikiSourcePanel
+            path={sourcePanel.path}
+            lineRange={sourcePanel.lineRange}
+            accessToken={accessToken}
+            onClose={() => setSourcePanel(null)}
+          />
         )}
       </div>
     </div>

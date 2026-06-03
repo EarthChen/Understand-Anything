@@ -1,0 +1,159 @@
+import { useEffect, useMemo, useState } from "react";
+import { Highlight, themes } from "prism-react-renderer";
+
+interface WikiSourceResponse {
+  file: string;
+  content: string;
+  startLine: number;
+  endLine: number;
+  language: string;
+}
+
+type PanelState =
+  | { status: "loading"; data: null; error: null }
+  | { status: "loaded"; data: WikiSourceResponse; error: null }
+  | { status: "error"; data: null; error: string };
+
+function wikiSourceUrl(
+  file: string,
+  lineRange: [number, number] | undefined,
+  token: string,
+): string {
+  const params = new URLSearchParams({ token, file });
+  if (lineRange) {
+    params.set("start", String(lineRange[0]));
+    params.set("end", String(lineRange[1]));
+  }
+  return `/api/wiki/source?${params.toString()}`;
+}
+
+export function WikiSourcePanel({
+  path,
+  lineRange,
+  accessToken,
+  onClose,
+}: {
+  path: string;
+  lineRange?: [number, number];
+  accessToken: string;
+  onClose: () => void;
+}) {
+  const [state, setState] = useState<PanelState>({
+    status: "loading",
+    data: null,
+    error: null,
+  });
+
+  useEffect(() => {
+    if (accessToken === "__demo__") {
+      setState({
+        status: "error",
+        data: null,
+        error: "Source preview requires the local dashboard server.",
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    setState({ status: "loading", data: null, error: null });
+
+    fetch(wikiSourceUrl(path, lineRange, accessToken), { signal: controller.signal })
+      .then(async (res) => {
+        const data = (await res.json()) as WikiSourceResponse | { error?: string };
+        if (!res.ok) {
+          throw new Error("error" in data && data.error ? data.error : "Source unavailable");
+        }
+        setState({ status: "loaded", data: data as WikiSourceResponse, error: null });
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setState({
+          status: "error",
+          data: null,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+
+    return () => controller.abort();
+  }, [path, lineRange, accessToken]);
+
+  const highlightRange = useMemo(() => {
+    if (state.status !== "loaded") return null;
+    return { start: state.data.startLine, end: state.data.endLine };
+  }, [state]);
+
+  const headerLine =
+    lineRange != null
+      ? `${path}:${lineRange[0]}-${lineRange[1]}`
+      : path;
+
+  return (
+    <div className="w-96 min-w-[280px] border-l border-border bg-surface flex flex-col min-h-0">
+      <div className="flex items-center gap-2 p-2 border-b border-border shrink-0">
+        <span className="text-xs text-text-muted truncate flex-1 font-mono" title={headerLine}>
+          📎 {headerLine}
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-text-muted hover:text-text text-xs px-1.5 shrink-0"
+          aria-label="Close source panel"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-auto bg-root">
+        {state.status === "loading" && (
+          <div className="p-3 text-xs text-text-muted">Loading source...</div>
+        )}
+
+        {state.status === "error" && (
+          <div className="p-3 text-xs text-text-secondary">{state.error}</div>
+        )}
+
+        {state.status === "loaded" && (
+          <Highlight
+            code={state.data.content}
+            language={state.data.language}
+            theme={themes.vsDark}
+          >
+            {({ className, style, tokens, getLineProps, getTokenProps }) => (
+              <pre
+                className={`${className} min-w-max p-0 m-0 text-[11px] leading-5 font-mono`}
+                style={{ ...style, background: "transparent" }}
+              >
+                {tokens.map((line, index) => {
+                  const lineNumber = state.data.startLine + index;
+                  const isHighlighted =
+                    highlightRange !== null &&
+                    lineNumber >= highlightRange.start &&
+                    lineNumber <= highlightRange.end;
+                  const lineProps = getLineProps({ line });
+                  return (
+                    <div
+                      key={lineNumber}
+                      {...lineProps}
+                      className={`${lineProps.className} flex ${
+                        isHighlighted ? "bg-accent/15" : "hover:bg-elevated/40"
+                      }`}
+                    >
+                      <span className="w-10 shrink-0 select-none border-r border-border-subtle pr-2 text-right text-text-muted bg-surface/60">
+                        {lineNumber}
+                      </span>
+                      <span className="pl-2 pr-4 whitespace-pre">
+                        {line.map((token, key) => (
+                          <span key={key} {...getTokenProps({ token })} />
+                        ))}
+                      </span>
+                    </div>
+                  );
+                })}
+              </pre>
+            )}
+          </Highlight>
+        )}
+      </div>
+    </div>
+  );
+}

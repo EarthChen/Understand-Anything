@@ -685,6 +685,26 @@ describe("Extended node/edge types", () => {
     }
   });
 
+  it("validates RPC edge types: provides_rpc, consumes_rpc", () => {
+    for (const type of ["provides_rpc", "consumes_rpc"] as const) {
+      const graph = structuredClone(validGraph);
+      (graph.edges[0] as any).type = type;
+      const result = validateGraph(graph);
+      expect(result.success).toBe(true);
+      expect(result.data!.edges[0].type).toBe(type);
+    }
+  });
+
+  it("validates behavioral edge types: publishes, subscribes", () => {
+    for (const type of ["publishes", "subscribes"] as const) {
+      const graph = structuredClone(validGraph);
+      (graph.edges[0] as any).type = type;
+      const result = validateGraph(graph);
+      expect(result.success).toBe(true);
+      expect(result.data!.edges[0].type).toBe(type);
+    }
+  });
+
   it("auto-fixes new node type aliases: container->service, doc->document, business_flow->flow, etc.", () => {
     const aliases: Record<string, string> = {
       container: "service",

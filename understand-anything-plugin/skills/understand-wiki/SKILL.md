@@ -1,7 +1,7 @@
 ---
 name: understand-wiki
 description: Generate a comprehensive, navigable knowledge base Wiki for a microservice project. Supports single-service and batch modes with progressive adoption.
-argument-hint: ["[--batch] [--service=<name>] [--review] [--full] [--language <lang>]"]
+argument-hint: ["[--batch] [--service=<name>] [--review] [--full] [--force] [--dry-run] [--continue-on-error] [--language <lang>]"]
 ---
 
 # /understand-wiki
@@ -15,6 +15,9 @@ Generate a team knowledge base Wiki for microservice projects. Each service gets
   - `--service=<name>` — Generate Wiki for a specific service (implies batch mode, runs from parent dir)
   - `--review` — After generation, run the `wiki-reviewer` agent for quality assurance
   - `--full` — Force full regeneration, ignoring existing Wiki
+  - `--force` — Skip upstream KG/DG staleness check (proceed even when graphs are from an older commit)
+  - `--dry-run` — Preview what would be generated without running any LLM calls (see [Dry-Run Mode](#dry-run-mode))
+  - `--continue-on-error` — In batch mode, continue after per-service failures (default: `true`). Set `--continue-on-error=false` to stop at first failure and skip Phase 2 (see [Partial Failure Policy](#partial-failure-policy))
   - `--language <lang>` — Generate content in specified language (ISO 639-1 or friendly name). Stores in config for future runs.
 
 ---
@@ -130,6 +133,21 @@ if [ -z "$PLUGIN_ROOT" ]; then
 fi
 ```
 
+### Step 3b — Dry-Run (When `--dry-run` is Present)
+
+If `$ARGUMENTS` contains `--dry-run`, run the planner and **stop** — no wiki-worker dispatch, no file writes:
+
+```bash
+SKILL_DIR="$PLUGIN_ROOT/skills/understand-wiki"
+if [ "$MODE" = "batch" ]; then
+  python3 "$SKILL_DIR/wiki_dry_run.py" "$PROJECT_ROOT"
+else
+  python3 "$SKILL_DIR/wiki_dry_run.py" "$SERVICE_ROOT"
+fi
+```
+
+Print the script output to the user and exit 0. See [Dry-Run Mode](#dry-run-mode) for the expected report format.
+
 ### Step 4 — Language Configuration
 
 ```bash
@@ -165,6 +183,59 @@ Build `$LANGUAGE_DIRECTIVE`:
 > **Language directive**: Generate all textual content in **{OUTPUT_LANGUAGE}**. Maintain technical accuracy while using natural, native-level phrasing. Keep technical terms in English when no standard translation exists.
 ```
 
+### Step 4.5 — RPC Annotations Configuration
+
+Custom RPC frameworks are configured in `$SERVICE_ROOT/.understand-anything/config.json` under the `rpcAnnotations` field. This tells `/understand` (file-analyzer) which annotation pairs map to provider/consumer roles so the knowledge graph gets `provides_rpc` / `consumes_rpc` edges for cross-service matching.
+
+**Schema** — `rpcAnnotations` is an array of objects:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `provider` | string | yes | Provider annotation class name (e.g. `"@MoaProvider"`, `"@DubboService"`) |
+| `consumer` | string | yes | Consumer annotation class name (e.g. `"@MoaConsumer"`, `"@DubboReference"`) |
+| `type` | string | yes | Framework identifier used in graph tags and matchers (e.g. `"moa"`, `"dubbo"`, `"grpc"`) |
+| `interfaceField` | string | no | Annotation attribute that holds the RPC interface name; defaults to `"value"` |
+
+**Example `config.json`:**
+
+```json
+{
+  "outputLanguage": "zh",
+  "rpcAnnotations": [
+    { "provider": "@DubboService", "consumer": "@DubboReference", "type": "dubbo" },
+    { "provider": "@MoaProvider", "consumer": "@MoaConsumer", "type": "moa", "interfaceField": "service" },
+    { "provider": "@GrpcService", "consumer": "@GrpcClient", "type": "grpc" }
+  ]
+}
+```
+
+**Behavior:**
+- Missing or empty `rpcAnnotations` → backward compatible; file-analyzer treats RPC annotations as ordinary dependencies; cross-service script matching has no RPC edges to match.
+- Non-empty `rpcAnnotations` → passed to wiki-worker and `/understand` so analyzers emit `provides_rpc` / `consumes_rpc` edges; `cross-service-matcher.py` matches consumers to providers by interface name across services.
+
+**Load and validate** (optional sanity check before generation):
+
+```bash
+python3 "$PLUGIN_ROOT/skills/understand-wiki/wiki_config_validator.py" \
+  "$SERVICE_ROOT/.understand-anything/config.json"
+```
+
+Or from Python: `load_and_merge_config(path)` returns `(config, valid, errors)`; invalid configs should be reported to the user before proceeding.
+
+**Resolve `$RPC_ANNOTATIONS` for dispatch:**
+
+```bash
+RPC_ANNOTATIONS="null"
+if [ -f "$SERVICE_ROOT/.understand-anything/config.json" ]; then
+  RPC_ANNOTATIONS=$(node -e "
+    try {
+      const c = JSON.parse(require('fs').readFileSync('$SERVICE_ROOT/.understand-anything/config.json','utf8'));
+      console.log(JSON.stringify(c.rpcAnnotations ?? null));
+    } catch(e) { console.log('null'); }
+  ")
+fi
+```
+
 ### Step 5 — Prerequisite Verification (per service)
 
 For each target service (1 in single mode, N in batch mode):
@@ -195,6 +266,41 @@ if [ ! -f "$SERVICE_UA/domain-graph.json" ]; then
   fi
 fi
 ```
+
+### Step 5a — Upstream KG/DG Staleness Check
+
+After KG and DG exist, verify they were generated from the current git HEAD. Wiki `meta.json` can be updated to the latest commit while graphs still reflect an older tree (silent stale upstream).
+
+Skip when `--force` is set:
+
+```bash
+SKILL_DIR="$PLUGIN_ROOT/skills/understand-wiki"
+
+if ! echo "$ARGUMENTS" | grep -q '\-\-force'; then
+  STALE_JSON=$(python3 "$SKILL_DIR/wiki_staleness_check.py" "$SERVICE_ROOT" 2>/dev/null)
+  if [ -n "$STALE_JSON" ]; then
+    KG_STALE=$(echo "$STALE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('should_regenerate',{}).get('kg') else 'false')")
+    DG_STALE=$(echo "$STALE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('should_regenerate',{}).get('dg') else 'false')")
+    echo "$STALE_JSON" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for w in d.get('warnings', []):
+    print(f'[understand-wiki] WARNING: {w}')
+"
+    if [ "$KG_STALE" = "true" ] || [ "$DG_STALE" = "true" ]; then
+      echo "[understand-wiki] Upstream data may be stale. Regenerate before Wiki generation:"
+      [ "$KG_STALE" = "true" ] && echo "  → Run /understand on $SERVICE_NAME (knowledge graph)"
+      [ "$DG_STALE" = "true" ] && echo "  → Run /understand-domain on $SERVICE_NAME (domain graph)"
+      echo "[understand-wiki] Use --force to skip this check and proceed anyway."
+      exit 1
+    fi
+  fi
+else
+  echo "[understand-wiki] --force: skipping upstream staleness check."
+fi
+```
+
+Commit hashes are read from `project.gitCommitHash` in each graph (or `meta.generatedFromCommit` / `.understand-anything/meta.json` as fallback). Compared with `git -C "$SERVICE_ROOT" rev-parse HEAD`.
 
 ### Step 5b — Save DG Snapshot (for incremental diff)
 
@@ -404,9 +510,9 @@ Dispatch ONE `wiki-worker` agent for the target service (full mode).
 > Output language: `$OUTPUT_LANGUAGE`
 > $LANGUAGE_DIRECTIVE
 >
-> RPC annotations config (if present):
+> RPC annotations config (if present; see Step 4.5):
 > ```json
-> <rpcAnnotations from config.json, or "null" if not configured>
+> $RPC_ANNOTATIONS
 > ```
 >
 > Write all output files to: `$SERVICE_ROOT/.understand-anything/wiki/`
@@ -435,6 +541,86 @@ Track per-service results:
 
 After all services complete:
 > `Phase 1 complete. Generated Wiki for X/N services. Failures: Y.`
+
+---
+
+## Partial Failure Policy
+
+In batch mode, wiki-worker agents run per service. Some may succeed while others fail (dispatch error, quality gate failure, context overflow, etc.).
+
+**Default (`--continue-on-error`, implied in batch):** Continue processing remaining services. **Phase 2 still runs** using whatever service wikis succeeded in this run (plus any already-integrated services from prior runs). Failed services are logged; they do not block parent wiki generation for successful siblings.
+
+**Strict mode (`--continue-on-error=false`):** Stop at the **first** service failure. Do **not** run Phase 2. Report which service failed and how to retry.
+
+Track per-service outcome for the batch summary:
+
+| Outcome | Symbol | Meaning |
+|---|---|---|
+| Success | `✓` | Wiki output verified for this run |
+| Failure | `✗` | wiki-worker or quality gate failed |
+| Skipped | `-` | Up-to-date or user-skipped (no generation) |
+
+**Batch completion summary** (print after Phase 1, repeat in Phase 4):
+
+```
+[understand-wiki] Batch complete:
+  ✓ order-service (3 domains, 12 pages)
+  ✓ payment-service (2 domains, 8 pages)
+  ✗ inventory-service (wiki-worker failed: context overflow)
+  - notification-service (skipped: up-to-date)
+
+Phase 2: Parent wiki updated with 2/4 services.
+Warning: 1 service failed. Run with --service=inventory-service --full to retry.
+```
+
+**Phase 2 trigger with partial failure:**
+
+- Collect `INTEGRATED_SERVICES` from services that have `wiki/meta.json` after Phase 1 (includes successes from this run and prior integrations).
+- If `--continue-on-error=false` and any failure occurred → skip Phase 2 entirely.
+- If integrated count ≥ 2 → run Phase 2 with available service wikis only.
+- In the summary, state how many services contributed to the parent update (e.g. `2/4 services`).
+
+**Retry guidance:** For each `✗` service, suggest `/understand-wiki --service=<name> [--full]`.
+
+---
+
+## Dry-Run Mode
+
+Use `--dry-run` to preview work without LLM generation or wiki file writes.
+
+**What it shows:**
+
+- Services to process (with reason: new / stale / incremental / up-to-date)
+- Estimated domains per service (from `domain-graph.json`; incremental uses `wiki_diff_domains.py`)
+- Whether Phase 2 would run (requires 2+ integrated services after the planned run)
+- Rough token estimate (~2000 tokens per domain page to regenerate)
+
+**Invocation:**
+
+```bash
+python3 "$PLUGIN_ROOT/skills/understand-wiki/wiki_dry_run.py" "$PROJECT_ROOT"
+# Optional: --full to simulate forced full regeneration for all services
+```
+
+**Example output:**
+
+```
+[understand-wiki] Dry run — no files will be generated.
+
+Services to process:
+  • order-service: FULL (new, no existing wiki)
+    - 3 domains, ~6000 tokens estimated
+  • payment-service: INCREMENTAL (2 domains changed)
+    - 2 domains to regenerate, ~4000 tokens estimated
+  • inventory-service: SKIP (up-to-date)
+
+Phase 2: Parent wiki would be regenerated (2 services changed).
+Total estimated cost: ~10000 tokens
+
+Run without --dry-run to execute.
+```
+
+The executing agent must not dispatch wiki-worker or write wiki files when `--dry-run` is set.
 
 ---
 
@@ -690,7 +876,9 @@ Review: <pass|warn|fail> (<N issues, M warnings>)
   
 - **wiki-worker dispatch fails**:
   → Retry ONCE with same prompt + error context
-  → If second failure: skip service, log error, continue
+  → If second failure: skip service, log error
+  → Batch + `--continue-on-error` (default): continue remaining services, run Phase 2 with successes
+  → Batch + `--continue-on-error=false`: stop batch, skip Phase 2
   
 - **Quality Gate Layer 1 fails**:
   → Report issues to user

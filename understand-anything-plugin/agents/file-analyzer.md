@@ -261,8 +261,10 @@ Using the script's structural data and file categories, create edges:
 | `implements` | A class implements an interface in the project | `0.9` | `forward` |
 | `exports` | File exports a function or class node you created (only for exported items — use IN ADDITION to `contains`, not instead of it) | `0.8` | `forward` |
 | `depends_on` | File has runtime dependency on another project file (broader than imports -- includes dynamic requires, lazy loads) | `0.6` | `forward` |
-| `provides_rpc` | Class exposes an RPC service via annotation (e.g., @MoaProvider, @DubboService). Only emit when `rpcAnnotations` config is present. Source: provider implementation class. Target: interface node. | `0.9` | `forward` |
-| `consumes_rpc` | Class consumes a remote RPC service via annotation (e.g., @MoaConsumer, @DubboReference). Only emit when `rpcAnnotations` config is present. Source: consumer class. Target: interface node. | `0.8` | `forward` |
+| `provides_rpc` | Class/method exposes an RPC service via provider annotation (see RPC section below). Source: provider class. Target: interface node (`class:<path>:<InterfaceName>`). | `0.9` | `forward` |
+| `consumes_rpc` | Class/method consumes a remote RPC via consumer annotation (see RPC section below). Source: consumer class. Target: interface node. | `0.8` | `forward` |
+| `publishes` | Class/method produces messages to a topic (e.g., `@KafkaTemplate`, event publisher). Source: producer class/method. Target: topic node or `class:<path>:<TopicConstant>`. | `0.8` | `forward` |
+| `subscribes` | Class/method consumes messages from a topic (e.g., `@KafkaListener`). Source: consumer class/method. Target: topic node. | `0.8` | `forward` |
 | `tested_by` | Production file is exercised by a test file. Emit when you see the test importing/using the production file. Use direction `production → test` if you can; the merge script will flip inverted edges and dedupe. | `0.5` | `forward` |
 
 **Note on `tested_by`:** It's fine to emit even if you're unsure of the direction (you typically see the relationship while analyzing the *test* file, where the import points back at production). The merge script (`merge-batch-graphs.py`) canonicalizes direction to `production → test` and drops semantically broken edges (test↔test, prod↔prod, orphan endpoint). Path-convention pairing supplements anything you miss.
@@ -305,6 +307,74 @@ The `batchImportData` values contain only resolved project-internal paths — ex
 - **K8s manifests:** Create `serves` edges when a Service/Deployment exposes an endpoint or routes to a container. Create `deploys` edges to the application code that runs inside the container.
 - **Terraform files:** Create `provisions` edges from Terraform resource/module definitions to the infrastructure they create (e.g., database resources, VM instances).
 - **Routing configs (nginx, API gateway, ingress):** Create `routes` edges from routing configuration to the services they direct traffic to.
+
+### RPC and Message-Queue Annotation Detection
+
+When the dispatch prompt includes `rpcAnnotations` configuration (from `config.json`), scan Java/Kotlin/Spring source for RPC and messaging annotations. If `rpcAnnotations` is absent or empty, treat these annotations as ordinary dependencies (`depends_on` only) — do NOT emit `provides_rpc`, `consumes_rpc`, `publishes`, or `subscribes` for them.
+
+**Annotation → edge mapping:**
+
+| Annotation | Framework | Edge type | Role |
+|---|---|---|---|
+| `@DubboService` | Dubbo | `provides_rpc` | RPC provider (class implements interface) |
+| `@DubboReference` | Dubbo | `consumes_rpc` | RPC consumer (injected field/parameter) |
+| `@MoaProvider` | MOA (internal) | `provides_rpc` | RPC provider |
+| `@MoaConsumer` | MOA (internal) | `consumes_rpc` | RPC consumer |
+| `@FeignClient` | Spring Cloud | `consumes_rpc` | HTTP/RPC client to remote service (use `name` or `value` as interface) |
+| `@GrpcService` | gRPC | `provides_rpc` | gRPC server implementation |
+| `@GrpcClient` | gRPC | `consumes_rpc` | gRPC client stub |
+| `@KafkaTemplate` | Spring Kafka | `publishes` | Message producer (topic from method args or constant) |
+| `@KafkaListener` | Spring Kafka | `subscribes` | Message consumer (`topics` / `topicPattern` attribute) |
+
+**Edge shape (RPC):**
+
+- **Source:** `class:<path>:<ClassName>` (or `function:<path>:<method>` when annotation is on a method)
+- **Target:** `class:<path>:<InterfaceName>` — the RPC interface being provided or consumed. Use the fully qualified interface name when visible (e.g., `com.example.PaymentService`); otherwise use the simple name from the annotation or `implements` clause.
+- **Weight:** `provides_rpc` = `0.9`, `consumes_rpc` = `0.8`
+- **Metadata** (encode in `description` as JSON when the interface is not a project node): `{ "interface": "com.example.OrderService", "framework": "dubbo" }` — use framework values: `dubbo`, `moa`, `feign`, `grpc`, `kafka`
+
+**Provider rules (`provides_rpc`):**
+
+1. On `@DubboService`, `@MoaProvider`, or `@GrpcService`: create edge from the annotated class → interface node.
+2. Add tags `rpc-provider` and framework tag (`dubbo`, `moa`, `grpc`).
+3. In the provider node's `summary`, list the interface name and exposed RPC methods (e.g., "Implements PaymentFacade: createPayment(), refund()") for downstream cross-service matching.
+
+**Consumer rules (`consumes_rpc`):**
+
+1. On `@DubboReference`, `@MoaConsumer`, `@GrpcClient`, or `@FeignClient`: create edge from the containing class → target interface/service.
+2. For `@FeignClient`, resolve the target from `name` / `value` / `url` attributes; framework = `feign`.
+3. Add tag `rpc-consumer`. Use `consumes_rpc` exclusively — do NOT also emit `depends_on` for the same remote service.
+4. If the interface definition is not in this batch, emit the edge anyway (merge script resolves or drops dangling targets).
+
+**Message-queue rules (`publishes` / `subscribes`):**
+
+1. `@KafkaListener`: `subscribes` from the annotated class/method → topic target. Extract topic from `topics`, `topicPattern`, or `id` attributes.
+2. `@KafkaTemplate` usage (e.g., `kafkaTemplate.send("order-events", ...)`): `publishes` from the calling class/method → topic. Infer topic from the first string literal argument when possible.
+3. Target ID: prefer `class:<path>:<TopicName>` when a topic constant exists; otherwise use a synthetic node id with the topic string in `name` and document the topic in `description`.
+
+**Example RPC edges:**
+
+```json
+{
+  "source": "class:src/main/java/com/example/OrderServiceImpl.java:OrderServiceImpl",
+  "target": "class:src/main/java/com/example/api/OrderService.java:OrderService",
+  "type": "provides_rpc",
+  "direction": "forward",
+  "weight": 0.9,
+  "description": "{\"interface\":\"com.example.api.OrderService\",\"framework\":\"dubbo\"}"
+}
+```
+
+```json
+{
+  "source": "class:src/main/java/com/example/PaymentClient.java:PaymentClient",
+  "target": "class:src/main/java/com/example/api/PaymentService.java:PaymentService",
+  "type": "consumes_rpc",
+  "direction": "forward",
+  "weight": 0.8,
+  "description": "{\"interface\":\"com.example.api.PaymentService\",\"framework\":\"moa\"}"
+}
+```
 
 Do NOT use edge types not listed in the tables above.
 
@@ -465,6 +535,12 @@ Use these hints for common edge patterns:
 | CI config runs test commands | `triggers` from CI config to test files |
 | SQL migration references table name | `migrates` from migration to table definition |
 | GraphQL resolver imports from code | `defines_schema` from schema to resolver |
+| `@DubboService` / `@MoaProvider` class implements interface | `provides_rpc` from class → interface node |
+| `@DubboReference` / `@MoaConsumer` injected field | `consumes_rpc` from containing class → interface node |
+| `@FeignClient` on interface or class | `consumes_rpc` from client → remote service name |
+| `@GrpcService` / `@GrpcClient` | `provides_rpc` / `consumes_rpc` respectively |
+| `@KafkaListener` on method | `subscribes` from class/method → topic |
+| `kafkaTemplate.send("topic", ...)` | `publishes` from caller → topic |
 
 ## Critical Constraints
 

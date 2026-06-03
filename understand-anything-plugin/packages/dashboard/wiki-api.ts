@@ -58,6 +58,10 @@ export class WikiDataService {
     this.projectRoot = projectRoot;
   }
 
+  getProjectRoot(): string {
+    return this.projectRoot;
+  }
+
   discoverWikis(): WikiTopology {
     if (this.topology) return this.topology;
 

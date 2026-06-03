@@ -129,17 +129,18 @@ describe("Extended types", () => {
     expect(check).toBe("file");
   });
 
-  it("accepts all 26 edge types", () => {
+  it("accepts all edge types including RPC", () => {
     const edgeTypes: EdgeType[] = [
       "imports", "exports", "contains", "inherits", "implements",
       "calls", "subscribes", "publishes", "middleware",
+      "provides_rpc", "consumes_rpc",
       "reads_from", "writes_to", "transforms", "validates",
       "depends_on", "tested_by", "configures",
       "related", "similar_to",
       "deploys", "serves", "migrates", "documents",
       "provisions", "routes", "defines_schema", "triggers",
     ];
-    expect(edgeTypes).toHaveLength(26);
+    expect(edgeTypes).toHaveLength(28);
   });
 
   it("StructuralAnalysis has optional non-code fields", () => {
