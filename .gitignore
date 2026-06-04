@@ -1,6 +1,8 @@
 node_modules
 dist
 .understand-anything
+!tests/fixtures/**/.understand-anything/
+!tests/fixtures/**/.understand-anything/**
 *.tsbuildinfo
 .DS_Store
 .env

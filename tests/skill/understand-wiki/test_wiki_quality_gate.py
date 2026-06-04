@@ -33,7 +33,13 @@ class TestWikiQualityGate(unittest.TestCase):
         })
         self._write_json(os.path.join(self.wiki_dir, "index.json"), {
             "entries": [
-                {"id": "wiki:svc:order", "name": "Order", "type": "domain", "summary": "Order domain"}
+                {
+                    "id": "wiki:svc:order",
+                    "name": "Order",
+                    "type": "domain",
+                    "summary": "Order domain",
+                    "service": "order-service",
+                }
             ]
         })
         self._write_json(os.path.join(self.wiki_dir, "service.json"), {

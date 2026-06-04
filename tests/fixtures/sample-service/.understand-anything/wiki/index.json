@@ -1,0 +1,24 @@
+{
+  "entries": [
+    {
+      "id": "wiki:svc:service",
+      "name": "sample-service",
+      "type": "service",
+      "summary": "Sample microservice for order and payment integration"
+    },
+    {
+      "id": "wiki:svc:order-mgmt",
+      "name": "Order Management",
+      "type": "domain",
+      "summary": "Order creation, validation, and cancellation flows",
+      "service": "sample-service"
+    },
+    {
+      "id": "wiki:svc:payment",
+      "name": "Payment",
+      "type": "domain",
+      "summary": "Payment authorization, capture, and RPC facade",
+      "service": "sample-service"
+    }
+  ]
+}
