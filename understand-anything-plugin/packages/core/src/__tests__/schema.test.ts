@@ -539,13 +539,15 @@ describe("permissive validation", () => {
     expect(result.fatal).toContain("No valid nodes");
   });
 
-  it("returns fatal when project metadata is missing", () => {
+  it("auto-fixes when project metadata is missing", () => {
     const graph = structuredClone(validGraph);
     delete (graph as any).project;
 
     const result = validateGraph(graph);
-    expect(result.success).toBe(false);
-    expect(result.fatal).toContain("project metadata");
+    expect(result.success).toBe(true);
+    expect(result.data!.project).toBeDefined();
+    expect(result.data!.project.name).toBe("Unknown Project");
+    expect(result.issues?.some((i) => i.message.includes("project metadata missing"))).toBe(true);
   });
 
   it("returns fatal when input is not an object", () => {

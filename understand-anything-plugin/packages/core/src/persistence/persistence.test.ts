@@ -95,13 +95,14 @@ describe("persistence", () => {
       expect(loaded).toBeNull();
     });
 
-    it("should throw error when loading a fatally invalid graph", () => {
+    it("should auto-fix and load graph with null project", () => {
       const invalidGraph = { ...sampleGraph, project: null };
       saveGraph(tempDir, invalidGraph as unknown as KnowledgeGraph);
 
-      expect(() => {
-        loadGraph(tempDir);
-      }).toThrow(/Invalid knowledge graph/);
+      const loaded = loadGraph(tempDir);
+      expect(loaded).not.toBeNull();
+      expect(loaded!.project).toBeDefined();
+      expect(loaded!.project.name).toBe("Unknown Project");
     });
 
     it("should skip validation when validate option is false", () => {
