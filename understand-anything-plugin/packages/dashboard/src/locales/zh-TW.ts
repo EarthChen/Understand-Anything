@@ -104,6 +104,12 @@ export const zhTW = {
   domainView: {
     backToDomains: "返回領域列表",
   },
+  systemView: "系統視圖",
+  systemOverview: "系統概覽",
+  systemServiceCount: "服務數量",
+  systemTotalNodes: "總節點數",
+  systemDrillDown: "點擊服務節點深入探索",
+  systemNoGraph: "未找到系統圖譜。請執行 build-system-graph.py 產生。",
   detailLevel: {
     filesTitle: "僅檔案 — 架構級依賴（快速）",
     classesTitle: "檔案 + 類別 — 程式碼結構及繼承關係",

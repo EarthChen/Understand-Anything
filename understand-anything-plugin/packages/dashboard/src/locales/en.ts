@@ -104,6 +104,12 @@ export const en = {
   domainView: {
     backToDomains: "Back to domains",
   },
+  systemView: "System",
+  systemOverview: "System Overview",
+  systemServiceCount: "Services",
+  systemTotalNodes: "Total Nodes",
+  systemDrillDown: "Click a service to explore",
+  systemNoGraph: "No system graph found. Run build-system-graph.py to generate one.",
   detailLevel: {
     filesTitle: "Files only — architecture-level dependencies (fast)",
     classesTitle: "Files + Classes — code structure with inheritance",

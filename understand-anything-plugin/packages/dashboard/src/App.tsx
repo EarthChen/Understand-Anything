@@ -6,6 +6,7 @@ import GraphView from "./components/GraphView";
 import DomainGraphView from "./components/DomainGraphView";
 import KnowledgeGraphView from "./components/KnowledgeGraphView";
 import WikiView from "./components/WikiView";
+import SystemOverview from "./components/SystemOverview";
 import SearchBar from "./components/SearchBar";
 import NodeInfo from "./components/NodeInfo";
 import LayerLegend from "./components/LayerLegend";
@@ -205,6 +206,17 @@ function Dashboard({ accessToken }: { accessToken: string }) {
       .catch(() => {});
   }, [setDomainGraph]);
 
+  useEffect(() => {
+    fetch(dataUrl("system-graph.json", accessToken))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.nodes) {
+          useDashboardStore.getState().setSystemGraph(data);
+        }
+      })
+      .catch(() => {});
+  }, [accessToken]);
+
   // Detect wiki availability
   const setWikiAvailable = useDashboardStore((s) => s.setWikiAvailable);
   useEffect(() => {
@@ -271,6 +283,7 @@ function DashboardContent({
   const isKnowledgeGraph = useDashboardStore((s) => s.isKnowledgeGraph);
   const domainGraph = useDashboardStore((s) => s.domainGraph);
   const wikiAvailable = useDashboardStore((s) => s.wikiAvailable);
+  const systemGraph = useDashboardStore((s) => s.systemGraph);
   const layoutIssues = useDashboardStore((s) => s.layoutIssues);
   const isMobile = useIsMobile();
   const { t } = useI18n();
@@ -469,6 +482,20 @@ function DashboardContent({
             <>
               <div className="w-px h-5 bg-border-subtle" />
               <div className="flex items-center bg-elevated rounded-lg p-0.5">
+                {systemGraph && (
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("system")}
+                    title={t.systemView}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                      viewMode === "system"
+                        ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                        : "text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+                    }`}
+                  >
+                    {t.systemView}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setViewMode("domain")}
@@ -510,10 +537,55 @@ function DashboardContent({
               </div>
             </>
           )}
+          {graph && !isKnowledgeGraph && systemGraph && !domainGraph && !wikiAvailable && (
+            <>
+              <div className="w-px h-5 bg-border-subtle" />
+              <div className="flex items-center bg-elevated rounded-lg p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("system")}
+                  title={t.systemView}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    viewMode === "system"
+                      ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                      : "text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+                  }`}
+                >
+                  {t.systemView}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("structural")}
+                  title={t.drawer.structural}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    viewMode === "structural"
+                      ? "bg-accent/20 text-accent"
+                      : "text-text-muted hover:text-text-secondary"
+                  }`}
+                >
+                  {t.drawer.structural}
+                </button>
+              </div>
+            </>
+          )}
           {graph && !isKnowledgeGraph && !domainGraph && wikiAvailable && (
             <>
               <div className="w-px h-5 bg-border-subtle" />
               <div className="flex items-center bg-elevated rounded-lg p-0.5">
+                {systemGraph && (
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("system")}
+                    title={t.systemView}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                      viewMode === "system"
+                        ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                        : "text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+                    }`}
+                  >
+                    {t.systemView}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setViewMode("structural")}
@@ -695,7 +767,9 @@ function DashboardContent({
       <div className="flex-1 flex min-h-0 relative">
         {/* Graph area */}
         <div className="flex-1 min-w-0 min-h-0 relative">
-          {viewMode === "wiki" ? (
+          {viewMode === "system" && systemGraph ? (
+            <SystemOverview />
+          ) : viewMode === "wiki" ? (
             <WikiView accessToken={accessToken} />
           ) : viewMode === "knowledge" ? (
             <KnowledgeGraphView />
@@ -704,7 +778,7 @@ function DashboardContent({
           ) : (
             <GraphView />
           )}
-          {viewMode !== "wiki" && (
+          {viewMode !== "wiki" && viewMode !== "system" && (
             <div className="absolute top-3 right-3 text-sm text-text-muted/60 pointer-events-none select-none">
               {t.common.pressKeyboard}
             </div>
@@ -712,7 +786,7 @@ function DashboardContent({
         </div>
 
         {/* Right sidebar — telescopes at narrower widths (hidden in wiki mode) */}
-        <aside className={`w-[260px] md:w-[300px] lg:w-[360px] shrink-0 bg-surface border-l border-border-subtle overflow-auto ${viewMode === "wiki" ? "hidden" : ""}`}>
+        <aside className={`w-[260px] md:w-[300px] lg:w-[360px] shrink-0 bg-surface border-l border-border-subtle overflow-auto ${viewMode === "wiki" || viewMode === "system" ? "hidden" : ""}`}>
           {sidebarContent}
         </aside>
 

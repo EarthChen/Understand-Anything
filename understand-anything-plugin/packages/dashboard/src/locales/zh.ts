@@ -104,6 +104,12 @@ export const zh = {
   domainView: {
     backToDomains: "返回领域列表",
   },
+  systemView: "系统视图",
+  systemOverview: "系统概览",
+  systemServiceCount: "服务数量",
+  systemTotalNodes: "总节点数",
+  systemDrillDown: "点击服务节点深入探索",
+  systemNoGraph: "未找到系统图谱。请运行 build-system-graph.py 生成。",
   detailLevel: {
     filesTitle: "仅文件 — 架构级依赖（快速）",
     classesTitle: "文件 + 类 — 代码结构及继承关系",

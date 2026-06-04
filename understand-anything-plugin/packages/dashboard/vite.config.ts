@@ -275,6 +275,7 @@ export default defineConfig({
           const isProtectedEndpoint =
             pathname === "/knowledge-graph.json" ||
             pathname === "/domain-graph.json" ||
+            pathname === "/system-graph.json" ||
             pathname === "/diff-overlay.json" ||
             pathname === "/meta.json" ||
             pathname === "/config.json" ||
@@ -418,6 +419,24 @@ export default defineConfig({
           if (pathname === "/file-content.json") {
             const result = readSourceFile(url);
             sendJson(res, result.statusCode, result.payload);
+            return;
+          }
+
+          if (pathname === "/system-graph.json") {
+            const systemCandidates = graphFileCandidates("system-graph.json");
+            for (const candidate of systemCandidates) {
+              if (fs.existsSync(candidate)) {
+                try {
+                  const raw = JSON.parse(fs.readFileSync(candidate, "utf-8"));
+                  sendJson(res, 200, raw);
+                  return;
+                } catch {
+                  sendJson(res, 500, { error: "Failed to read system graph file" });
+                  return;
+                }
+              }
+            }
+            sendJson(res, 404, { error: "system-graph.json not found" });
             return;
           }
 

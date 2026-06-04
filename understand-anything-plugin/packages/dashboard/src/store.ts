@@ -14,7 +14,7 @@ export type NavigationLevel = "overview" | "layer-detail";
 export type NodeType = "file" | "function" | "class" | "module" | "concept" | "config" | "document" | "service" | "table" | "endpoint" | "pipeline" | "schema" | "resource" | "domain" | "flow" | "step" | "article" | "entity" | "topic" | "claim" | "source";
 export type Complexity = "simple" | "moderate" | "complex";
 export type EdgeCategory = "structural" | "behavioral" | "data-flow" | "dependencies" | "semantic" | "infrastructure" | "domain" | "knowledge";
-export type ViewMode = "structural" | "domain" | "knowledge" | "wiki";
+export type ViewMode = "structural" | "domain" | "knowledge" | "wiki" | "system";
 export type DetailLevel = "file" | "class";
 
 export interface FilterState {
@@ -207,6 +207,8 @@ interface DashboardStore {
   wikiPageContent: unknown | null;
   wikiLoading: boolean;
   wikiTopology: { hasParentWiki: boolean; services: Array<{ name: string }> } | null;
+  systemGraph: any | null;
+  setSystemGraph: (graph: any | null) => void;
   wikiViewScope: "global" | string; // "global" or a service name
   wikiBreadcrumb: Array<{ label: string; page: { type: string; id: string; service?: string } | null }>;
   setWikiAvailable: (available: boolean) => void;
@@ -739,6 +741,8 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
   wikiPageContent: null,
   wikiLoading: false,
   wikiTopology: null,
+  systemGraph: null,
+  setSystemGraph: (graph) => set({ systemGraph: graph }),
   wikiViewScope: "global",
   wikiBreadcrumb: [],
   setWikiAvailable: (available) => set({ wikiAvailable: available }),

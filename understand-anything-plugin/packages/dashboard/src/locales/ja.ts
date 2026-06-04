@@ -104,6 +104,12 @@ export const ja = {
   domainView: {
     backToDomains: "ドメインに戻る",
   },
+  systemView: "System",
+  systemOverview: "System Overview",
+  systemServiceCount: "Services",
+  systemTotalNodes: "Total Nodes",
+  systemDrillDown: "Click a service to explore",
+  systemNoGraph: "No system graph found. Run build-system-graph.py to generate one.",
   detailLevel: {
     filesTitle: "ファイルのみ — アーキテクチャレベルの依存関係（高速）",
     classesTitle: "ファイル + クラス — 継承を含むコード構造",
