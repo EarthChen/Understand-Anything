@@ -55,6 +55,27 @@ function flowStepToMarkdown(step: WikiFlowStep): string {
   return line;
 }
 
+function sanitizeMermaidLabel(text: string): string {
+  return text.replace(/["\[\](){}|<>#&]/g, " ").trim();
+}
+
+function flowToMermaidDiagram(flow: WikiFlow): string {
+  const steps = Array.isArray(flow.steps) ? flow.steps : [];
+  if (steps.length === 0) return "";
+
+  const lines: string[] = ["```mermaid", "flowchart TD"];
+  for (let i = 0; i < steps.length; i++) {
+    const nodeId = `S${i}`;
+    const label = sanitizeMermaidLabel(steps[i].name || `Step ${i + 1}`);
+    lines.push(`    ${nodeId}["${label}"]`);
+  }
+  for (let i = 0; i < steps.length - 1; i++) {
+    lines.push(`    S${i} --> S${i + 1}`);
+  }
+  lines.push("```");
+  return lines.join("\n");
+}
+
 function flowToMarkdown(flow: WikiFlow): string {
   const lines: string[] = [];
   const anchorId = flow.id ?? flow.name?.toLowerCase().replace(/\s+/g, "-") ?? "";
@@ -67,8 +88,13 @@ function flowToMarkdown(flow: WikiFlow): string {
   lines.push(flow.summary);
   lines.push("");
 
-  if (flow.steps.length > 0) {
-    for (const step of flow.steps) {
+  const steps = Array.isArray(flow.steps) ? flow.steps : [];
+  if (steps.length > 0) {
+    lines.push(flowToMermaidDiagram(flow));
+    lines.push("");
+    lines.push("#### Steps");
+    lines.push("");
+    for (const step of steps) {
       lines.push(flowStepToMarkdown(step));
     }
     lines.push("");

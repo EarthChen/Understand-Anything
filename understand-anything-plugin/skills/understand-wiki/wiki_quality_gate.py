@@ -103,6 +103,18 @@ def _validate_index(index: dict, issues: list[str]) -> None:
     entries = index.get("entries")
     if not isinstance(entries, list) or len(entries) == 0:
         issues.append("index.json: entries is empty or not an array")
+        return
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        entry_type = entry.get("type")
+        if entry_type == "domain" and not entry.get("service"):
+            issues.append(f"index.json: entries[{i}] (domain) missing 'service' field")
+        if entry_type == "flow":
+            if not entry.get("service"):
+                issues.append(f"index.json: entries[{i}] (flow) missing 'service' field")
+            if not entry.get("domain"):
+                issues.append(f"index.json: entries[{i}] (flow) missing 'domain' field")
 
 
 def _validate_service(service: dict, issues: list[str]) -> None:

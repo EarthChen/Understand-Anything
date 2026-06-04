@@ -50,6 +50,7 @@ export interface WikiIndexEntry {
   name: string;
   type: "overview" | "architecture" | "domain" | "flow" | "step" | "service";
   service?: string;
+  domain?: string;
   summary: string;
 }
 

@@ -282,6 +282,7 @@ Collect all pages and write to `$PROJECT_ROOT/.understand-anything/wiki/index.js
       "id": "wiki:domain:order-management",
       "name": "Order Management",
       "type": "domain",
+      "service": "<service name>",
       "summary": "<1-line domain description>"
     },
     {
@@ -289,6 +290,7 @@ Collect all pages and write to `$PROJECT_ROOT/.understand-anything/wiki/index.js
       "name": "Create Order",
       "type": "flow",
       "service": "<service name>",
+      "domain": "wiki:domain:order-management",
       "summary": "<1-line flow description>"
     }
   ]
@@ -297,8 +299,8 @@ Collect all pages and write to `$PROJECT_ROOT/.understand-anything/wiki/index.js
 
 **Index entry rules:**
 - One entry for `service.json` (type: `service`)
-- One entry per domain page (type: `domain`)
-- One entry per flow within each domain (type: `flow`)
+- One entry per domain page (type: `domain`); MUST include `service` field
+- One entry per flow within each domain (type: `flow`); MUST include both `service` and `domain` fields — `domain` is the parent domain entry's `id` (e.g., `wiki:domain:order-management`)
 - `summary` must be a single sentence, max 100 characters
 
 ---

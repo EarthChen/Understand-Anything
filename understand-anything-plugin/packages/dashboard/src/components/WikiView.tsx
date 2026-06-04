@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type HTMLAttributes } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { useDashboardStore } from "../store";
 import {
@@ -28,8 +30,9 @@ type WikiPageType = "service" | "domain" | "overview" | "architecture" | "cross-
 interface NavEntry {
   id: string;
   name: string;
-  type: WikiPageType;
+  type: WikiPageType | "flow";
   service?: string;
+  domain?: string;
   summary: string;
 }
 
@@ -88,8 +91,12 @@ function WikiNavTree({
   const domainEntries = entries.filter((e) => !e.service && e.type === "domain");
 
   const services = topology?.services ?? [];
-  const serviceEntries = (svcName: string) =>
-    entries.filter((e) => e.service === svcName);
+  const serviceDomainEntries = (svcName: string) =>
+    entries.filter((e) => e.service === svcName && e.type === "domain");
+  const flowsForDomain = (svcName: string, domainId: string) =>
+    entries.filter(
+      (e) => e.service === svcName && e.type === "flow" && e.domain === domainId,
+    );
 
   const showGlobalSection = topology?.hasParentWiki && viewScope === "global";
   const showServiceSection = viewScope === "global" || services.length <= 1;
@@ -170,7 +177,7 @@ function WikiNavTree({
           {services
             .filter((s) => viewScope === "global" || s.name === viewScope)
             .map((svc) => {
-              const svcItems = serviceEntries(svc.name);
+              const domainItems = serviceDomainEntries(svc.name);
               return (
                 <div key={svc.name} className="mb-2">
                   <button
@@ -184,24 +191,49 @@ function WikiNavTree({
                   >
                     📦 {svc.name}
                   </button>
-                  {svcItems.length > 0 && (
+                  {domainItems.length > 0 && (
                     <div className="ml-4 mt-0.5">
-                      {svcItems.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() =>
-                            onSelect({ type: "domain", id: item.id, service: svc.name })
-                          }
-                          className={`w-full text-left px-2 py-1 rounded text-[11px] transition-colors ${
-                            isActive("domain", item.id, svc.name)
-                              ? "bg-accent/20 text-accent"
-                              : "hover:bg-surface-hover text-text-secondary"
-                          }`}
-                        >
-                          {item.name}
-                        </button>
-                      ))}
+                      {domainItems.map((item) => {
+                        const flows = flowsForDomain(svc.name, item.id);
+                        return (
+                          <div key={item.id}>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onSelect({ type: "domain", id: item.id, service: svc.name })
+                              }
+                              className={`w-full text-left px-2 py-1 rounded text-[11px] transition-colors ${
+                                isActive("domain", item.id, svc.name)
+                                  ? "bg-accent/20 text-accent"
+                                  : "hover:bg-surface-hover text-text-secondary"
+                              }`}
+                            >
+                              {item.name}
+                            </button>
+                            {flows.length > 0 && (
+                              <div className="ml-3 mt-0.5">
+                                {flows.map((flow) => (
+                                  <button
+                                    key={flow.id}
+                                    type="button"
+                                    onClick={() =>
+                                      onSelect({
+                                        type: "domain",
+                                        id: item.id,
+                                        service: svc.name,
+                                        fragment: `flow:${flow.id.replace(/^wiki:flow:/, "")}`,
+                                      } as { type: WikiPageType; id: string; service: string })
+                                    }
+                                    className="w-full text-left px-2 py-0.5 rounded text-[10px] transition-colors hover:bg-surface-hover text-text-muted"
+                                  >
+                                    ↳ {flow.name}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -336,6 +368,8 @@ function WikiContent({
     <div className="flex-1 overflow-y-auto p-6 max-w-3xl">
       <article className="max-w-none wiki-markdown">
         <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeRaw]}
           urlTransform={(url) =>
             url.startsWith("source://") || url.startsWith("wiki://")
               ? url
@@ -443,10 +477,17 @@ export default function WikiView({ accessToken }: { accessToken: string }) {
   }, [wikiActivePage, apiUrl, setWikiPageContent, setWikiLoading]);
 
   const handleSelect = useCallback(
-    (page: { type: WikiPageType; id: string; service?: string }) => {
-      setWikiActivePage(page);
-      setWikiPageContent(null);
-      setWikiLoading(true);
+    (page: { type: WikiPageType; id: string; service?: string; fragment?: string }) => {
+      const isSamePage =
+        wikiActivePage?.type === page.type &&
+        wikiActivePage?.id === page.id &&
+        wikiActivePage?.service === page.service;
+
+      if (!isSamePage) {
+        setWikiActivePage(page);
+        setWikiPageContent(null);
+        setWikiLoading(true);
+      }
 
       // Build breadcrumb
       const crumbs: Array<{ label: string; page: { type: string; id: string; service?: string } | null }> = [];
@@ -459,8 +500,22 @@ export default function WikiView({ accessToken }: { accessToken: string }) {
       const entry = wikiIndex?.entries.find((e) => e.id === page.id);
       crumbs.push({ label: entry?.name ?? page.id, page: null });
       setWikiBreadcrumb(crumbs);
+
+      if (page.fragment) {
+        const scrollToFragment = () => {
+          const el = document.getElementById(page.fragment!);
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        };
+        if (isSamePage) {
+          scrollToFragment();
+        } else {
+          setTimeout(scrollToFragment, 300);
+        }
+      }
     },
-    [setWikiActivePage, setWikiPageContent, setWikiLoading, setWikiBreadcrumb, wikiIndex, wikiTopology],
+    [setWikiActivePage, setWikiPageContent, setWikiLoading, setWikiBreadcrumb, wikiIndex, wikiTopology, wikiActivePage],
   );
 
   const handleBreadcrumbNav = useCallback(
