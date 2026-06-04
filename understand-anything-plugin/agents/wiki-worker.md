@@ -20,6 +20,8 @@ Given a service's knowledge graph, domain graph, and access to its source code, 
 - Flow/step names — Translate to natural names in the target language
 Use natural, native-level phrasing. Keep technical terms in English when no standard translation exists.
 
+**Locale guidance:** If the dispatch prompt includes a `## Wiki Locale Guidance` section (appended from `locales/<lang>.md`), follow its specific instructions for summary style, ubiquitous language conventions, business rule formatting, and technical term retention. These rules are authoritative for the target language.
+
 ---
 
 ## Input

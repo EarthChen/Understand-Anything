@@ -13,6 +13,7 @@ import {
 } from "../utils/wikiToMarkdown";
 import { WikiLinkRenderer, type WikiLinkNavigation } from "./WikiLinkRenderer";
 import { WikiSourcePanel } from "./WikiSourcePanel";
+import { useI18n } from "../contexts/I18nContext";
 
 function crossDomainSlug(id: string): string {
   return id.replace(/^(?:wiki:)?(?:cross-domain|domain):/, "");
@@ -292,6 +293,8 @@ function WikiContent({
   onWikiNavigate: (nav: WikiLinkNavigation) => void;
   onSourceOpen: (nav: WikiLinkNavigation) => void;
 }) {
+  const { t } = useI18n();
+  const wikiLabels = t.wiki;
   const components = useMemo(
     () => ({
       a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
@@ -344,19 +347,19 @@ function WikiContent({
   try {
     switch (pageType) {
       case "overview":
-        markdown = overviewToMarkdown(content as WikiOverview);
+        markdown = overviewToMarkdown(content as WikiOverview, wikiLabels);
         break;
       case "architecture":
-        markdown = architectureToMarkdown(content as WikiArchitecture);
+        markdown = architectureToMarkdown(content as WikiArchitecture, wikiLabels);
         break;
       case "cross-domain":
-        markdown = crossDomainToMarkdown(content as WikiCrossDomain);
+        markdown = crossDomainToMarkdown(content as WikiCrossDomain, wikiLabels);
         break;
       case "service":
-        markdown = serviceOverviewToMarkdown(content as WikiServiceOverview);
+        markdown = serviceOverviewToMarkdown(content as WikiServiceOverview, wikiLabels);
         break;
       case "domain":
-        markdown = domainPageToMarkdown(content as WikiDomainPage);
+        markdown = domainPageToMarkdown(content as WikiDomainPage, wikiLabels);
         break;
     }
   } catch (err) {

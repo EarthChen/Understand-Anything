@@ -138,6 +138,8 @@ Build `$LANGUAGE_DIRECTIVE`:
 > **Language directive**: Generate all textual content in **{OUTPUT_LANGUAGE}**. Maintain technical accuracy while using natural, native-level phrasing. Keep technical terms in English when no standard translation exists.
 ```
 
+**Locale guidance injection:** If `$OUTPUT_LANGUAGE` is NOT `en`, read the locale guidance file at `$SKILL_DIR/locales/<language-code>.md` (e.g., `$SKILL_DIR/locales/zh.md`, `$SKILL_DIR/locales/ja.md`, `$SKILL_DIR/locales/ko.md`). If the file exists, store its contents as `$WIKI_LOCALE_GUIDANCE`. This will be appended to the wiki-worker dispatch prompt under a `## Wiki Locale Guidance` header to provide language-specific formatting conventions for summaries, ubiquitous language, business rules, and technical term retention. If the locale file does not exist for the specified language, skip silently — the `$LANGUAGE_DIRECTIVE` still applies.
+
 ### Step 4.5 — RPC Annotations Configuration
 
 Custom RPC frameworks are configured in `$SERVICE_ROOT/.understand-anything/config.json` under the `rpcAnnotations` field. This tells `/understand` (file-analyzer) which annotation pairs map to provider/consumer roles so the knowledge graph gets `provides_rpc` / `consumes_rpc` edges for cross-service matching.

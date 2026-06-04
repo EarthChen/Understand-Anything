@@ -79,6 +79,8 @@ FILTERED_KG=$(python3 "$SKILL_DIR/wiki_kg_filter.py" \
 > Output language: `$OUTPUT_LANGUAGE`
 > $LANGUAGE_DIRECTIVE
 >
+> $WIKI_LOCALE_GUIDANCE
+>
 > **Instructions:** Only generate the page for domain `$DOMAIN_ID`. Write output to:
 > `$SERVICE_ROOT/.understand-anything/intermediate/wiki/domains/$DOMAIN_ID.json`
 
@@ -104,6 +106,8 @@ Dispatch ONE `wiki-worker` agent for the target service (full mode).
 >
 > Output language: `$OUTPUT_LANGUAGE`
 > $LANGUAGE_DIRECTIVE
+>
+> $WIKI_LOCALE_GUIDANCE
 >
 > RPC annotations config (if present; see Step 4.5):
 > ```json
