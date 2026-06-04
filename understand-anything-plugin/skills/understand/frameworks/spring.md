@@ -36,9 +36,9 @@ When analyzing a Spring Boot project, apply these additional conventions on top 
 
 **@Configuration bean definitions** — When a `@Configuration` class defines `@Bean` methods, create `configures` edges from the configuration class to the types it produces. These beans become available for injection throughout the application.
 
-### RPC Annotation Patterns (MOA / Dubbo)
+### RPC Annotation Patterns (MOA / Dubbo / gRPC / Feign)
 
-When the project config contains `rpcAnnotations`, apply these additional rules to recognize RPC service boundaries:
+The following RPC annotations are **always detected** — no `rpcAnnotations` configuration required:
 
 **MOA framework (`@MoaProvider` / `@MoaConsumer`):**
 
@@ -64,7 +64,7 @@ When the project config contains `rpcAnnotations`, apply these additional rules 
 3. The interface node (target of both `provides_rpc` and `consumes_rpc`) uses the ID format `class:<path>:<InterfaceName>`. If the interface definition file is not in this batch, emit the edge anyway — the merge script will resolve or drop it.
 4. In the provider node's summary, explicitly list all methods declared in the RPC interface (e.g., "Implements PaymentFacade RPC interface: createPayment(), queryPayment(), refund()"). This enables downstream cross-service matching at method level.
 
-**Detection logic:** Only apply RPC annotation rules when the dispatch prompt includes `rpcAnnotations` configuration. If `rpcAnnotations` is absent or empty, treat `@MoaProvider`/`@MoaConsumer`/`@DubboService`/`@DubboReference` as ordinary annotations (plain `depends_on` edges).
+**Detection logic:** All annotations listed above are built-in and always active. The `rpcAnnotations` config in `config.json` is only needed to add **custom framework annotations** not listed here (e.g., a proprietary in-house RPC framework). Custom entries are merged with the built-in list.
 
 ### Architectural Layers for Spring Boot
 

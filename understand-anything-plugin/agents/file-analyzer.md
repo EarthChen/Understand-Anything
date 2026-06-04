@@ -310,9 +310,11 @@ The `batchImportData` values contain only resolved project-internal paths — ex
 
 ### RPC and Message-Queue Annotation Detection
 
-When the dispatch prompt includes `rpcAnnotations` configuration (from `config.json`), scan Java/Kotlin/Spring source for RPC and messaging annotations. If `rpcAnnotations` is absent or empty, treat these annotations as ordinary dependencies (`depends_on` only) — do NOT emit `provides_rpc`, `consumes_rpc`, `publishes`, or `subscribes` for them.
+**Built-in annotations** are **always** detected — no configuration required. When any of the annotations in the table below appear in Java/Kotlin/Spring source, emit the corresponding `provides_rpc`, `consumes_rpc`, `publishes`, or `subscribes` edge automatically.
 
-**Annotation → edge mapping:**
+**`rpcAnnotations` in `config.json` is only needed for custom frameworks** that are NOT in the built-in list below. When present, custom entries are merged with the built-in list — they never override or disable built-in detection.
+
+**Built-in annotation → edge mapping:**
 
 | Annotation | Framework | Edge type | Role |
 |---|---|---|---|

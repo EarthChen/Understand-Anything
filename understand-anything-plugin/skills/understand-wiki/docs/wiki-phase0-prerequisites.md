@@ -142,15 +142,25 @@ Build `$LANGUAGE_DIRECTIVE`:
 
 ### Step 4.5 — RPC Annotations Configuration
 
-Custom RPC frameworks are configured in `$SERVICE_ROOT/.understand-anything/config.json` under the `rpcAnnotations` field. This tells `/understand` (file-analyzer) which annotation pairs map to provider/consumer roles so the knowledge graph gets `provides_rpc` / `consumes_rpc` edges for cross-service matching.
+**Built-in frameworks are always detected** — the file-analyzer automatically recognizes the following annotations and emits `provides_rpc` / `consumes_rpc` / `publishes` / `subscribes` edges without any configuration:
+
+| Annotation | Framework | Edge type |
+|---|---|---|
+| `@DubboService` / `@DubboReference` | Dubbo | `provides_rpc` / `consumes_rpc` |
+| `@MoaProvider` / `@MoaConsumer` | MOA | `provides_rpc` / `consumes_rpc` |
+| `@FeignClient` | Spring Cloud | `consumes_rpc` |
+| `@GrpcService` / `@GrpcClient` | gRPC | `provides_rpc` / `consumes_rpc` |
+| `@KafkaTemplate` / `@KafkaListener` | Spring Kafka | `publishes` / `subscribes` |
+
+**`rpcAnnotations` in `config.json` is only needed for custom frameworks** not in the built-in list above. When present, custom entries are merged with the built-in annotations — they never override or disable built-in detection.
 
 **Schema** — `rpcAnnotations` is an array of objects:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `provider` | string | yes | Provider annotation class name (e.g. `"@MoaProvider"`, `"@DubboService"`) |
-| `consumer` | string | yes | Consumer annotation class name (e.g. `"@MoaConsumer"`, `"@DubboReference"`) |
-| `type` | string | yes | Framework identifier used in graph tags and matchers (e.g. `"moa"`, `"dubbo"`, `"grpc"`) |
+| `provider` | string | yes | Provider annotation class name (e.g. `"@CustomRpcProvider"`) |
+| `consumer` | string | yes | Consumer annotation class name (e.g. `"@CustomRpcConsumer"`) |
+| `type` | string | yes | Framework identifier used in graph tags and matchers (e.g. `"custom-rpc"`) |
 | `interfaceField` | string | no | Annotation attribute that holds the RPC interface name; defaults to `"value"` |
 
 **Example `config.json`:**
@@ -161,22 +171,20 @@ Parent-level batch config may also set `excludeServices` (basename list, case-se
 { "excludeServices": ["common", "shared", "libs", "tools"] }
 ```
 
-Service-level RPC annotations:
+Service-level custom RPC annotations (only needed for non-built-in frameworks):
 
 ```json
 {
   "outputLanguage": "zh",
   "rpcAnnotations": [
-    { "provider": "@DubboService", "consumer": "@DubboReference", "type": "dubbo" },
-    { "provider": "@MoaProvider", "consumer": "@MoaConsumer", "type": "moa", "interfaceField": "service" },
-    { "provider": "@GrpcService", "consumer": "@GrpcClient", "type": "grpc" }
+    { "provider": "@CustomRpcProvider", "consumer": "@CustomRpcConsumer", "type": "custom-rpc", "interfaceField": "service" }
   ]
 }
 ```
 
 **Behavior:**
-- Missing or empty `rpcAnnotations` → backward compatible; file-analyzer treats RPC annotations as ordinary dependencies; cross-service script matching has no RPC edges to match.
-- Non-empty `rpcAnnotations` → passed to wiki-worker and `/understand` so analyzers emit `provides_rpc` / `consumes_rpc` edges; `cross-service-matcher.py` matches consumers to providers by interface name across services.
+- Missing or empty `rpcAnnotations` → built-in annotations (Dubbo, MOA, Feign, gRPC, Kafka) are still detected automatically. Only custom framework detection is unavailable.
+- Non-empty `rpcAnnotations` → custom entries are merged with built-in annotations, passed to wiki-worker and `/understand` so analyzers emit RPC edges for both built-in and custom frameworks.
 
 **Load and validate** (optional sanity check before generation):
 
