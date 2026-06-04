@@ -8,47 +8,15 @@ import {
   type SimulationNodeDatum,
   type SimulationLinkDatum,
 } from "d3-force";
+import type { SystemGraph, SystemGraphNode } from "@understand-anything/core";
 import { useDashboardStore } from "../store";
 import { useI18n } from "../contexts/I18nContext";
-
-interface SystemGraphNode {
-  id: string;
-  type: string;
-  name: string;
-  summary?: string;
-  languages?: string[];
-  frameworks?: string[];
-  stats?: { nodes: number; edges: number; files: number };
-}
-
-interface SystemGraphEdge {
-  source: string;
-  target: string;
-  type: string;
-  detail?: { interface?: string; method?: string; rpcType?: string };
-}
-
-interface SystemGraph {
-  project: {
-    name?: string;
-    description?: string;
-    serviceCount?: number;
-    totalNodes?: number;
-    totalEdges?: number;
-  };
-  nodes: SystemGraphNode[];
-  edges: SystemGraphEdge[];
-  serviceIndex?: Record<
-    string,
-    { hasKg?: boolean; hasWiki?: boolean; hasDomain?: boolean }
-  >;
-}
 
 interface SystemNode extends SimulationNodeDatum, SystemGraphNode {}
 
 interface SystemLink extends SimulationLinkDatum<SystemNode> {
-  type: string;
-  detail?: SystemGraphEdge["detail"];
+  type: SystemGraph["edges"][number]["type"];
+  detail?: SystemGraph["edges"][number]["detail"];
 }
 
 const EDGE_COLORS: Record<string, string> = {
@@ -65,8 +33,8 @@ function serviceKeyFromNodeId(nodeId: string): string {
 }
 
 export default function SystemOverview() {
-  const systemGraph = useDashboardStore((s) => s.systemGraph) as SystemGraph | null;
-  const setViewMode = useDashboardStore((s) => s.setViewMode);
+  const systemGraph = useDashboardStore((s) => s.systemGraph);
+  const setActiveService = useDashboardStore((s) => s.setActiveService);
   const { t } = useI18n();
   const svgRef = useRef<SVGSVGElement>(null);
   const [layoutNodes, setLayoutNodes] = useState<SystemNode[]>([]);
@@ -78,7 +46,7 @@ export default function SystemOverview() {
         nodes: [] as SystemNode[],
         edges: [] as SystemLink[],
         project: null,
-        serviceIndex: undefined as SystemGraph["serviceIndex"],
+        serviceIndex: undefined as SystemGraph["serviceIndex"] | undefined,
       };
     }
     const svcNodes: SystemNode[] = systemGraph.nodes
@@ -136,9 +104,13 @@ export default function SystemOverview() {
     };
   }, [nodes, edges]);
 
-  const handleNodeClick = useCallback(() => {
-    setViewMode("structural");
-  }, [setViewMode]);
+  const handleNodeClick = useCallback(
+    (node: SystemNode) => {
+      const serviceName = node.id.replace("microservice:", "");
+      setActiveService(serviceName);
+    },
+    [setActiveService],
+  );
 
   if (!systemGraph) {
     return (
@@ -190,7 +162,7 @@ export default function SystemOverview() {
                 <button
                   type="button"
                   className="w-full text-left p-2 rounded-lg hover:bg-elevated transition-colors"
-                  onClick={handleNodeClick}
+                  onClick={() => handleNodeClick(node)}
                 >
                   <div className="font-medium text-sm text-text-primary">
                     {node.name}
@@ -248,11 +220,11 @@ export default function SystemOverview() {
               key={node.id}
               className="cursor-pointer"
               transform={`translate(${node.x ?? 0},${node.y ?? 0})`}
-              onClick={handleNodeClick}
+              onClick={() => handleNodeClick(node)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  handleNodeClick();
+                  handleNodeClick(node);
                 }
               }}
               role="button"

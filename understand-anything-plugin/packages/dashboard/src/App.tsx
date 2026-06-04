@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useCallback, lazy, Suspense } from "react";
 import { validateGraph } from "@understand-anything/core/schema";
+import { validateSystemGraph } from "@understand-anything/core";
 import type { GraphIssue } from "@understand-anything/core/schema";
 import { useDashboardStore } from "./store";
 import GraphView from "./components/GraphView";
@@ -209,9 +210,15 @@ function Dashboard({ accessToken }: { accessToken: string }) {
   useEffect(() => {
     fetch(dataUrl("system-graph.json", accessToken))
       .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.nodes) {
-          useDashboardStore.getState().setSystemGraph(data);
+      .then((data: unknown) => {
+        if (!data) return;
+        const result = validateSystemGraph(data);
+        if (result.valid && result.data) {
+          useDashboardStore.getState().setSystemGraph(result.data);
+        } else {
+          console.warn(
+            `[system-graph] validation failed: ${result.issues.join("; ")}`,
+          );
         }
       })
       .catch(() => {});
@@ -230,6 +237,34 @@ function Dashboard({ accessToken }: { accessToken: string }) {
       })
       .catch(() => {});
   }, [accessToken, setWikiAvailable]);
+
+  const activeService = useDashboardStore((s) => s.activeService);
+
+  const loadServiceGraph = useCallback(
+    async (serviceName: string) => {
+      const token = accessToken || "";
+      const url = `/api/graph?service=${encodeURIComponent(serviceName)}&file=knowledge-graph.json${token ? `&token=${encodeURIComponent(token)}` : ""}`;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const data = await res.json();
+        const result = validateGraph(data);
+        if (result.success && result.data) {
+          useDashboardStore.getState().setGraph(result.data);
+          useDashboardStore.getState().setViewMode("structural");
+        }
+      } catch {
+        // Service KG load failed — stay on current view
+      }
+    },
+    [accessToken],
+  );
+
+  useEffect(() => {
+    if (activeService) {
+      loadServiceGraph(activeService);
+    }
+  }, [activeService, loadServiceGraph]);
 
   return (
     <I18nProvider language={outputLanguage ?? "en"}>
@@ -284,6 +319,7 @@ function DashboardContent({
   const domainGraph = useDashboardStore((s) => s.domainGraph);
   const wikiAvailable = useDashboardStore((s) => s.wikiAvailable);
   const systemGraph = useDashboardStore((s) => s.systemGraph);
+  const activeService = useDashboardStore((s) => s.activeService);
   const layoutIssues = useDashboardStore((s) => s.layoutIssues);
   const isMobile = useIsMobile();
   const { t } = useI18n();
@@ -478,6 +514,18 @@ function DashboardContent({
           </h1>
           <div className="w-px h-5 bg-border-subtle hidden sm:block" />
           <PersonaSelector />
+          {activeService && viewMode !== "system" && systemGraph && (
+            <button
+              type="button"
+              onClick={() => {
+                useDashboardStore.getState().setActiveService(null);
+                setViewMode("system");
+              }}
+              className="px-2 py-1 text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
+            >
+              ← {t.systemView}
+            </button>
+          )}
           {graph && !isKnowledgeGraph && domainGraph && (
             <>
               <div className="w-px h-5 bg-border-subtle" />

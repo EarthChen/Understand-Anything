@@ -280,6 +280,7 @@ export default defineConfig({
             pathname === "/meta.json" ||
             pathname === "/config.json" ||
             pathname === "/file-content.json" ||
+            pathname === "/api/graph" ||
             pathname.startsWith("/wiki/") ||
             pathname.startsWith("/api/wiki");
 
@@ -419,6 +420,81 @@ export default defineConfig({
           if (pathname === "/file-content.json") {
             const result = readSourceFile(url);
             sendJson(res, result.statusCode, result.payload);
+            return;
+          }
+
+          if (pathname === "/api/graph") {
+            const serviceName = url.searchParams.get("service");
+            const fileName = url.searchParams.get("file") || "knowledge-graph.json";
+
+            if (!serviceName) {
+              sendJson(res, 400, { error: "service parameter required" });
+              return;
+            }
+
+            if (
+              serviceName.includes("/") ||
+              serviceName.includes("\\") ||
+              serviceName.includes("..")
+            ) {
+              sendJson(res, 400, { error: "invalid service name" });
+              return;
+            }
+
+            const allowedFiles = [
+              "knowledge-graph.json",
+              "domain-graph.json",
+              "meta.json",
+              "config.json",
+            ];
+            if (!allowedFiles.includes(fileName)) {
+              sendJson(res, 400, { error: "file not allowed" });
+              return;
+            }
+
+            const graphDir = process.env.GRAPH_DIR;
+            const candidates = [
+              ...(graphDir
+                ? [
+                    path.resolve(
+                      graphDir,
+                      serviceName,
+                      ".understand-anything",
+                      fileName,
+                    ),
+                  ]
+                : []),
+              path.resolve(
+                process.cwd(),
+                serviceName,
+                ".understand-anything",
+                fileName,
+              ),
+              path.resolve(
+                process.cwd(),
+                "../../..",
+                serviceName,
+                ".understand-anything",
+                fileName,
+              ),
+            ];
+
+            for (const candidate of candidates) {
+              if (fs.existsSync(candidate)) {
+                try {
+                  const raw = JSON.parse(fs.readFileSync(candidate, "utf-8"));
+                  sendJson(res, 200, raw);
+                  return;
+                } catch {
+                  sendJson(res, 500, { error: "Failed to read graph file" });
+                  return;
+                }
+              }
+            }
+
+            sendJson(res, 404, {
+              error: `${fileName} not found for service ${serviceName}`,
+            });
             return;
           }
 

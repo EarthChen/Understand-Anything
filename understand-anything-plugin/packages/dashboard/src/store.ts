@@ -7,6 +7,7 @@ import type {
   KnowledgeGraph,
   TourStep,
 } from "@understand-anything/core/types";
+import type { SystemGraph } from "@understand-anything/core";
 import type { ReactFlowInstance } from "@xyflow/react";
 
 export type Persona = "non-technical" | "junior" | "experienced";
@@ -207,8 +208,10 @@ interface DashboardStore {
   wikiPageContent: unknown | null;
   wikiLoading: boolean;
   wikiTopology: { hasParentWiki: boolean; services: Array<{ name: string }> } | null;
-  systemGraph: any | null;
-  setSystemGraph: (graph: any | null) => void;
+  systemGraph: SystemGraph | null;
+  setSystemGraph: (graph: SystemGraph | null) => void;
+  activeService: string | null;
+  setActiveService: (service: string | null) => void;
   wikiViewScope: "global" | string; // "global" or a service name
   wikiBreadcrumb: Array<{ label: string; page: { type: string; id: string; service?: string } | null }>;
   setWikiAvailable: (available: boolean) => void;
@@ -743,6 +746,8 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
   wikiTopology: null,
   systemGraph: null,
   setSystemGraph: (graph) => set({ systemGraph: graph }),
+  activeService: null,
+  setActiveService: (service) => set({ activeService: service }),
   wikiViewScope: "global",
   wikiBreadcrumb: [],
   setWikiAvailable: (available) => set({ wikiAvailable: available }),
