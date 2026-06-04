@@ -114,7 +114,7 @@ Review: <pass|warn|fail> (<N issues, M warnings>)
 
 ## Error Handling
 
-- **Prerequisite trigger fails** (`/understand` or `/understand-domain`): report error, skip service, continue batch
+- **Prerequisite missing or stale** (`/understand` or `/understand-domain`): auto-dispatch `upstream-updater` subagent; on failure, log warning and proceed with stale data (single mode) or skip service (batch mode)
 - **wiki-worker dispatch fails**: retry once; on second failure skip service. Batch default continues and runs Phase 2 with successes; `--continue-on-error=false` stops batch and skips Phase 2
 - **Quality Gate Layer 1 fails**: report issues; batch skips service; single mode asks user
 - **Quality Gate Layer 2 fails (reviewer)**: retry wiki-worker once with feedback; if still failing, save Wiki with warnings and proceed

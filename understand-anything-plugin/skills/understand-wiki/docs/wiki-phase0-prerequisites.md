@@ -205,8 +205,8 @@ SERVICE_UA="$SERVICE_ROOT/.understand-anything"
 # Check knowledge graph
 if [ ! -f "$SERVICE_UA/knowledge-graph.json" ]; then
   echo "[understand-wiki] Service \"${SERVICE_NAME}\" has no knowledge graph."
-  echo "[understand-wiki] Triggering /understand for \"${SERVICE_NAME}\"..."
-  # Dispatch /understand on the service (the dispatching agent should handle this)
+  echo "[understand-wiki] Dispatching upstream-updater to run /understand..."
+  # → Dispatch upstream-updater subagent (see Subagent Dispatch Protocol below)
   # After completion, verify KG exists
   if [ ! -f "$SERVICE_UA/knowledge-graph.json" ]; then
     echo "Error: /understand failed for \"${SERVICE_NAME}\". Cannot generate Wiki without KG."
@@ -217,8 +217,8 @@ fi
 # Check domain graph
 if [ ! -f "$SERVICE_UA/domain-graph.json" ]; then
   echo "[understand-wiki] Service \"${SERVICE_NAME}\" has no domain graph."
-  echo "[understand-wiki] Triggering /understand-domain for \"${SERVICE_NAME}\"..."
-  # Dispatch /understand-domain on the service
+  echo "[understand-wiki] Dispatching upstream-updater to run /understand-domain..."
+  # → Dispatch upstream-updater subagent (see Subagent Dispatch Protocol below)
   if [ ! -f "$SERVICE_UA/domain-graph.json" ]; then
     echo "Error: /understand-domain failed for \"${SERVICE_NAME}\". Cannot generate Wiki without DG."
     exit 1
@@ -226,11 +226,39 @@ if [ ! -f "$SERVICE_UA/domain-graph.json" ]; then
 fi
 ```
 
-### Step 5a — Upstream KG/DG Staleness Check
+#### Subagent Dispatch Protocol
+
+When KG or DG is missing (Step 5) or stale (Step 5a), dispatch an `upstream-updater` subagent from `$PLUGIN_ROOT/agents/upstream-updater.md` instead of running the skill inline. This prevents context window bloat — `/understand` alone has 7 phases with multiple nested subagents.
+
+**Dispatch template (KG update):**
+
+> Read the agent definition at `$PLUGIN_ROOT/agents/upstream-updater.md` and follow its instructions.
+>
+> - `$SKILL_PATH`: `$PLUGIN_ROOT/skills/understand/SKILL.md`
+> - `$SERVICE_ROOT`: `<service directory path>`
+> - `$SKILL_ARGS`: *(empty for missing KG; see Step 5a for stale KG)*
+> - `$EXPECTED_OUTPUT`: `$SERVICE_ROOT/.understand-anything/knowledge-graph.json`
+
+**Dispatch template (DG update):**
+
+> Read the agent definition at `$PLUGIN_ROOT/agents/upstream-updater.md` and follow its instructions.
+>
+> - `$SKILL_PATH`: `$PLUGIN_ROOT/skills/understand-domain/SKILL.md`
+> - `$SERVICE_ROOT`: `<service directory path>`
+> - `$SKILL_ARGS`: *(empty — `/understand-domain` auto-derives from KG when available)*
+> - `$EXPECTED_OUTPUT`: `$SERVICE_ROOT/.understand-anything/domain-graph.json`
+
+**Sequential dependency:** If both KG and DG need updating, dispatch KG first, wait for completion, then dispatch DG. `/understand-domain` benefits from an up-to-date KG (Path 2: derive from graph).
+
+**Batch mode concurrency:** In batch mode, upstream updates for different services MAY run in parallel (each operates on a separate `$SERVICE_ROOT`). Within one service, KG → DG is still sequential.
+
+### Step 5a — Upstream KG/DG Staleness Check & Auto-Update
 
 After KG and DG exist, verify they were generated from the current git HEAD. Wiki `meta.json` can be updated to the latest commit while graphs still reflect an older tree (silent stale upstream).
 
-Skip when `--force` is set:
+**When stale upstream is detected, automatically dispatch `upstream-updater` subagents to refresh them** (same protocol as Step 5). This eliminates the manual step of re-running `/understand` and `/understand-domain` separately.
+
+Skip staleness check entirely when `--force` is set (proceed with existing graphs as-is):
 
 ```bash
 SKILL_DIR="$PLUGIN_ROOT/skills/understand-wiki"
@@ -247,17 +275,59 @@ for w in d.get('warnings', []):
     print(f'[understand-wiki] WARNING: {w}')
 "
     if [ "$KG_STALE" = "true" ] || [ "$DG_STALE" = "true" ]; then
-      echo "[understand-wiki] Upstream data may be stale. Regenerate before Wiki generation:"
-      [ "$KG_STALE" = "true" ] && echo "  → Run /understand on \"${SERVICE_NAME}\" (knowledge graph)"
-      [ "$DG_STALE" = "true" ] && echo "  → Run /understand-domain on \"${SERVICE_NAME}\" (domain graph)"
-      echo "[understand-wiki] Use --force to skip this check and proceed anyway."
-      exit 1
+      echo "[understand-wiki] Upstream data is stale. Auto-updating..."
+
+      # --- Auto-trigger KG update (incremental) ---
+      if [ "$KG_STALE" = "true" ]; then
+        echo "[understand-wiki] Dispatching upstream-updater: /understand (incremental) for \"${SERVICE_NAME}\"..."
+        # → Dispatch upstream-updater subagent with:
+        #   $SKILL_PATH = $PLUGIN_ROOT/skills/understand/SKILL.md
+        #   $SERVICE_ROOT = <current service root>
+        #   $SKILL_ARGS = (empty — /understand auto-detects incremental via commit hash diff)
+        #   $EXPECTED_OUTPUT = $SERVICE_ROOT/.understand-anything/knowledge-graph.json
+        #
+        # /understand will run incremental (git diff based) since KG+meta already exist.
+        # Wait for completion before proceeding.
+
+        if [ ! -f "$SERVICE_UA/knowledge-graph.json" ]; then
+          echo "[understand-wiki] WARNING: /understand update failed for \"${SERVICE_NAME}\". Proceeding with stale KG."
+        else
+          echo "[understand-wiki] KG updated for \"${SERVICE_NAME}\"."
+        fi
+      fi
+
+      # --- Auto-trigger DG update (always full, but derives from KG when available) ---
+      if [ "$DG_STALE" = "true" ]; then
+        echo "[understand-wiki] Dispatching upstream-updater: /understand-domain for \"${SERVICE_NAME}\"..."
+        # → Dispatch upstream-updater subagent with:
+        #   $SKILL_PATH = $PLUGIN_ROOT/skills/understand-domain/SKILL.md
+        #   $SERVICE_ROOT = <current service root>
+        #   $SKILL_ARGS = (empty — auto-derives from freshly updated KG)
+        #   $EXPECTED_OUTPUT = $SERVICE_ROOT/.understand-anything/domain-graph.json
+        #
+        # /understand-domain has no incremental mode, but if KG was just updated,
+        # it will use Path 2 (derive from graph) which is cheaper than file scanning.
+        # Wait for completion before proceeding.
+
+        if [ ! -f "$SERVICE_UA/domain-graph.json" ]; then
+          echo "[understand-wiki] WARNING: /understand-domain update failed for \"${SERVICE_NAME}\". Proceeding with stale DG."
+        else
+          echo "[understand-wiki] DG updated for \"${SERVICE_NAME}\"."
+        fi
+      fi
     fi
   fi
 else
   echo "[understand-wiki] --force: skipping upstream staleness check."
 fi
 ```
+
+**Key behaviors:**
+- **KG auto-update is incremental:** `/understand` detects existing graph + changed commit hash → only re-analyzes `git diff` changed files (fast, low token cost)
+- **DG auto-update is full but cheap:** `/understand-domain` always regenerates, but derives from the freshly updated KG (no file scanning needed)
+- **Sequential dependency:** KG update completes before DG update starts (DG benefits from fresh KG)
+- **Graceful degradation:** If upstream update fails, proceed with stale data and log a warning (wiki generation can still produce useful output from slightly outdated graphs)
+- **`--force` skips entirely:** Use when you intentionally want to generate wiki from current graphs regardless of staleness
 
 Commit hashes are read from `project.gitCommitHash` in each graph (or `meta.generatedFromCommit` / `.understand-anything/meta.json` as fallback). Compared with `git -C "$SERVICE_ROOT" rev-parse HEAD`.
 
