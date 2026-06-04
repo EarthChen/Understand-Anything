@@ -1,6 +1,6 @@
 ## Phase 1 — Service Wiki Generation
 
-Report: `[Phase 1/4] Generating service Wiki...`
+Report: `[Phase 1/5] Generating service Wiki...`
 
 ### Dispatch Strategy (Incremental vs Full)
 
@@ -21,7 +21,7 @@ if [ "$INCREMENTAL" = true ] && [ -n "$DIRTY_DOMAINS" ]; then
   # Handle removed domains
   REMOVED=$(echo "$DIFF_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(d['removed']))")
   for DOMAIN_ID in $REMOVED; do
-    rm -f "$SERVICE_UA/wiki/domains/${DOMAIN_ID}.json"
+    rm -f "$SERVICE_UA/intermediate/wiki/domains/${DOMAIN_ID}.json"
     echo "[understand-wiki] Removed obsolete domain page: $DOMAIN_ID"
   done
   
@@ -34,7 +34,7 @@ if [ "$INCREMENTAL" = true ] && [ -n "$DIRTY_DOMAINS" ]; then
   
   # Update meta.json commit hash
   CURRENT_COMMIT=$(git -C "$SERVICE_ROOT" rev-parse HEAD 2>/dev/null || echo "")
-  python3 "$SKILL_DIR/wiki_meta_update.py" "$SERVICE_UA/wiki/meta.json" "$CURRENT_COMMIT"
+  python3 "$SKILL_DIR/wiki_meta_update.py" "$SERVICE_UA/intermediate/wiki/meta.json" "$CURRENT_COMMIT"
   
   # Cleanup snapshot
   rm -f "$DG_SNAPSHOT"
@@ -42,7 +42,7 @@ if [ "$INCREMENTAL" = true ] && [ -n "$DIRTY_DOMAINS" ]; then
 elif [ "$INCREMENTAL" = true ] && [ -z "$DIRTY_DOMAINS" ]; then
   # --- No changes: only update commit hash ---
   CURRENT_COMMIT=$(git -C "$SERVICE_ROOT" rev-parse HEAD 2>/dev/null || echo "")
-  python3 "$SKILL_DIR/wiki_meta_update.py" "$SERVICE_UA/wiki/meta.json" "$CURRENT_COMMIT"
+  python3 "$SKILL_DIR/wiki_meta_update.py" "$SERVICE_UA/intermediate/wiki/meta.json" "$CURRENT_COMMIT"
   rm -f "$DG_SNAPSHOT"
   echo "[understand-wiki] Meta updated. No wiki pages regenerated."
   
@@ -83,7 +83,7 @@ FILTERED_KG=$(python3 "$SKILL_DIR/wiki_kg_filter.py" \
 > $LANGUAGE_DIRECTIVE
 >
 > **Instructions:** Only generate the page for domain `$DOMAIN_ID`. Write output to:
-> `$SERVICE_ROOT/.understand-anything/wiki/domains/$DOMAIN_ID.json`
+> `$SERVICE_ROOT/.understand-anything/intermediate/wiki/domains/$DOMAIN_ID.json`
 
 ### Full Generation — Single-Service Mode
 
@@ -113,14 +113,12 @@ Dispatch ONE `wiki-worker` agent for the target service (full mode).
 > $RPC_ANNOTATIONS
 > ```
 >
-> Write all output files to: `$SERVICE_ROOT/.understand-anything/wiki/`
+> Write all output files to: `$SERVICE_ROOT/.understand-anything/intermediate/wiki/`
 
 After the agent completes, verify output:
 ```bash
-test -f "$SERVICE_ROOT/.understand-anything/wiki/meta.json" && \
-test -f "$SERVICE_ROOT/.understand-anything/wiki/index.json" && \
-test -f "$SERVICE_ROOT/.understand-anything/wiki/service.json" && \
-test -d "$SERVICE_ROOT/.understand-anything/wiki/domains"
+test -f "$SERVICE_ROOT/.understand-anything/intermediate/wiki/service.json" && \
+test -d "$SERVICE_ROOT/.understand-anything/intermediate/wiki/domains"
 ```
 
 If any file is missing, report the failure and stop (do not proceed to Quality Gate).

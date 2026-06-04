@@ -37,7 +37,7 @@ Generate a team knowledge base Wiki for microservice projects. Each service gets
 ## Progress Reporting
 
 Report progress at each phase transition:
-> `[Phase N/4] <phase name>...`
+> `[Phase N/5] <phase name>...`
 
 During batch processing:
 > `Generating Wiki for service X/N: <service-name>...`
@@ -61,6 +61,12 @@ Dispatch `wiki-worker` agents (incremental per-domain or full), verify output, h
 
 **Detailed implementation:** See [Phase 1 — Service Wiki Generation](docs/wiki-phase1-generation.md) (includes [Partial Failure Policy](docs/wiki-phase1-generation.md#partial-failure-policy))
 
+### Phase 1.5 — Deterministic Assembly
+
+After wiki-worker writes content to `intermediate/wiki/`, run the deterministic pipeline to validate, index, and assemble the final wiki.
+
+**Detailed implementation:** See [Phase 1.5 — Assembly Pipeline](docs/wiki-phase1.5-assembly.md)
+
 ### Quality Gate (between Phase 1 and Phase 2)
 
 Structural validation (always) and optional `wiki-reviewer` when `--review` is set. Dry-run planning exits before Phase 1.
@@ -79,9 +85,9 @@ Build parent-level `index.json` and `meta.json` for navigation and metadata.
 
 **Detailed implementation:** See [Phase 3 — Index](docs/wiki-phase3-index.md)
 
-### Phase 4 — Cleanup and Report
+### Phase 5 — Cleanup and Report
 
-Report: `[Phase 4/4] Finalizing...`
+Report: `[Phase 5/5] Finalizing...`
 
 1. Clean up temp files:
 ```bash

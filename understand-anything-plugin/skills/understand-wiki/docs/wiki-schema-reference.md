@@ -4,7 +4,7 @@
 
 | File | Required Fields |
 |---|---|
-| `meta.json` | `gitCommitHash`, `generatedAt`, `version`, `outputLanguage` |
+| `meta.json` | `gitCommitHash`, `generatedAt`, `version`, `outputLanguage`, `domainHashes` (content fingerprints), `sourceRefCoverage` (step traceability), `qualityScore` (schema/sourceRef/depth/grade) |
 | `index.json` | `entries[]` each with `id`, `name`, `type`, `summary`; domain entries MUST include `service`; flow entries MUST include `service` + `domain` (parent domain id) |
 | `service.json` | `name`, `description`, `techStack[]`, `modules[]`, `entryPoints[]` |
 | `domains/<slug>.json` | `id`, `name`, `summary`, `entities[]`, `flows[]` |
