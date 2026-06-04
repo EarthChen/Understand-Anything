@@ -41,7 +41,7 @@ The dispatching skill provides the following in your prompt:
 
 ### Full Mode (default, no `$TARGET_DOMAIN`)
 
-Generate ALL wiki pages for the service: service overview, all domain pages, and index.
+Generate ALL wiki content for the service: service overview and all domain pages.
 
 ### Single-Domain Mode (`$TARGET_DOMAIN` is set)
 

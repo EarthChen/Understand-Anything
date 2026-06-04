@@ -67,7 +67,7 @@ After wiki-worker writes content to `intermediate/wiki/`, run the deterministic 
 
 **Detailed implementation:** See [Phase 1.5 — Assembly Pipeline](docs/wiki-phase1.5-assembly.md)
 
-### Quality Gate (between Phase 1 and Phase 2)
+### Quality Gate (after Phase 1.5)
 
 Structural validation (always) and optional `wiki-reviewer` when `--review` is set. Dry-run planning exits before Phase 1.
 
@@ -85,9 +85,9 @@ Build parent-level `index.json` and `meta.json` for navigation and metadata.
 
 **Detailed implementation:** See [Phase 3 — Index](docs/wiki-phase3-index.md)
 
-### Phase 5 — Cleanup and Report
+### Phase 4 — Cleanup and Report
 
-Report: `[Phase 5/5] Finalizing...`
+Report: `[Phase 4/5] Finalizing...`
 
 1. Clean up temp files:
 ```bash
@@ -146,4 +146,4 @@ A service is considered "integrated" when:
 test -f "$SERVICE_ROOT/.understand-anything/wiki/meta.json"
 ```
 
-This file is the last thing wiki-worker writes, so its presence guarantees a complete Wiki.
+This file is written by `assemble-wiki.py` (Phase 1.5). Its presence guarantees a complete, validated Wiki.

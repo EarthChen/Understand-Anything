@@ -40,7 +40,7 @@ The executing agent must not dispatch wiki-worker or write wiki files when `--dr
 
 ## Quality Gate
 
-Located between Phase 1 and Phase 2. Runs for every successfully generated service Wiki.
+Located after Phase 1.5 (deterministic assembly). Validates the assembled `wiki/` output before proceeding to Phase 2 (cross-service). Runs for every successfully generated service Wiki.
 
 ### Layer 1 — Automatic Structural Validation (Always)
 
@@ -89,5 +89,6 @@ After the reviewer completes, read the report:
 - **Overall verdict: fail** → attempt ONE retry:
   1. Format reviewer feedback into a retry appendix (see wiki-reviewer.md "Feedback Format" section)
   2. Re-dispatch wiki-worker with original prompt + retry appendix
+  2.5. Re-run Phase 1.5 (deterministic assembly) on updated intermediate output
   3. Re-run Layer 1 validation on the new output
   4. If still failing after retry → report failure, skip this service, proceed with other services

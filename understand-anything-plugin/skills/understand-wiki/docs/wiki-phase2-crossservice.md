@@ -1,6 +1,6 @@
 ## Phase 2 — Cross-Service Relationship Identification + Parent Wiki Generation
 
-Report: `[Phase 2/4] Generating parent orchestration Wiki...`
+Report: `[Phase 2/5] Generating parent orchestration Wiki...`
 
 **Trigger condition:** At least 2 services have Wiki (`.understand-anything/wiki/meta.json` exists).
 

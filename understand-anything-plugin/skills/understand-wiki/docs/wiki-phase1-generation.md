@@ -32,19 +32,16 @@ if [ "$INCREMENTAL" = true ] && [ -n "$DIRTY_DOMAINS" ]; then
     # Dispatch wiki-worker for service-overview only
   fi
   
-  # Update meta.json commit hash
-  CURRENT_COMMIT=$(git -C "$SERVICE_ROOT" rev-parse HEAD 2>/dev/null || echo "")
-  python3 "$SKILL_DIR/wiki_meta_update.py" "$SERVICE_UA/intermediate/wiki/meta.json" "$CURRENT_COMMIT"
+  # Phase 1.5 will handle meta.json generation via assemble-wiki.py
   
   # Cleanup snapshot
   rm -f "$DG_SNAPSHOT"
   
 elif [ "$INCREMENTAL" = true ] && [ -z "$DIRTY_DOMAINS" ]; then
-  # --- No changes: only update commit hash ---
-  CURRENT_COMMIT=$(git -C "$SERVICE_ROOT" rev-parse HEAD 2>/dev/null || echo "")
-  python3 "$SKILL_DIR/wiki_meta_update.py" "$SERVICE_UA/intermediate/wiki/meta.json" "$CURRENT_COMMIT"
+  # --- No changes: only update commit hash via assembly ---
+  # No domain changes — Phase 1.5 (assemble-wiki.py) will update commit hash in final wiki/meta.json
+  echo "[understand-wiki] No wiki pages need regeneration. Running Phase 1.5 for commit hash update."
   rm -f "$DG_SNAPSHOT"
-  echo "[understand-wiki] Meta updated. No wiki pages regenerated."
   
 else
   # --- Full Generation Path ---
@@ -122,6 +119,8 @@ test -d "$SERVICE_ROOT/.understand-anything/intermediate/wiki/domains"
 ```
 
 If any file is missing, report the failure and stop (do not proceed to Quality Gate).
+
+If intermediate output is verified, proceed to **Phase 1.5** (deterministic assembly). See [Phase 1.5 — Assembly Pipeline](wiki-phase1.5-assembly.md).
 
 ### Batch Mode
 

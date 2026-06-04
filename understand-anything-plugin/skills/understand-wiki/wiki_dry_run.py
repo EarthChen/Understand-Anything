@@ -185,7 +185,7 @@ def classify_service(
         return ServicePlan(
             name=name,
             mode="SKIP",
-            reason="commit changed, no domain changes (meta update only)",
+            reason="commit changed, no domain changes (Phase 1.5 assembly only)",
             detail=f"wiki {wiki_commit[:8]} → {commit[:8]}",
             total_domains=total_domains,
             domains_to_generate=0,

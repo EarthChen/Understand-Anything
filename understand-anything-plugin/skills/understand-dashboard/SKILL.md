@@ -79,7 +79,7 @@ Start the Understand Anything dashboard to visualize the knowledge graph for the
 
 5. Start the Vite dev server pointing at the project's knowledge graph:
    ```bash
-   cd <dashboard-dir> && GRAPH_DIR=<project-dir> npx vite --host 127.0.0.1
+   cd <dashboard-dir> && GRAPH_DIR=<project-dir> npx vite --host 0.0.0.0
    ```
    Run this in the background so the user can continue working.
 
