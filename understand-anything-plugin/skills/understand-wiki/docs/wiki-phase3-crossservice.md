@@ -136,3 +136,15 @@ This validates:
 - `domains/*.json` (cross-domain pages): services array, steps with order/service/description
 
 If `passed: false`, report issues but continue to Phase 4 (index construction) — parent wiki issues are non-blocking since service wikis remain valid independently.
+
+### Step 5 — Update System Graph
+
+After parent wiki generation, update the system-level graph for Dashboard's SystemOverview tab:
+
+```bash
+python3 "$SKILL_DIR/build-system-graph.py" "$PROJECT_ROOT"
+```
+
+This synchronizes `system-graph.json` with the latest cross-service analysis from `architecture.json`. The system graph enables the Dashboard's System tab, showing an interactive service topology with drill-down navigation.
+
+If the script fails, log a warning and continue — the system graph is a convenience feature, not a prerequisite for wiki completion.
