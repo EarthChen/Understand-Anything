@@ -37,7 +37,7 @@ function normalizeGraphPath(filePath: string, projectRoot: string): string | nul
   const rawPath = path.isAbsolute(filePath)
     ? filePath.startsWith(projectRoot)
       ? path.relative(projectRoot, filePath)
-      : null
+      : path.basename(filePath) // absolute but outside root — match graph-serving behavior
     : filePath;
   if (rawPath === null) return null;
   const normalized = path.normalize(rawPath);

@@ -2,31 +2,48 @@ import { useEffect, useRef, useState } from "react";
 
 let mermaidPromise: Promise<typeof import("mermaid")> | null = null;
 
+function readThemeVariables() {
+  const cs = getComputedStyle(document.documentElement);
+  const get = (name: string) => cs.getPropertyValue(name).trim();
+  const accent = get("--color-accent") || "#d4a574";
+  const accentMatch = accent.replace("#", "").match(/.{2}/g);
+  const r = parseInt(accentMatch?.[0] ?? "d4", 16);
+  const g = parseInt(accentMatch?.[1] ?? "a5", 16);
+  const b = parseInt(accentMatch?.[2] ?? "74", 16);
+
+  return {
+    primaryColor: accent,
+    primaryTextColor: get("--color-text-primary") || "#f5f0eb",
+    primaryBorderColor: `rgba(${r}, ${g}, ${b}, 0.25)`,
+    lineColor: `rgba(${r}, ${g}, ${b}, 0.3)`,
+    secondaryColor: get("--color-elevated") || "#1a1a1a",
+    tertiaryColor: get("--color-surface") || "#111111",
+    background: get("--color-root") || "#0a0a0a",
+    mainBkg: get("--color-elevated") || "#1a1a1a",
+    nodeBorder: `rgba(${r}, ${g}, ${b}, 0.25)`,
+    clusterBkg: get("--color-panel") || "#141414",
+    titleColor: get("--color-accent-bright") || "#e8c49a",
+    edgeLabelBackground: get("--color-elevated") || "#1a1a1a",
+  };
+}
+
 function loadMermaid() {
   if (!mermaidPromise) {
     mermaidPromise = import("mermaid").then((mod) => {
       mod.default.initialize({
         startOnLoad: false,
         theme: "dark",
-        themeVariables: {
-          primaryColor: "#d4a574",
-          primaryTextColor: "#f5f0eb",
-          primaryBorderColor: "rgba(212, 165, 116, 0.25)",
-          lineColor: "rgba(212, 165, 116, 0.3)",
-          secondaryColor: "#1a1a1a",
-          tertiaryColor: "#111111",
-          background: "#0a0a0a",
-          mainBkg: "#1a1a1a",
-          nodeBorder: "rgba(212, 165, 116, 0.25)",
-          clusterBkg: "#141414",
-          titleColor: "#e8c49a",
-          edgeLabelBackground: "#1a1a1a",
-        },
+        themeVariables: readThemeVariables(),
       });
       return mod;
     });
   }
   return mermaidPromise;
+}
+
+function getThemeKey(): string {
+  const cs = getComputedStyle(document.documentElement);
+  return `${cs.getPropertyValue("--color-root")}|${cs.getPropertyValue("--color-accent")}`;
 }
 
 let renderCounter = 0;
@@ -35,13 +52,51 @@ export function MermaidDiagram({ content }: { content: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [themeKey, setThemeKey] = useState(getThemeKey);
+
+  // Watch for theme changes via MutationObserver on data-theme attribute
+  useEffect(() => {
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === "attributes" && m.attributeName === "data-theme") {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(() => {
+            mermaidPromise = null;
+            setThemeKey(getThemeKey());
+          }, 50);
+          break;
+        }
+      }
+    });
+
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+
+    return () => {
+      observer.disconnect();
+      if (debounce) clearTimeout(debounce);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     const id = `mermaid-${++renderCounter}`;
+    setError("");
+    setLoading(true);
 
     loadMermaid()
-      .then(({ default: mermaid }) => mermaid.render(id, content.trim()))
+      .then(({ default: mermaid }) => {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: "dark",
+          themeVariables: readThemeVariables(),
+        });
+        return mermaid.render(id, content.trim());
+      })
       .then(({ svg }) => {
         if (!cancelled && containerRef.current) {
           containerRef.current.innerHTML = svg;
@@ -58,7 +113,7 @@ export function MermaidDiagram({ content }: { content: string }) {
     return () => {
       cancelled = true;
     };
-  }, [content]);
+  }, [content, themeKey]);
 
   if (error) {
     return (
