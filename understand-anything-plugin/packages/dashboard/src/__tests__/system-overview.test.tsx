@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
+import type { SystemGraph } from "@understand-anything/core";
 import SystemOverview from "../components/SystemOverview";
 import { useDashboardStore } from "../store";
 import { I18nProvider } from "../contexts/I18nContext";
 
-const mockSystemGraph = {
+const mockSystemGraph: SystemGraph = {
   version: "1.0.0",
   generatedAt: "2026-06-04T12:00:00Z",
   project: {

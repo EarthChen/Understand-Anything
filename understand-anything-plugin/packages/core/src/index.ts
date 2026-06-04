@@ -137,3 +137,14 @@ export {
   type WikiValidationResult,
   type AutoFixResult,
 } from "./wiki-schema.js";
+export type {
+  SystemGraph,
+  SystemGraphNode,
+  SystemGraphEdge,
+  SystemGraphEdgeDetail,
+  SystemGraphProject,
+  SystemGraphServiceStats,
+  SystemGraphServiceIndex,
+  SystemGraphValidationResult,
+} from "./system-graph.js";
+export { validateSystemGraph } from "./system-graph.js";
