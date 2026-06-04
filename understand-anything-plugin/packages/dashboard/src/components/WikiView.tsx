@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type HTMLAttributes } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import { MermaidDiagram } from "./MermaidDiagram";
 import { useDashboardStore } from "../store";
 import {
   serviceOverviewToMarkdown,
@@ -268,6 +269,25 @@ function WikiContent({
           onSourceOpen={onSourceOpen}
         />
       ),
+      pre: ({ children, ...rest }: HTMLAttributes<HTMLPreElement>) => {
+        const child = Array.isArray(children) ? children[0] : children;
+        if (
+          child &&
+          typeof child === "object" &&
+          "props" in child &&
+          typeof child.props?.className === "string" &&
+          child.props.className.includes("language-mermaid")
+        ) {
+          const code =
+            typeof child.props.children === "string"
+              ? child.props.children
+              : Array.isArray(child.props.children)
+                ? child.props.children.join("")
+                : "";
+          return <MermaidDiagram content={code} />;
+        }
+        return <pre {...rest}>{children}</pre>;
+      },
     }),
     [onWikiNavigate, onSourceOpen],
   );
@@ -314,7 +334,7 @@ function WikiContent({
 
   return (
     <div className="flex-1 overflow-y-auto p-6 max-w-3xl">
-      <article className="prose prose-sm prose-invert max-w-none wiki-markdown">
+      <article className="max-w-none wiki-markdown">
         <ReactMarkdown
           urlTransform={(url) =>
             url.startsWith("source://") || url.startsWith("wiki://")
