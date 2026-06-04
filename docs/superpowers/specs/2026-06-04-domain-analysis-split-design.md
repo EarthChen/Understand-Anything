@@ -43,13 +43,13 @@ graph TD
 
 ```mermaid
 graph TD
-    KG[knowledge-graph.json] --> CS[condense-kg-for-domain.py<br/>Python script]
+    KG[knowledge-graph.json] --> CS[condense_kg_for_domain.py<br/>Python script]
     CS --> KGS[kg-summary.json<br/>~15k tokens]
     
     KGS --> DD[domain-discoverer<br/>subagent]
     DD --> DDJ[domain-discovery.json<br/>domain list + node assignments]
     
-    DDJ --> SPLIT[split-kg-by-domain.py<br/>Python script]
+    DDJ --> SPLIT[split_kg_by_domain.py<br/>Python script]
     KG --> SPLIT
     SPLIT --> S1[domain-order-management.json]
     SPLIT --> S2[domain-user-auth.json]
@@ -63,7 +63,7 @@ graph TD
     FA2 --> R2[flows-user-auth.json]
     FAN --> RN[flows-....json]
     
-    R1 --> MERGE[merge-domain-results.py<br/>Python script]
+    R1 --> MERGE[merge_domain_results.py<br/>Python script]
     R2 --> MERGE
     RN --> MERGE
     MERGE --> DG[domain-analysis.json]
@@ -83,7 +83,7 @@ Green = deterministic Python scripts, Blue = LLM subagents.
 
 ## Component Design
 
-### 1. `condense-kg-for-domain.py` (New Python Script)
+### 1. `condense_kg_for_domain.py` (New Python Script)
 
 **Purpose:** Reduce full KG to a module-level summary suitable for domain discovery.
 
@@ -170,7 +170,7 @@ Green = deterministic Python scripts, Blue = LLM subagents.
 
 **Context budget:** ~15k tokens input, ~3k tokens output. Expected time: <1 minute.
 
-### 3. `split-kg-by-domain.py` (New Python Script)
+### 3. `split_kg_by_domain.py` (New Python Script)
 
 **Purpose:** Extract per-domain KG subsets based on domain discovery results.
 
@@ -253,7 +253,7 @@ Green = deterministic Python scripts, Blue = LLM subagents.
 
 **Dispatch:** Up to 3 concurrent subagents (limited to avoid API rate limits).
 
-### 5. `merge-domain-results.py` (New Python Script)
+### 5. `merge_domain_results.py` (New Python Script)
 
 **Purpose:** Combine per-domain results into the final `domain-analysis.json`.
 
@@ -292,7 +292,7 @@ Green = deterministic Python scripts, Blue = LLM subagents.
 
 **After:**
 ```
-1. Run: python condense-kg-for-domain.py "$PROJECT_ROOT"
+1. Run: python condense_kg_for_domain.py "$PROJECT_ROOT"
    → Produces intermediate/kg-summary.json
 2. Read kg-summary.json as context for Phase 4a
 3. Proceed to Phase 4a
@@ -312,7 +312,7 @@ Phase 4a: Domain Discovery
   4. Proceed to Phase 4b
 
 Phase 4b: KG Splitting
-  1. Run: python split-kg-by-domain.py "$PROJECT_ROOT"
+  1. Run: python split_kg_by_domain.py "$PROJECT_ROOT"
   2. Verify intermediate/domain-*.json files exist for each domain
 
 Phase 4c: Flow Extraction (parallel)
@@ -324,7 +324,7 @@ Phase 4c: Flow Extraction (parallel)
   3. Wait for all to complete
 
 Phase 4d: Merge
-  1. Run: python merge-domain-results.py "$PROJECT_ROOT"
+  1. Run: python merge_domain_results.py "$PROJECT_ROOT"
   2. Verify intermediate/domain-analysis.json exists
 ```
 
@@ -366,9 +366,9 @@ Wait for larger model context windows. But:
 
 | File | Type | Action |
 |---|---|---|
-| `skills/understand-domain/condense-kg-for-domain.py` | Python | New |
-| `skills/understand-domain/split-kg-by-domain.py` | Python | New |
-| `skills/understand-domain/merge-domain-results.py` | Python | New |
+| `skills/understand-domain/condense_kg_for_domain.py` | Python | New |
+| `skills/understand-domain/split_kg_by_domain.py` | Python | New |
+| `skills/understand-domain/merge_domain_results.py` | Python | New |
 | `agents/domain-discoverer.md` | Agent prompt | New |
 | `agents/domain-flow-extractor.md` | Agent prompt | New (based on `domain-analyzer.md`) |
 | `skills/understand-domain/SKILL.md` | Skill def | Modify (Phase 3 + Phase 4) |
@@ -384,9 +384,9 @@ Wait for larger model context windows. But:
 ## Testing Strategy
 
 1. **Unit tests for Python scripts:**
-   - `condense-kg-for-domain.py`: fixture KG → verify output schema, token reduction ratio
-   - `split-kg-by-domain.py`: fixture KG + discovery → verify per-domain subsets are complete
-   - `merge-domain-results.py`: fixture per-domain results → verify final schema matches current format
+   - `condense_kg_for_domain.py`: fixture KG → verify output schema, token reduction ratio
+   - `split_kg_by_domain.py`: fixture KG + discovery → verify per-domain subsets are complete
+   - `merge_domain_results.py`: fixture per-domain results → verify final schema matches current format
 
 2. **Integration test:**
    - Run full pipeline on a known test project with existing KG
