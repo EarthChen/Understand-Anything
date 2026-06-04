@@ -112,10 +112,15 @@ function Dashboard({ accessToken }: { accessToken: string }) {
   const setGraph = useDashboardStore((s) => s.setGraph);
   const setDomainGraph = useDashboardStore((s) => s.setDomainGraph);
   const setDiffOverlay = useDashboardStore((s) => s.setDiffOverlay);
+  const setAccessToken = useDashboardStore((s) => s.setAccessToken);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [graphIssues, setGraphIssues] = useState<GraphIssue[]>([]);
   const [metaTheme, setMetaTheme] = useState<ThemeConfig | null>(null);
   const [outputLanguage, setOutputLanguage] = useState<string | undefined>();
+
+  useEffect(() => {
+    setAccessToken(accessToken);
+  }, [accessToken, setAccessToken]);
 
   useEffect(() => {
     fetch(dataUrl("meta.json", accessToken))

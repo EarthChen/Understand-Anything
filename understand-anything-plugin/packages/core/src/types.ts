@@ -202,6 +202,7 @@ export interface WikiSearchResult {
   name: string;
   type: WikiIndexEntry["type"];
   service?: string;
+  domain?: string;
   summary: string;
   score: number;
   matchSnippet?: string;

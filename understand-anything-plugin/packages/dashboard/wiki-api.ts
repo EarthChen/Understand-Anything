@@ -20,6 +20,7 @@ interface WikiSearchDocument {
   name: string;
   type: WikiIndexEntry["type"];
   service?: string;
+  domain?: string;
   summary: string;
   content?: string;
 }
@@ -281,6 +282,7 @@ export class WikiDataService {
         name: r.item.name,
         type: r.item.type,
         service: r.item.service,
+        domain: r.item.domain,
         summary: r.item.summary,
         score: r.score ?? 0,
         matchSnippet: r.item.summary.slice(0, 120),
@@ -436,6 +438,7 @@ export class WikiDataService {
             name: entry.name,
             type: entry.type,
             service: svc.name,
+            domain: entry.domain,
             summary: entry.summary,
           });
         }

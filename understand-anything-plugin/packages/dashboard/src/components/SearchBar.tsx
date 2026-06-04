@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDashboardStore } from "../store";
+import type { WikiSearchResult } from "@understand-anything/core/types";
 import { useI18n } from "../contexts/I18nContext";
 
 const typeBadgeColors: Record<string, string> = {
@@ -19,16 +20,36 @@ const typeBadgeColors: Record<string, string> = {
   domain: "text-node-concept border border-node-concept/30 bg-node-concept/10",
   flow: "text-node-pipeline border border-node-pipeline/30 bg-node-pipeline/10",
   step: "text-node-function border border-node-function/30 bg-node-function/10",
+  overview: "text-amber-400 border border-amber-400/30 bg-amber-400/10",
+  architecture: "text-amber-400 border border-amber-400/30 bg-amber-400/10",
 };
+
+function resolveWikiPage(result: WikiSearchResult): { type: "service" | "domain" | "overview" | "architecture" | "cross-domain"; id: string; service?: string } {
+  const t = result.type;
+  if (t === "overview" || t === "architecture" || t === "service") {
+    return { type: t, id: result.id, service: result.service };
+  }
+  if (t === "domain") {
+    return { type: "domain", id: result.id, service: result.service };
+  }
+  // flow/step — navigate to parent domain if known, otherwise just switch to wiki view
+  if (result.domain) {
+    return { type: "domain", id: result.domain, service: result.service };
+  }
+  return { type: "domain", id: result.id, service: result.service };
+}
 
 export default function SearchBar() {
   const searchQuery = useDashboardStore((s) => s.searchQuery);
   const searchResults = useDashboardStore((s) => s.searchResults);
+  const wikiSearchResults = useDashboardStore((s) => s.wikiSearchResults);
   const graph = useDashboardStore((s) => s.graph);
   const setSearchQuery = useDashboardStore((s) => s.setSearchQuery);
   const navigateToNodeInLayer = useDashboardStore((s) => s.navigateToNodeInLayer);
   const searchMode = useDashboardStore((s) => s.searchMode);
   const setSearchMode = useDashboardStore((s) => s.setSearchMode);
+  const setViewMode = useDashboardStore((s) => s.setViewMode);
+  const setWikiActivePage = useDashboardStore((s) => s.setWikiActivePage);
   const { t } = useI18n();
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -42,6 +63,8 @@ export default function SearchBar() {
   );
 
   const topResults = searchResults.slice(0, 5);
+  const topWikiResults = wikiSearchResults.slice(0, 5);
+  const hasResults = topResults.length > 0 || topWikiResults.length > 0;
 
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -57,6 +80,16 @@ export default function SearchBar() {
       setDropdownOpen(false);
     },
     [navigateToNodeInLayer],
+  );
+
+  const handleWikiResultClick = useCallback(
+    (result: WikiSearchResult) => {
+      const page = resolveWikiPage(result);
+      setViewMode("wiki");
+      setWikiActivePage(page);
+      setDropdownOpen(false);
+    },
+    [setViewMode, setWikiActivePage],
   );
 
   // Close dropdown on Escape
@@ -82,7 +115,7 @@ export default function SearchBar() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const showDropdown = dropdownOpen && searchQuery.trim() && topResults.length > 0;
+  const showDropdown = dropdownOpen && searchQuery.trim() && hasResults;
 
   return (
     <div ref={containerRef} className="relative z-30">
@@ -134,7 +167,7 @@ export default function SearchBar() {
         </div>
         {searchQuery.trim() && (
           <span className="hidden sm:inline text-xs text-text-muted shrink-0">
-            {searchResults.length} {t.search.result}{searchResults.length !== 1 ? "s" : ""}{" "}
+            {searchResults.length + wikiSearchResults.length} {t.search.result}{(searchResults.length + wikiSearchResults.length) !== 1 ? "s" : ""}{" "}
             <span className="text-text-muted">({searchMode})</span>
           </span>
         )}
@@ -142,7 +175,8 @@ export default function SearchBar() {
 
       {/* Dropdown results */}
       {showDropdown && (
-        <div className="absolute left-4 right-4 top-full mt-0.5 glass rounded-lg shadow-xl overflow-hidden">
+        <div className="absolute left-4 right-4 top-full mt-0.5 glass rounded-lg shadow-xl overflow-hidden max-h-80 overflow-y-auto">
+          {/* Graph node results */}
           {topResults.map((result) => {
             const node = nodeMap.get(result.nodeId);
             if (!node) return null;
@@ -184,6 +218,58 @@ export default function SearchBar() {
               </button>
             );
           })}
+
+          {/* Wiki results section */}
+          {topWikiResults.length > 0 && (
+            <>
+              {topResults.length > 0 && (
+                <div className="border-t border-border-subtle" />
+              )}
+              <div className="px-3 py-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                  {t.search.wikiResults}
+                </span>
+              </div>
+              {topWikiResults.map((result) => {
+                const relevance = Math.round((1 - result.score) * 100);
+                const badgeColor = typeBadgeColors[result.type] ?? typeBadgeColors.domain;
+
+                return (
+                  <button
+                    key={`wiki:${result.id}`}
+                    type="button"
+                    onClick={() => handleWikiResultClick(result)}
+                    className="w-full flex items-center gap-3 px-3 py-2 hover:bg-elevated transition-colors text-left"
+                  >
+                    {/* Type badge */}
+                    <span
+                      className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${badgeColor} shrink-0`}
+                    >
+                      {result.type}
+                    </span>
+
+                    {/* Name + summary */}
+                    <span className="text-sm text-text-primary truncate flex-1">
+                      {result.name}
+                    </span>
+
+                    {/* Relevance bar */}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="w-16 h-1.5 bg-elevated rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-amber-400 rounded-full"
+                          style={{ width: `${relevance}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] text-text-muted w-7 text-right">
+                        {relevance}%
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </>
+          )}
         </div>
       )}
     </div>

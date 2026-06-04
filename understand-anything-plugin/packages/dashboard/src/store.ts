@@ -6,6 +6,7 @@ import type {
   GraphNode,
   KnowledgeGraph,
   TourStep,
+  WikiSearchResult,
 } from "@understand-anything/core/types";
 import type { SystemGraph } from "@understand-anything/core";
 import type { ReactFlowInstance } from "@xyflow/react";
@@ -200,6 +201,13 @@ interface DashboardStore {
   setIsKnowledgeGraph: (value: boolean) => void;
   navigateToDomain: (domainId: string) => void;
   clearActiveDomain: () => void;
+
+  // Access token for API calls
+  accessToken: string;
+  setAccessToken: (token: string) => void;
+
+  // Wiki search results (from server-side /api/wiki/search)
+  wikiSearchResults: WikiSearchResult[];
 
   // Wiki view
   wikiAvailable: boolean;
@@ -543,15 +551,30 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
   setSearchQuery: (query) => {
     const engine = get().searchEngine;
     const mode = get().searchMode;
-    if (!engine || !query.trim()) {
-      set({ searchQuery: query, searchResults: [] });
+    if (!query.trim()) {
+      set({ searchQuery: query, searchResults: [], wikiSearchResults: [] });
       return;
     }
     // Currently both modes use the same fuzzy engine
     // When embeddings are available, "semantic" mode will use SemanticSearchEngine
     void mode;
-    const searchResults = engine.search(query);
+    const searchResults = engine ? engine.search(query) : [];
     set({ searchQuery: query, searchResults });
+
+    // Fire async wiki search if wiki is available
+    const { wikiAvailable, accessToken } = get();
+    if (wikiAvailable && accessToken) {
+      const q = encodeURIComponent(query.trim());
+      fetch(`/api/wiki/search?q=${q}&limit=10&token=${encodeURIComponent(accessToken)}`)
+        .then((r) => (r.ok ? r.json() : []))
+        .then((results: WikiSearchResult[]) => {
+          // Only apply if query hasn't changed since the request was fired
+          if (get().searchQuery === query) {
+            set({ wikiSearchResults: results });
+          }
+        })
+        .catch(() => {});
+    }
   },
 
   setPersona: (persona) =>
@@ -736,6 +759,13 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
       focusNodeId: null,
     });
   },
+
+  // Access token
+  accessToken: "",
+  setAccessToken: (token) => set({ accessToken: token }),
+
+  // Wiki search results
+  wikiSearchResults: [],
 
   // Wiki view state
   wikiAvailable: false,
