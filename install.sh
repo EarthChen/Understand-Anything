@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-REPO_URL="${UA_REPO_URL:-https://github.com/Lum1104/Understand-Anything.git}"
+REPO_URL="${UA_REPO_URL:-https://github.com/EarthChen/Understand-Anything.git}"
 REPO_DIR="${UA_DIR:-$HOME/.understand-anything/repo}"
 PLUGIN_LINK="$HOME/.understand-anything-plugin"
 
