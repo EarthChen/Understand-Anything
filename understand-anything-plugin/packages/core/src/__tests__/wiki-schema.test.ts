@@ -7,6 +7,7 @@ import {
   validateCoverage,
   validateSourceRefs,
   runQualityGateLayer1,
+  autoFixDomainPage,
 } from "../wiki-schema.js";
 
 describe("validateWikiMeta", () => {
@@ -324,5 +325,65 @@ describe("validateWikiMeta — domainStates extension", () => {
     };
     const issues = validateWikiMeta(meta, "wiki/meta.json");
     expect(issues).toHaveLength(0);
+  });
+});
+
+describe("autoFixDomainPage", () => {
+  it("should convert string entities to objects", () => {
+    const page = {
+      id: "domain:test",
+      name: "Test",
+      summary: "Test domain",
+      entities: ["Order", "Payment"],
+      flows: [],
+    };
+    const { data, fixes } = autoFixDomainPage(page, "domains/test.json");
+    expect(data.entities[0]).toEqual({ name: "Order", description: "" });
+    expect(data.entities[1]).toEqual({ name: "Payment", description: "" });
+    expect(fixes).toHaveLength(2);
+  });
+
+  it("should add missing summary with default", () => {
+    const page = { id: "domain:test", name: "Test", entities: [], flows: [] };
+    const { data, fixes } = autoFixDomainPage(page, "domains/test.json");
+    expect(data.summary).toBe("No summary available");
+    expect(fixes).toHaveLength(1);
+  });
+
+  it("should auto-number steps missing order", () => {
+    const page = {
+      id: "domain:test",
+      name: "Test",
+      summary: "Test domain",
+      entities: [],
+      flows: [
+        {
+          id: "flow:a",
+          name: "Flow A",
+          summary: "test",
+          steps: [
+            { name: "Step 1", description: "desc" },
+            { name: "Step 2", description: "desc" },
+          ],
+        },
+      ],
+    };
+    const { data, fixes } = autoFixDomainPage(page, "domains/test.json");
+    expect(data.flows[0].steps[0].order).toBe(1);
+    expect(data.flows[0].steps[1].order).toBe(2);
+    expect(fixes.length).toBeGreaterThan(0);
+  });
+
+  it("should generate flow id from name when missing", () => {
+    const page = {
+      id: "domain:test",
+      name: "Test",
+      summary: "Test domain",
+      entities: [],
+      flows: [{ name: "Create Order", summary: "test", steps: [] }],
+    };
+    const { data, fixes } = autoFixDomainPage(page, "domains/test.json");
+    expect(data.flows[0].id).toBe("flow:create-order");
+    expect(fixes).toHaveLength(1);
   });
 });

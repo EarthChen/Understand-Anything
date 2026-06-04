@@ -389,3 +389,69 @@ export function runQualityGateLayer1(opts: {
     },
   };
 }
+
+export interface AutoFixResult<T> {
+  data: T;
+  fixes: string[];
+}
+
+function toKebabCase(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+export function autoFixDomainPage(
+  raw: Record<string, unknown>,
+  filePath: string,
+): AutoFixResult<WikiDomainPage> {
+  const fixes: string[] = [];
+  const data = { ...raw } as Record<string, unknown>;
+
+  if (!data.summary || typeof data.summary !== "string") {
+    data.summary = "No summary available";
+    fixes.push(`${filePath}: added default summary`);
+  }
+
+  if (!Array.isArray(data.entities)) {
+    data.entities = [];
+    fixes.push(`${filePath}: added empty entities array`);
+  } else {
+    data.entities = (data.entities as unknown[]).map((e, i) => {
+      if (typeof e === "string") {
+        fixes.push(`${filePath}: entities[${i}] converted from string to object`);
+        return { name: e, description: "" };
+      }
+      return e;
+    });
+  }
+
+  if (!Array.isArray(data.flows)) {
+    data.flows = [];
+    fixes.push(`${filePath}: added empty flows array`);
+  } else {
+    data.flows = (data.flows as Record<string, unknown>[]).map((flow, fi) => {
+      const f = { ...flow };
+      if (!f.id || typeof f.id !== "string") {
+        const name = typeof f.name === "string" ? f.name : `flow-${fi}`;
+        f.id = `flow:${toKebabCase(name)}`;
+        fixes.push(`${filePath}: flows[${fi}] generated id '${f.id}'`);
+      }
+      if (Array.isArray(f.steps)) {
+        f.steps = (f.steps as Record<string, unknown>[]).map((step, si) => {
+          const s = { ...step };
+          if (typeof s.order !== "number") {
+            s.order = si + 1;
+            fixes.push(`${filePath}: flows[${fi}].steps[${si}] set order=${si + 1}`);
+          }
+          if (s.sourceRef !== undefined && s.sourceRef !== null && typeof s.sourceRef !== "object") {
+            s.sourceRef = null;
+            fixes.push(`${filePath}: flows[${fi}].steps[${si}] reset invalid sourceRef`);
+          }
+          return s;
+        });
+      }
+      return f;
+    });
+  }
+
+  return { data: data as unknown as WikiDomainPage, fixes };
+}
