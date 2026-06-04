@@ -457,6 +457,12 @@ export default function WikiView({ accessToken }: { accessToken: string }) {
       if (pathParts[0] === "domains" && pathParts[1]) {
         const domainId = pathParts[1].replace(".json", "");
         handleSelect({ type: "domain", id: domainId, service: nav.service });
+        if (nav.fragment) {
+          requestAnimationFrame(() => {
+            const el = document.getElementById(nav.fragment!);
+            el?.scrollIntoView({ behavior: "smooth", block: "start" });
+          });
+        }
       } else {
         handleSelect({ type: "service", id: nav.service, service: nav.service });
       }

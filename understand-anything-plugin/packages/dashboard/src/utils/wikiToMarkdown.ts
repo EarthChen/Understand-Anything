@@ -57,6 +57,11 @@ function flowStepToMarkdown(step: WikiFlowStep): string {
 
 function flowToMarkdown(flow: WikiFlow): string {
   const lines: string[] = [];
+  const anchorId = flow.id ?? flow.name?.toLowerCase().replace(/\s+/g, "-") ?? "";
+  if (anchorId) {
+    lines.push(`<a id="${anchorId}"></a>`);
+    lines.push("");
+  }
   lines.push(`### ${flow.name}`);
   lines.push("");
   lines.push(flow.summary);

@@ -102,7 +102,7 @@ mkdir -p "$PROJECT_ROOT/.understand-anything/wiki/domains"
       "order": 1,
       "service": "order-service",
       "description": "OrderController receives order request → OrderService.createOrder() validates and persists",
-      "wikiRef": "order-service/domains/order-management.json#flow:create-order"
+      "wikiRef": "order-service/domains/order-management#flow:create-order"
     },
     {
       "order": 2,
@@ -114,7 +114,7 @@ mkdir -p "$PROJECT_ROOT/.understand-anything/wiki/domains"
       "order": 3,
       "service": "payment-service",
       "description": "PaymentFacadeImpl processes payment, publishes payment.completed event",
-      "wikiRef": "payment-service/domains/payment-processing.json#flow:process-payment"
+      "wikiRef": "payment-service/domains/payment-processing#flow:process-payment"
     }
   ]
 }

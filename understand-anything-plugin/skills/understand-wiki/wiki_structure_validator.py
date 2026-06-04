@@ -1,8 +1,8 @@
-"""Wiki Structure Validator — structural validation without requiring domain-graph.
+"""Wiki Structure Validator — structural and content depth validation.
 
-Validates that a service wiki directory has the expected layout and that each
-JSON file is well-formed. Optionally checks domain coverage when a domain-graph
-path is supplied.
+Validates that a service wiki directory has the expected layout, that each
+JSON file is well-formed, and that content meets minimum depth thresholds
+comparable to human-authored business/technical documentation.
 
 Usage:
     python wiki_structure_validator.py <wiki_dir> [dg_path]
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from typing import Any
 
@@ -20,6 +21,29 @@ REQUIRED_TOP_LEVEL = ("meta.json", "index.json", "service.json")
 META_FIELDS = ("gitCommitHash", "generatedAt", "version", "outputLanguage")
 MIN_DESCRIPTION_LEN = 10
 MIN_SUMMARY_LEN = 10
+
+DEPTH_THRESHOLDS = {
+    "domain_summary_warn": 80,
+    "domain_summary_fail": 50,
+    "flow_summary_warn": 40,
+    "flow_summary_fail": 20,
+    "step_description_warn": 30,
+    "step_description_fail": 10,
+    "source_ref_coverage_warn": 0.5,
+    "source_ref_coverage_fail": 0.3,
+    "depth_indicator_target": 0.3,
+}
+
+DEPTH_KEYWORDS_EN = re.compile(
+    r"\b(validat|check|verify|if\s|exception|error|throw|fail|rule|constraint|"
+    r"side.?effect|publish|emit|event|insert|update|delete|persist|cache|notify|"
+    r"return|parameter|rollback)\b",
+    re.IGNORECASE,
+)
+DEPTH_KEYWORDS_ZH = re.compile(
+    r"(验证|校验|检查|异常|错误|抛出|失败|规则|约束|副作用|发布|事件|"
+    r"插入|更新|删除|持久化|缓存|通知|返回|参数|回滚)",
+)
 
 
 def validate_wiki_structure(
@@ -196,10 +220,198 @@ def _validate_domain_page(page: dict, filename: str) -> list[str]:
     return errors
 
 
+def _check_content_depth(page: dict, filename: str) -> dict[str, Any]:
+    """Check content depth metrics for a domain page.
+
+    Returns a dict with depthScore, individual metrics, and warnings.
+    """
+    metrics: dict[str, Any] = {}
+    depth_warnings: list[str] = []
+    depth_issues: list[str] = []
+
+    summary = str(page.get("summary", ""))
+    summary_len = len(summary)
+    metrics["domainSummaryLen"] = summary_len
+    if summary_len < DEPTH_THRESHOLDS["domain_summary_fail"]:
+        depth_issues.append(
+            f"domains/{filename}: domain summary too shallow ({summary_len} chars, need >= {DEPTH_THRESHOLDS['domain_summary_fail']})"
+        )
+    elif summary_len < DEPTH_THRESHOLDS["domain_summary_warn"]:
+        depth_warnings.append(
+            f"domains/{filename}: domain summary could be deeper ({summary_len} chars, target >= {DEPTH_THRESHOLDS['domain_summary_warn']})"
+        )
+
+    entities = page.get("entities", [])
+    entity_count = len(entities) if isinstance(entities, list) else 0
+    entity_with_desc = 0
+    if isinstance(entities, list):
+        for e in entities:
+            if isinstance(e, dict) and len(str(e.get("description", ""))) >= 30:
+                entity_with_desc += 1
+            elif isinstance(e, str) and len(e) >= 10:
+                entity_with_desc += 1
+    metrics["entityCount"] = entity_count
+    metrics["entityWithDescription"] = entity_with_desc
+    if entity_count == 0:
+        depth_warnings.append(f"domains/{filename}: no entities defined")
+
+    flows = page.get("flows", [])
+    if not isinstance(flows, list):
+        flows = []
+
+    total_steps = 0
+    steps_with_source_ref = 0
+    steps_with_depth = 0
+    flow_summary_issues = 0
+
+    for i, flow in enumerate(flows):
+        if not isinstance(flow, dict):
+            continue
+        flow_summary = str(flow.get("summary", ""))
+        flow_summary_len = len(flow_summary)
+        if flow_summary_len < DEPTH_THRESHOLDS["flow_summary_fail"]:
+            depth_issues.append(
+                f"domains/{filename}: flows[{i}] summary too shallow ({flow_summary_len} chars)"
+            )
+            flow_summary_issues += 1
+        elif flow_summary_len < DEPTH_THRESHOLDS["flow_summary_warn"]:
+            depth_warnings.append(
+                f"domains/{filename}: flows[{i}] summary could be deeper ({flow_summary_len} chars)"
+            )
+
+        steps = flow.get("steps", [])
+        if not isinstance(steps, list):
+            continue
+        for j, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+            total_steps += 1
+            desc = str(step.get("description", ""))
+            desc_len = len(desc)
+
+            if desc_len < DEPTH_THRESHOLDS["step_description_fail"]:
+                depth_issues.append(
+                    f"domains/{filename}: flows[{i}].steps[{j}] description too shallow ({desc_len} chars)"
+                )
+            elif desc_len < DEPTH_THRESHOLDS["step_description_warn"]:
+                depth_warnings.append(
+                    f"domains/{filename}: flows[{i}].steps[{j}] description could be deeper ({desc_len} chars)"
+                )
+
+            if isinstance(step.get("sourceRef"), dict) and step["sourceRef"].get("file"):
+                steps_with_source_ref += 1
+
+            if DEPTH_KEYWORDS_EN.search(desc) or DEPTH_KEYWORDS_ZH.search(desc):
+                steps_with_depth += 1
+
+    source_ref_coverage = steps_with_source_ref / total_steps if total_steps > 0 else 0
+    depth_indicator_ratio = steps_with_depth / total_steps if total_steps > 0 else 0
+
+    metrics["totalSteps"] = total_steps
+    metrics["sourceRefCoverage"] = round(source_ref_coverage, 2)
+    metrics["depthIndicatorRatio"] = round(depth_indicator_ratio, 2)
+    metrics["flowCount"] = len(flows)
+
+    if total_steps > 0:
+        if source_ref_coverage < DEPTH_THRESHOLDS["source_ref_coverage_fail"]:
+            depth_issues.append(
+                f"domains/{filename}: sourceRef coverage {source_ref_coverage:.0%} "
+                f"(need >= {DEPTH_THRESHOLDS['source_ref_coverage_fail']:.0%})"
+            )
+        elif source_ref_coverage < DEPTH_THRESHOLDS["source_ref_coverage_warn"]:
+            depth_warnings.append(
+                f"domains/{filename}: sourceRef coverage {source_ref_coverage:.0%} "
+                f"(target >= {DEPTH_THRESHOLDS['source_ref_coverage_warn']:.0%})"
+            )
+
+        if depth_indicator_ratio < DEPTH_THRESHOLDS["depth_indicator_target"]:
+            depth_warnings.append(
+                f"domains/{filename}: only {depth_indicator_ratio:.0%} of steps mention business rules/exceptions/side effects "
+                f"(target >= {DEPTH_THRESHOLDS['depth_indicator_target']:.0%})"
+            )
+
+    weight_summary = min(summary_len / DEPTH_THRESHOLDS["domain_summary_warn"], 1.0) * 20
+    weight_entity = min(entity_count / 2, 1.0) * 10
+    weight_source = source_ref_coverage * 30
+    weight_depth = depth_indicator_ratio * 20
+    weight_flow_summary = (
+        (1 - flow_summary_issues / max(len(flows), 1)) * 20 if flows else 0
+    )
+    depth_score = round(weight_summary + weight_entity + weight_source + weight_depth + weight_flow_summary)
+    metrics["depthScore"] = depth_score
+
+    return {
+        "metrics": metrics,
+        "warnings": depth_warnings,
+        "issues": depth_issues,
+        "depthScore": depth_score,
+    }
+
+
+def validate_content_depth(wiki_dir: str) -> dict[str, Any]:
+    """Run content depth validation across all domain pages in a wiki directory.
+
+    Returns aggregate metrics with per-domain breakdowns.
+    """
+    domain_dir = os.path.join(wiki_dir, "domains")
+    if not os.path.isdir(domain_dir):
+        return {"valid": False, "issues": ["No domains/ directory found"], "warnings": [], "perDomain": {}}
+
+    domain_files = sorted(f for f in os.listdir(domain_dir) if f.endswith(".json"))
+    if not domain_files:
+        return {"valid": False, "issues": ["No domain JSON files found"], "warnings": [], "perDomain": {}}
+
+    all_issues: list[str] = []
+    all_warnings: list[str] = []
+    per_domain: dict[str, Any] = {}
+    total_score = 0
+
+    for filename in domain_files:
+        page = _load_json(os.path.join(domain_dir, filename))
+        if not page:
+            continue
+        result = _check_content_depth(page, filename)
+        per_domain[filename] = result["metrics"]
+        all_issues.extend(result["issues"])
+        all_warnings.extend(result["warnings"])
+        total_score += result["depthScore"]
+
+    avg_score = round(total_score / len(domain_files)) if domain_files else 0
+
+    return {
+        "valid": len(all_issues) == 0,
+        "averageDepthScore": avg_score,
+        "issues": all_issues,
+        "warnings": all_warnings,
+        "perDomain": per_domain,
+    }
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print(f"Usage: {sys.argv[0]} <wiki_dir> [dg_path]")
+        print(f"       {sys.argv[0]} --depth <wiki_dir>")
         sys.exit(1)
+
+    if sys.argv[1] == "--depth":
+        wiki_dir = sys.argv[2] if len(sys.argv) > 2 else "."
+        result = validate_content_depth(wiki_dir)
+        score = result.get("averageDepthScore", 0)
+        label = "GOOD" if score >= 70 else "FAIR" if score >= 40 else "SHALLOW"
+        print(f"[wiki-content-depth] {label} — score: {score}/100")
+        if result["issues"]:
+            for issue in result["issues"]:
+                print(f"  ERROR: {issue}")
+        for w in result["warnings"]:
+            print(f"  WARN: {w}")
+        for domain, metrics in result.get("perDomain", {}).items():
+            print(
+                f"  {domain}: score={metrics.get('depthScore', '?')}, "
+                f"sourceRef={metrics.get('sourceRefCoverage', '?')}, "
+                f"depthIndicators={metrics.get('depthIndicatorRatio', '?')}, "
+                f"steps={metrics.get('totalSteps', '?')}"
+            )
+        sys.exit(0 if result["valid"] else 1)
 
     wiki_dir = sys.argv[1]
     dg_path = sys.argv[2] if len(sys.argv) > 2 else None

@@ -14,8 +14,14 @@ Usage:
 
 import json
 import os
+import re
 import sys
 from typing import Any
+
+WIKIREF_PATTERN = re.compile(
+    r"^[a-z0-9][a-z0-9._-]*/domains/[a-z0-9][a-z0-9._-]*(#(flow|step):[a-z0-9._-]+)?$",
+    re.IGNORECASE,
+)
 
 
 def run_quality_gate(
@@ -288,6 +294,20 @@ def _validate_cross_domain_pages(
                     warnings.append(f"domains/{file}: steps[{i}] missing order")
                 if not step.get("service"):
                     issues.append(f"domains/{file}: steps[{i}] missing service")
+                wiki_ref = step.get("wikiRef")
+                if wiki_ref:
+                    if wiki_ref.startswith("wiki://") or wiki_ref.startswith("source://"):
+                        warnings.append(
+                            f"domains/{file}: steps[{i}] wikiRef should not have protocol prefix"
+                        )
+                    elif ".json" in wiki_ref:
+                        warnings.append(
+                            f"domains/{file}: steps[{i}] wikiRef should not contain .json extension"
+                        )
+                    elif not WIKIREF_PATTERN.match(wiki_ref):
+                        warnings.append(
+                            f"domains/{file}: steps[{i}] wikiRef '{wiki_ref}' does not match canonical format"
+                        )
                 if not step.get("description"):
                     warnings.append(f"domains/{file}: steps[{i}] missing description")
 
