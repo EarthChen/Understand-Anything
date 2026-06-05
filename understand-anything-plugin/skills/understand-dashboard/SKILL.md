@@ -14,9 +14,14 @@ Start the Understand Anything dashboard to visualize the knowledge graph for the
    - If `$ARGUMENTS` contains a path, use that as the project directory
    - Otherwise, use the current working directory
 
-2. Check that `.understand-anything/knowledge-graph.json` exists in the project directory. If not, tell the user:
+2. Check that the project directory has analyzable data. Accept ANY of these:
+   - `.understand-anything/knowledge-graph.json` — single-service mode (individual project)
+   - `.understand-anything/system-graph.json` — multi-service mode (parent directory with child services)
+   - `.understand-anything/wiki/meta.json` — wiki-only mode (parent or single service)
+
+   If none exist, tell the user:
    ```
-   No knowledge graph found. Run /understand first to analyze this project.
+   No knowledge graph or system graph found. Run /understand (single service) or /understand-wiki --batch (multi-service) first.
    ```
 
 3. Find the dashboard code. The dashboard is at `packages/dashboard/` relative to this plugin's root directory. Check these paths in order and use the first that exists:
@@ -95,7 +100,7 @@ Start the Understand Anything dashboard to visualize the knowledge graph for the
    Dashboard started!
    Local:   http://127.0.0.1:<PORT>?token=<TOKEN>
    Network: http://0.0.0.0:<PORT>?token=<TOKEN>
-   Viewing: <project-dir>/.understand-anything/knowledge-graph.json
+   Data:    <project-dir>/.understand-anything/
 
    The dashboard is running in the background. Press Ctrl+C in the terminal to stop it.
    ```
