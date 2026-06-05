@@ -139,8 +139,12 @@ function Dashboard({ accessToken }: { accessToken: string }) {
 
   useEffect(() => {
     fetch(dataUrl("knowledge-graph.json", accessToken))
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) return null;
+        return res.json();
+      })
       .then((data: unknown) => {
+        if (!data) return;
         const result = validateGraph(data);
         if (result.success && result.data) {
           setGraph(result.data);
@@ -159,15 +163,9 @@ function Dashboard({ accessToken }: { accessToken: string }) {
         } else if (result.fatal) {
           console.error("Knowledge graph validation failed:", result.fatal);
           setLoadError(`Invalid knowledge graph: ${result.fatal}`);
-        } else {
-          console.error("Knowledge graph validation failed: unknown error");
-          setLoadError("Invalid knowledge graph: unknown validation error");
         }
       })
-      .catch((err) => {
-        console.error("Failed to load knowledge graph:", err);
-        setLoadError(`Failed to load knowledge graph: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      .catch(() => {});
   }, [setGraph]);
 
   useEffect(() => {
@@ -244,6 +242,17 @@ function Dashboard({ accessToken }: { accessToken: string }) {
   }, [accessToken, setWikiAvailable]);
 
   const activeService = useDashboardStore((s) => s.activeService);
+
+  // Auto-select view when KG is absent but system-graph or wiki is available
+  useEffect(() => {
+    const state = useDashboardStore.getState();
+    if (state.graph) return;
+    if (state.systemGraph) {
+      state.setViewMode("system");
+    } else if (state.wikiAvailable) {
+      state.setViewMode("wiki");
+    }
+  });
 
   const loadServiceGraph = useCallback(
     async (serviceName: string) => {
