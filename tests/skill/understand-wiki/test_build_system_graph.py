@@ -191,6 +191,21 @@ class TestExtractServiceInfo(unittest.TestCase):
 class TestBuildSystemGraph(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp()
+        self.project_root = Path(self.tmpdir)
+
+    def _create_service_kg(
+        self,
+        name: str,
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+    ) -> None:
+        svc_dir = self.project_root / name / ".understand-anything"
+        svc_dir.mkdir(parents=True)
+        kg = _make_kg(name, nodes=nodes, edges=edges)
+        (svc_dir / "knowledge-graph.json").write_text(
+            json.dumps(kg),
+            encoding="utf-8",
+        )
 
     def test_builds_graph_with_two_services(self) -> None:
         """Builds system graph with service nodes and contains edges."""
@@ -273,6 +288,32 @@ class TestBuildSystemGraph(unittest.TestCase):
         self.assertEqual(rpc_edges[0]["source"], "microservice:order-service")
         self.assertEqual(rpc_edges[0]["target"], "microservice:payment-service")
         self.assertEqual(rpc_edges[0]["detail"]["interface"], "PaymentFacade")
+
+    def test_extracts_rpc_edges_between_services(self) -> None:
+        """System graph should have rpc_call edges when services share endpoint:__synthetic__ nodes."""
+        self._create_service_kg("svc-a", [
+            {"id": "class:Impl.java:Impl", "type": "class"},
+            {"id": "endpoint:__synthetic__:RemoteApi", "type": "endpoint", "tags": ["rpc-interface"]},
+        ], [
+            {"source": "class:Impl.java:Impl", "target": "endpoint:__synthetic__:RemoteApi", "type": "consumes_rpc"},
+        ])
+        self._create_service_kg("svc-b", [
+            {"id": "class:RemoteApiImpl.java:RemoteApiImpl", "type": "class"},
+            {"id": "endpoint:__synthetic__:RemoteApi", "type": "endpoint", "tags": ["rpc-interface"]},
+        ], [
+            {"source": "class:RemoteApiImpl.java:RemoteApiImpl", "target": "endpoint:__synthetic__:RemoteApi", "type": "provides_rpc"},
+        ])
+
+        sg = build_system_graph(self.project_root)
+        rpc_edges = [e for e in sg["edges"] if e["type"] == "rpc_call"]
+        self.assertEqual(len(rpc_edges), 1)
+        self.assertIn("RemoteApi", rpc_edges[0].get("detail", {}).get("interface", ""))
+
+    def test_empty_project_returns_valid_graph(self) -> None:
+        sg = build_system_graph(self.project_root)
+        self.assertEqual(sg["nodes"], [])
+        self.assertEqual(sg["edges"], [])
+        self.assertEqual(sg["project"]["serviceCount"], 0)
 
 
 class TestWikiEnrichment(unittest.TestCase):

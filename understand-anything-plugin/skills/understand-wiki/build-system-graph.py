@@ -105,12 +105,31 @@ def _interface_from_detail(detail: str) -> str:
     return detail.split(".")[0].strip() if detail else ""
 
 
+def _interface_from_rpc_edge(edge: dict[str, Any]) -> str:
+    """Extract RPC interface name from edge target or legacy detail field."""
+    target = edge.get("target", "")
+    if isinstance(target, str) and target.startswith("endpoint:__synthetic__:"):
+        return target[len("endpoint:__synthetic__:"):]
+
+    detail = edge.get("detail", "")
+    if isinstance(detail, str):
+        return _interface_from_detail(detail)
+    return ""
+
+
+def _rpc_type_from_edge(edge: dict[str, Any]) -> str:
+    detail = edge.get("detail", "")
+    if isinstance(detail, str) and detail and "." not in detail:
+        return detail
+    return "rpc"
+
+
 def _match_rpc_edges(service_infos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Match consumes_rpc → provides_rpc across services to build cross-service edges."""
     providers: dict[str, str] = {}
     for info in service_infos:
         for edge in info["rpc_provides"]:
-            iface = _interface_from_detail(edge.get("detail", ""))
+            iface = _interface_from_rpc_edge(edge)
             if iface:
                 providers[iface] = info["name"]
 
@@ -119,12 +138,13 @@ def _match_rpc_edges(service_infos: list[dict[str, Any]]) -> list[dict[str, Any]
     for info in service_infos:
         for edge in info["rpc_consumes"]:
             detail = edge.get("detail", "")
-            iface = _interface_from_detail(detail)
+            iface = _interface_from_rpc_edge(edge)
             target_svc = providers.get(iface)
             if target_svc and target_svc != info["name"]:
                 key = (info["name"], target_svc, iface)
                 if key not in seen:
                     seen.add(key)
+                    method = detail if isinstance(detail, str) and "." in detail else ""
                     rpc_edges.append({
                         "source": f"microservice:{info['name']}",
                         "target": f"microservice:{target_svc}",
@@ -132,8 +152,8 @@ def _match_rpc_edges(service_infos: list[dict[str, Any]]) -> list[dict[str, Any]
                         "weight": 0.8,
                         "detail": {
                             "interface": iface,
-                            "method": detail,
-                            "rpcType": "rpc",
+                            "method": method,
+                            "rpcType": _rpc_type_from_edge(edge),
                             "evidence": "kg-matched",
                         },
                     })
