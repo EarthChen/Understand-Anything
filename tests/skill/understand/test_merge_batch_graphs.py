@@ -1232,6 +1232,34 @@ class TestRecoverRpcMqFromExtraction(unittest.TestCase):
         path = self.tmp_dir / f"ua-file-extract-results-{batch_index}.json"
         path.write_text(_j.dumps(_extraction_result(results)), encoding="utf-8")
 
+    def test_synthetic_node_type_is_endpoint(self) -> None:
+        """Synthetic RPC interface nodes should use type 'endpoint', not 'class'."""
+        service_path = "src/main/java/com/example/UserServiceImpl.java"
+        self._write_extraction(1, [{
+            "path": service_path,
+            "language": "java",
+            "fileCategory": "code",
+            "classes": [{
+                "name": "UserServiceImpl",
+                "startLine": 10, "endLine": 200,
+                "methods": ["getUser", "createUser"],
+                "properties": [],
+                "annotations": [{"name": "MoaProvider"}],
+                "interfaces": ["UserService"],
+            }],
+        }])
+
+        class_node = _class_node(service_path, "UserServiceImpl")
+        assembled: dict[str, Any] = {"nodes": [class_node], "edges": []}
+
+        mbg.recover_rpc_mq_from_extraction(assembled, self.tmp_dir)
+
+        synthetic = next(
+            n for n in assembled["nodes"]
+            if n["id"] == "endpoint:__synthetic__:UserService"
+        )
+        self.assertEqual(synthetic["type"], "endpoint")
+
     def test_moa_provider_creates_provides_rpc_edge_and_synthetic_node(self) -> None:
         """@MoaProvider on a class with interfaces should produce a
         provides_rpc edge and a synthetic interface node if absent."""
@@ -1415,13 +1443,13 @@ class TestRecoverRpcMqFromExtraction(unittest.TestCase):
         class_node = _class_node(path, "SvcImpl")
         existing_edge = {
             "source": f"class:{path}:SvcImpl",
-            "target": "class:__synthetic__:SvcFacade",
+            "target": "endpoint:__synthetic__:SvcFacade",
             "type": "provides_rpc",
             "direction": "forward",
             "weight": 0.9,
         }
         assembled: dict[str, Any] = {
-            "nodes": [class_node, {"id": "class:__synthetic__:SvcFacade", "type": "class", "name": "SvcFacade", "summary": "", "tags": [], "complexity": "simple"}],
+            "nodes": [class_node, {"id": "endpoint:__synthetic__:SvcFacade", "type": "endpoint", "name": "SvcFacade", "summary": "", "tags": [], "complexity": "simple"}],
             "edges": [existing_edge],
         }
 

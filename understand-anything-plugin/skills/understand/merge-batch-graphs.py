@@ -1055,7 +1055,7 @@ def _ensure_tag(node: dict[str, Any], tag: str) -> None:
 
 
 def _synthetic_node_id(interface_name: str) -> str:
-    return f"class:__synthetic__:{interface_name}"
+    return f"endpoint:__synthetic__:{interface_name}"
 
 
 def _topic_node_id(topic: str) -> str:
@@ -1149,7 +1149,7 @@ def recover_rpc_mq_from_extraction(
                         if target_id not in node_ids:
                             assembled["nodes"].append({
                                 "id": target_id,
-                                "type": "class",
+                                "type": "endpoint",
                                 "name": iface,
                                 "summary": f"RPC interface (synthetic — recovered from annotation)",
                                 "tags": ["rpc-interface", "synthetic"],
@@ -1191,7 +1191,7 @@ def recover_rpc_mq_from_extraction(
                         if target_id not in node_ids:
                             assembled["nodes"].append({
                                 "id": target_id,
-                                "type": "class",
+                                "type": "endpoint",
                                 "name": service_name,
                                 "summary": f"Remote service (synthetic — recovered from @FeignClient)",
                                 "tags": ["rpc-service", "synthetic"],
@@ -1236,7 +1236,7 @@ def recover_rpc_mq_from_extraction(
                     if target_id not in node_ids:
                         assembled["nodes"].append({
                             "id": target_id,
-                            "type": "class",
+                            "type": "endpoint",
                             "name": iface_type,
                             "summary": f"RPC interface (synthetic — recovered from annotation)",
                             "tags": ["rpc-interface", "synthetic"],
