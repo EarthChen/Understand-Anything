@@ -1,4 +1,4 @@
-import type { WikiDomainPage, WikiFlow, WikiFlowStep, WikiServiceOverview, CrossServiceCall, WikiOverview, WikiArchitecture, WikiCrossDomain, WikiEntity, WikiGlossaryEntry, WikiBusinessRule, WikiIntegrationPoints, WikiErrorCatalogEntry } from "@understand-anything/core";
+import type { WikiDomainPage, WikiFlow, WikiFlowStep, WikiServiceOverview, CrossServiceCall, WikiOverview, WikiArchitecture, WikiCrossDomain, WikiEntity, WikiGlossaryEntry, WikiBusinessRule, WikiIntegrationPoints } from "@understand-anything/core";
 import type { Locale } from "../locales";
 import { en } from "../locales/en";
 
@@ -573,16 +573,17 @@ export function domainPageToMarkdown(page: WikiDomainPage, labels: WikiLabels = 
   }
 
   const rawErrors = Array.isArray(page?.errorCatalog) ? page.errorCatalog : [];
-  const errors = rawErrors.filter((e: Record<string, unknown>) =>
-    e && (e.exception || e.code),
-  );
+  const errors = rawErrors.filter((e) => {
+    const r = e as unknown as Record<string, unknown>;
+    return r && (r.exception || r.code);
+  });
   if (errors.length > 0) {
     lines.push(`## ${labels.errorScenarios}`);
     lines.push("");
     lines.push(`| ${labels.exceptionHeader} | ${labels.triggerHeader} | ${labels.handlingHeader} | ${labels.severityHeader} |`);
     lines.push("|---|---|---|---|");
     for (const raw of errors) {
-      const e = raw as Record<string, unknown>;
+      const e = raw as unknown as Record<string, unknown>;
       const exception = (e.exception ?? e.code ?? "") as string;
       const trigger = (e.trigger ?? "") as string;
       const handling = (e.handling ?? e.description ?? "") as string;

@@ -243,14 +243,18 @@ function Dashboard({ accessToken }: { accessToken: string }) {
 
   const activeService = useDashboardStore((s) => s.activeService);
 
-  // Auto-select view when KG is absent but system-graph or wiki is available
+  // Auto-select initial view when KG is absent but system-graph or wiki is available
+  const [initialViewSet, setInitialViewSet] = useState(false);
   useEffect(() => {
+    if (initialViewSet) return;
     const state = useDashboardStore.getState();
-    if (state.graph) return;
+    if (state.graph) { setInitialViewSet(true); return; }
     if (state.systemGraph) {
       state.setViewMode("system");
+      setInitialViewSet(true);
     } else if (state.wikiAvailable) {
       state.setViewMode("wiki");
+      setInitialViewSet(true);
     }
   });
 
