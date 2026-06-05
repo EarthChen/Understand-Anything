@@ -2,8 +2,9 @@
 
 ## Key Concepts
 
+- **Annotations**: Metadata markers (`@DubboService`, `@RestController`, `@Autowired`, `@KafkaListener`) identical to Java annotations — Kotlin uses the same JVM annotation model
 - **Coroutines and Flow**: Structured concurrency with suspending functions; Flow for reactive streams
-- **Data Classes**: Auto-generated `equals`, `hashCode`, `toString`, `copy`, and destructuring
+- **Data Classes**: Auto-generated `equals`, `hashCode`, `toString`, `copy`, and destructuring; primary constructor properties are typed fields
 - **Sealed Classes/Interfaces**: Restricted hierarchies enabling exhaustive `when` expressions
 - **Extension Functions**: Add methods to existing classes without inheritance or wrappers
 - **Null Safety**: `?.` safe call, `!!` non-null assertion, `?:` Elvis operator for default values
@@ -11,6 +12,7 @@
 - **DSL Builders**: Lambda-with-receiver syntax enabling type-safe builder patterns
 - **Inline Functions and Reified Types**: Inline for zero-overhead lambdas; reified for runtime type access
 - **Companion Objects**: Named or anonymous singleton associated with a class (replaces static members)
+- **Object Declarations**: Singleton pattern built into the language (`object Foo { ... }`)
 - **Scope Functions**: `let`, `run`, `apply`, `also`, `with` for concise object configuration and transformation
 
 ## Import Patterns
@@ -29,7 +31,7 @@
 
 ## Common Frameworks
 
-- **Spring Boot (Kotlin)** — Kotlin-first support with coroutines and DSL extensions
+- **Spring Boot (Kotlin)** — Kotlin-first support with coroutines and DSL extensions; same RPC annotations as Java (`@DubboService`, `@DubboReference`, `@FeignClient`, `@KafkaListener`)
 - **Ktor** — Kotlin-native async web framework from JetBrains
 - **Jetpack Compose** — Declarative UI toolkit for Android using composable functions
 - **Exposed** — Lightweight SQL framework with type-safe DSL and DAO patterns

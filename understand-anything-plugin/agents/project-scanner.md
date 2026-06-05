@@ -36,6 +36,8 @@ Read whichever of these exist at the project root:
 - `go.mod` — Go module name + `require` block
 - `Gemfile` — Ruby framework signals
 - `pom.xml`, `build.gradle`, `build.gradle.kts` — JVM project signals
+- `pubspec.yaml` — Dart/Flutter project signals
+- `Podfile`, `*.xcodeproj`, `*.xcworkspace` — iOS/macOS (Objective-C/Swift) project signals
 - `composer.json` — PHP project signals
 
 From these, synthesize:
@@ -43,7 +45,7 @@ From these, synthesize:
 - **`name`** -- in priority order: `package.json` `name`, `Cargo.toml` `[package].name`, `go.mod` module path's last segment, `pyproject.toml` `[project].name` or `[tool.poetry].name`, else the directory name of the project root.
 - **`rawDescription`** -- the `description` field from `package.json` (or its equivalent in the matching manifest), or `""` if none.
 - **`readmeHead`** -- the first ~10 lines of `README.md` (or equivalent), or `""` if no README exists.
-- **`frameworks`** -- match dependency names against known frameworks: `react`, `vue`, `svelte`, `@angular/core`, `express`, `fastify`, `koa`, `next`, `nuxt`, `vite`, `vitest`, `jest`, `mocha`, `tailwindcss`, `prisma`, `typeorm`, `sequelize`, `mongoose`, `redux`, `zustand`, `mobx`; Python: `django`, `djangorestframework`, `fastapi`, `flask`, `sqlalchemy`, `alembic`, `celery`, `pydantic`, `uvicorn`, `gunicorn`, `aiohttp`, `tornado`, `starlette`, `pytest`, `hypothesis`, `channels`; Ruby: `rails`, `railties`, `sinatra`, `grape`, `rspec`, `sidekiq`, `activerecord`, `actionpack`, `devise`, `pundit`; Go: `github.com/gin-gonic/gin`, `github.com/labstack/echo`, `github.com/gofiber/fiber`, `github.com/go-chi/chi`, `gorm.io/gorm`; Rust: `actix-web`, `axum`, `rocket`, `diesel`, `tokio`, `serde`, `warp`; JVM: `spring-boot`, `spring-web`, `spring-data`, `quarkus`, `micronaut`, `hibernate`, `jakarta`, `junit`, `ktor`. Also infer infrastructure tools from manifest presence: add `Docker` if `Dockerfile` exists in the file list, `Docker Compose` if `docker-compose.yml`/`docker-compose.yaml` exists, `Terraform` if any `*.tf`, `GitHub Actions` if `.github/workflows/*.yml`, `GitLab CI` if `.gitlab-ci.yml`, `Jenkins` if `Jenkinsfile`.
+- **`frameworks`** -- match dependency names against known frameworks: `react`, `vue`, `svelte`, `@angular/core`, `express`, `fastify`, `koa`, `next`, `nuxt`, `vite`, `vitest`, `jest`, `mocha`, `tailwindcss`, `prisma`, `typeorm`, `sequelize`, `mongoose`, `redux`, `zustand`, `mobx`; Python: `django`, `djangorestframework`, `fastapi`, `flask`, `sqlalchemy`, `alembic`, `celery`, `pydantic`, `uvicorn`, `gunicorn`, `aiohttp`, `tornado`, `starlette`, `pytest`, `hypothesis`, `channels`; Ruby: `rails`, `railties`, `sinatra`, `grape`, `rspec`, `sidekiq`, `activerecord`, `actionpack`, `devise`, `pundit`; Go: `github.com/gin-gonic/gin`, `github.com/labstack/echo`, `github.com/gofiber/fiber`, `github.com/go-chi/chi`, `gorm.io/gorm`; Rust: `actix-web`, `axum`, `rocket`, `diesel`, `tokio`, `serde`, `warp`; JVM: `spring-boot`, `spring-web`, `spring-data`, `quarkus`, `micronaut`, `hibernate`, `jakarta`, `junit`, `ktor`; Dart/Flutter: `flutter`, `dart:io`, `dart:html`, `provider`, `riverpod`, `bloc`, `get_it`, `freezed`, `json_serializable`; iOS/ObjC: `AFNetworking`, `SDWebImage`, `Masonry`, `MBProgressHUD`, `MJRefresh`, `YYModel`, `ReactiveCocoa`. Also infer infrastructure tools from manifest presence: add `Docker` if `Dockerfile` exists in the file list, `Docker Compose` if `docker-compose.yml`/`docker-compose.yaml` exists, `Terraform` if any `*.tf`, `GitHub Actions` if `.github/workflows/*.yml`, `GitLab CI` if `.gitlab-ci.yml`, `Jenkins` if `Jenkinsfile`.
 - **`languages`** -- the deduplicated, alphabetically-sorted top-level language set you observe across the manifests + the bundled script's per-file language tally (you will read this from Step B's output).
 
 If the manifest is missing or malformed, leave the corresponding field empty rather than guessing.
@@ -157,7 +159,7 @@ Read the output JSON and merge the `importMap` field directly into your final sc
 
 **Capture stderr** when you run the bundled script. Any line starting with `Warning:` should be appended to phase warnings — the SKILL.md orchestrator captures these for the final report. The script also writes a one-line summary `extract-import-map: filesScanned=… filesWithImports=… totalEdges=…` on completion; you can ignore that line or surface it as informational.
 
-**Languages supported.** The bundled script natively handles import resolution for: TypeScript, JavaScript (including CJS `require()`), Python (relative + absolute + `__init__.py`), Go (go.mod prefix stripping), Rust (`use crate::`, `use super::`, `use self::`, and `mod x;` declarations), Java, Kotlin, C#, Ruby (`require` + `require_relative`), PHP (composer.json PSR-4 autoload), C, and C++ (`#include` with relative + include/ + src/ probes). Languages outside this set get empty arrays — there is no LLM-based fallback.
+**Languages supported.** The bundled script natively handles import resolution for: TypeScript, JavaScript (including CJS `require()`), Python (relative + absolute + `__init__.py`), Go (go.mod prefix stripping), Rust (`use crate::`, `use super::`, `use self::`, and `mod x;` declarations), Java, Kotlin, C#, Ruby (`require` + `require_relative`), PHP (composer.json PSR-4 autoload), C, and C++ (`#include` with relative + include/ + src/ probes). Dart and Objective-C have **tree-sitter structural extractors** but no import resolver yet — they get empty `importMap` arrays (similar to Vue/Svelte). Languages outside this set get empty arrays — there is no LLM-based fallback.
 
 ---
 
@@ -219,7 +221,7 @@ Then assemble the final output JSON:
 - ALWAYS validate that `totalFiles` matches the actual length of the `files` array.
 - Trust Step B for file enumeration + language detection + category assignment + line counts + complexity. Trust Step C for `importMap`. Your only synthesis is the `description` field (plus the Step A narrative fields: `name`, `frameworks`, `languages`).
 - Do NOT re-implement file enumeration, language detection, or category assignment in your discovery script. Use the bundled `scan-project.mjs`. If the table doesn't cover your project type, file an issue rather than ad-hoc handling.
-- Do NOT attempt to re-implement import resolution. The bundled `extract-import-map.mjs` handles all 12 supported code languages (TS, JS, Python, Go, Rust, Java, Kotlin, C#, Ruby, PHP, C, C++) deterministically via tree-sitter + per-language resolvers.
+- Do NOT attempt to re-implement import resolution. The bundled `extract-import-map.mjs` handles 12 supported code languages (TS, JS, Python, Go, Rust, Java, Kotlin, C#, Ruby, PHP, C, C++) deterministically via tree-sitter + per-language resolvers. Dart and Objective-C have structural extractors but no import resolver — their `importMap` entries will be empty arrays.
 - Every file MUST have a `fileCategory` field with one of: `code`, `config`, `docs`, `infra`, `data`, `script`, `markup` — `scan-project.mjs` guarantees this; just don't strip it.
 
 ## Writing Results

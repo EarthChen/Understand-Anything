@@ -129,12 +129,12 @@ Read `$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex
 
 When any of these arrays is present and non-empty, you MUST iterate it and emit nodes for the significant entries (don't just create the parent file node and call it done). The corresponding `metrics.serviceCount` / `metrics.endpointCount` / `metrics.resourceCount` / `metrics.stepCount` / `metrics.definitionCount` fields tell you how many were extracted at a glance.
 
-**Supported file categories:** The bundled script handles all file categories — `code` (10 languages with tree-sitter: TypeScript, JavaScript, Python, Go, Rust, Java, Ruby, PHP, C/C++, C#), `config`, `docs`, `infra`, `data`, `script`, and `markup`. For languages without tree-sitter support (Swift, Kotlin, PowerShell, Batch, shell scripts of fileCategory `script`), the script outputs basic metrics with empty structural data — you MUST then read the source and supplement at least the function definitions, so these files don't end up as bare `file` nodes:
+**Supported file categories:** The bundled script handles all file categories — `code` (13 languages with tree-sitter: TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Ruby, PHP, C/C++, C#, Dart, Objective-C), `config`, `docs`, `infra`, `data`, `script`, and `markup`. For languages without tree-sitter support (Swift, PowerShell, Batch, shell scripts of fileCategory `script`), the script outputs basic metrics with empty structural data — you MUST then read the source and supplement at least the function definitions, so these files don't end up as bare `file` nodes:
 
 - **PowerShell** (`.ps1`): match top-level `function NAME { ... }` blocks (case-insensitive); name = `NAME`, params from the param block when present
 - **Bash / shell** (`.sh`, `.bash`): match top-level `NAME() { ... }` and `function NAME { ... }`
 - **Batch** (`.bat`, `.cmd`): match `:LABEL` lines as call targets
-- **Swift / Kotlin**: match top-level `func NAME(` / `fun NAME(`
+- **Swift**: match top-level `func NAME(`
 
 Treat these the same as tree-sitter-derived functions for node creation (Step 2 significance filter still applies — only emit `function:` nodes for those exceeding the threshold).
 
@@ -208,7 +208,7 @@ For non-code files:
 
 Indicators from script data:
 - Many re-exports + few functions = `barrel`
-- Filename contains `.test.` or `.spec.` or `test_*.py` or `*_test.go` or `*Test.java` or `*_spec.rb` or `*Test.php` or `*Tests.cs` = `test`
+- Filename contains `.test.` or `.spec.` or `test_*.py` or `*_test.go` or `*Test.java` or `*Test.kt` or `*_spec.rb` or `*Test.php` or `*Tests.cs` or `*_test.dart` = `test`
 - Exports a class with `Handler` or `Controller` in the name = `api-handler`
 - Only type/interface exports = `type-definition`
 - Named `index.ts` or `index.js` at a directory root with re-exports = `entry-point` (JavaScript/TypeScript barrel)
@@ -217,6 +217,9 @@ Indicators from script data:
 - Named `main.go` in `cmd/` directory = `entry-point` (Go binary)
 - Named `main.rs` or `lib.rs` in `src/` = `entry-point` (Rust crate root)
 - Named `Application.java` or `Main.java` = `entry-point` (Java application)
+- Named `Application.kt` or `Main.kt` = `entry-point` (Kotlin application)
+- Named `main.dart` in `lib/` = `entry-point` (Dart/Flutter application)
+- Named `AppDelegate.m` or `main.m` = `entry-point` (Objective-C application)
 - Named `Program.cs` = `entry-point` (.NET application)
 - Named `config.ru` = `entry-point` (Ruby Rack server)
 - Named `mod.rs` in a directory = `barrel` (Rust module barrel)
@@ -310,17 +313,17 @@ The `batchImportData` values contain only resolved project-internal paths — ex
 
 ### RPC and Message-Queue Annotation Detection
 
-**Built-in annotations** are **always** detected — no configuration required. When any of the annotations in the table below appear in Java/Kotlin/Spring source, emit the corresponding `provides_rpc`, `consumes_rpc`, `publishes`, or `subscribes` edge automatically.
+**Built-in annotations** are **always** detected — no configuration required. When any of the annotations in the table below appear in Java/Kotlin/Spring source (or their framework equivalents in Dart/ObjC), emit the corresponding `provides_rpc`, `consumes_rpc`, `publishes`, or `subscribes` edge automatically.
 
 **`rpcAnnotations` in `config.json` is only needed for custom frameworks** that are NOT in the built-in list below. When present, custom entries are merged with the built-in list — they never override or disable built-in detection.
 
-**IMPORTANT — Using structural annotation data:** The `extract-structure.mjs` script now extracts annotations, `superclass`, `interfaces`, and typed field info for Java files. Use this data as your PRIMARY source for RPC/MQ edge generation:
+**IMPORTANT — Using structural annotation data:** The `extract-structure.mjs` script extracts annotations, `superclass`, `interfaces`, and typed field info for **Java, Kotlin, Dart, and Objective-C** files. Use this data as your PRIMARY source for RPC/MQ edge generation:
 
-- `classes[].annotations` — class-level annotations (e.g., `@MoaProvider`, `@DubboService`, `@RestController`)
+- `classes[].annotations` — class-level annotations/decorators (Java/Kotlin: `@DubboService`, `@RestController`; Dart: `@JsonSerializable`, `@immutable`; ObjC: protocol conformance)
 - `classes[].superclass` — the class this extends
-- `classes[].interfaces` — interfaces this class implements (critical for RPC provider→interface matching)
-- `classes[].typedProperties` — field names, types, and annotations (e.g., `@MoaConsumer`, `@DubboReference`, `@Resource`, `@Autowired`)
-- `functions[].annotations` — method-level annotations (e.g., `@KafkaListener`, `@RequestMapping`)
+- `classes[].interfaces` — interfaces/protocols this class implements (critical for RPC provider→interface matching)
+- `classes[].typedProperties` — field names, types, and annotations (Java/Kotlin: `@DubboReference`, `@Autowired`; Dart: typed fields; ObjC: `@property` declarations with attributes)
+- `functions[].annotations` — method-level annotations (Java/Kotlin: `@KafkaListener`, `@RequestMapping`; Dart: `@override`; ObjC: method selectors)
 
 When `annotations` data is present in the structural extraction output, you MUST check it against the built-in annotation table below and emit corresponding edges. Do NOT skip this step even if the source file looks unfamiliar — the annotations are deterministically extracted by tree-sitter and are reliable.
 

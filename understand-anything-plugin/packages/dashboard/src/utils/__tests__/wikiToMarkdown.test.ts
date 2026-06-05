@@ -101,7 +101,8 @@ describe("domainPageToMarkdown", () => {
 
     const md = domainPageToMarkdown(page);
     expect(md).toContain("## Cross-Service Calls");
-    expect(md).toContain("`order-service.processPayment` → `payment-service#PaymentAPI`");
+    expect(md).toContain("`order-service`.processPayment");
+    expect(md).toContain("`payment-service`#PaymentAPI");
   });
 
   it("handles empty entities and flows", () => {

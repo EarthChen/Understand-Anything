@@ -122,6 +122,11 @@ const LANGUAGE_BY_EXT = Object.freeze({
   '.cs': 'csharp',
   '.swift': 'swift',
   '.lua': 'lua',
+  // Dart
+  '.dart': 'dart',
+  // Objective-C
+  '.m': 'objc',
+  '.mm': 'objc',
   // Ruby / PHP
   '.rb': 'ruby',
   '.rake': 'ruby',

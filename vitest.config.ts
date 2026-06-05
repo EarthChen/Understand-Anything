@@ -21,5 +21,11 @@ export default defineConfig({
       '**/dist/**',
       'understand-anything-plugin/packages/core/**',
     ],
+    environmentMatchGlobs: [
+      ['**/*.test.tsx', 'jsdom'],
+    ],
+    setupFiles: [
+      'understand-anything-plugin/packages/dashboard/vitest-setup.ts',
+    ],
   },
 });

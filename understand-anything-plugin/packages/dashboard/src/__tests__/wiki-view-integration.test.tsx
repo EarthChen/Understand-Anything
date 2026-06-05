@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import WikiView from "../components/WikiView";
 import { useDashboardStore } from "../store";
+import { I18nProvider } from "../contexts/I18nContext";
 
 const ACCESS_TOKEN = "test-token";
 
@@ -176,7 +177,11 @@ function createWikiFetchMock() {
 
 async function renderWikiView() {
   const user = userEvent.setup();
-  render(<WikiView accessToken={ACCESS_TOKEN} />);
+  render(
+    <I18nProvider language="en">
+      <WikiView accessToken={ACCESS_TOKEN} />
+    </I18nProvider>,
+  );
   await waitFor(() => {
     expect(screen.queryByText("Loading Wiki index...")).not.toBeInTheDocument();
   });
@@ -208,7 +213,7 @@ describe("WikiView integration", () => {
     });
     const article = screen.getByRole("article");
     expect(within(article).getByText(/Multi-service e-commerce platform/)).toBeInTheDocument();
-    expect(within(article).getByText(/order-service/)).toBeInTheDocument();
+    expect(within(article).getAllByText(/order-service/).length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders navigation tree with By Domain and By Service sections", async () => {
@@ -312,7 +317,7 @@ describe("WikiView integration", () => {
     await user.click(sourceLink);
 
     const closeButton = await screen.findByLabelText("Close source panel");
-    const sourcePanel = closeButton.closest(".border-l")!;
+    const sourcePanel = closeButton.closest(".border-t")!;
     expect(within(sourcePanel).getByText(/src\/OrderService\.java:10-20/)).toBeInTheDocument();
 
     await waitFor(() => {

@@ -74,6 +74,7 @@ describe("WikiDataService", () => {
     it("aggregates entries from parent and service wikis", () => {
       writeJson(path.join(tmpDir, ".understand-anything/wiki/meta.json"), {
         gitCommitHash: "a", generatedAt: "t", version: "1", outputLanguage: "en",
+        serviceCount: 1,
       });
       writeJson(path.join(tmpDir, ".understand-anything/wiki/index.json"), {
         entries: [

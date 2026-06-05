@@ -48,7 +48,7 @@ An open-source tool combining LLM intelligence + static analysis to produce inte
 - Core uses subpath exports (`./search`, `./types`, `./schema`) to avoid pulling Node.js modules into browser
 
 ## Gotchas
-- **tree-sitter**: Uses `web-tree-sitter` (WASM) instead of native `tree-sitter` — native bindings fail on darwin/arm64 + Node 24
+- **tree-sitter**: Uses `web-tree-sitter` (WASM) instead of native `tree-sitter` — native bindings fail on darwin/arm64 + Node 24. 13 code languages have tree-sitter extractors (TS, JS, Python, Go, Rust, Java, Kotlin, Ruby, PHP, C/C++, C#, Dart, ObjC); Swift still uses LLM fallback only.
 - **Dashboard imports**: Dashboard must only import from core's browser-safe subpath exports (`./search`, `./types`, `./schema`), never the main entry point which pulls in Node.js modules
 
 ## Scripts

@@ -523,11 +523,12 @@ function extractRequireSources(content) {
 }
 
 /**
- * Kotlin has no tree-sitter extractor in this project, so we collect its
- * import sources via a focused regex pass. Kotlin imports are syntactically
- * simple: one per line, `import x.y.Z` or `import x.y.Z as Alias` (or
- * `import x.y.*` for star imports). We capture the dotted FQN and let the
- * dotted resolver classify wildcards.
+ * Kotlin import sources collected via a focused regex pass (import resolution
+ * uses regex here even though Kotlin now has a tree-sitter structural extractor,
+ * because the import resolver pipeline was built before the extractor existed).
+ * Kotlin imports are syntactically simple: one per line, `import x.y.Z` or
+ * `import x.y.Z as Alias` (or `import x.y.*` for star imports). We capture
+ * the dotted FQN and let the dotted resolver classify wildcards.
  *
  * The capture is a strict qualifiedName grammar — a leading identifier
  * followed by zero or more `.identifier` segments and an optional trailing
@@ -860,9 +861,8 @@ export function resolveJavaImport(rawImport, _file, ctx) {
 // ---------------------------------------------------------------------------
 // Kotlin resolver
 //
-// Kotlin has no tree-sitter extractor in this project, so its import sources
-// are collected via a focused regex pass in extractExtraImportSources(); the
-// resolver itself is identical-shape to Java.
+// Kotlin import sources are collected via regex in extractExtraImportSources()
+// (predates the tree-sitter KotlinExtractor); resolver is identical to Java.
 // ---------------------------------------------------------------------------
 
 export function resolveKotlinImport(rawImport, _file, ctx) {
