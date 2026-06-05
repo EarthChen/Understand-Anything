@@ -1,7 +1,7 @@
 # Cross-Repo Graph Linking
 
 > Date: 2026-06-05
-> Status: DRAFT — Pending approval
+> Status: IMPLEMENTED (2026-06-05)
 > PRD: `.claude/prds/wiki-cross-service-endpoints.prd.md` (Milestone 8)
 
 ## Background

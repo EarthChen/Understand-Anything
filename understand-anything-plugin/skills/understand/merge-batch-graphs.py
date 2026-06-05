@@ -21,8 +21,10 @@ Output:
 import json
 import os
 import re
+import subprocess
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -1359,6 +1361,109 @@ def recover_rpc_mq_from_extraction(
     return recovered, lines
 
 
+def generate_manifest(kg: dict, output_path: str) -> dict:
+    """Extract a lightweight manifest from the assembled knowledge graph."""
+    nodes = kg.get("nodes", [])
+    edges = kg.get("edges", [])
+    metadata = kg.get("metadata", {})
+
+    file_count = sum(
+        1 for n in nodes if n.get("type") in ("file", "config", "document")
+    )
+
+    providers = []
+    for edge in edges:
+        if edge.get("type") == "provides_rpc":
+            target = edge.get("target", "")
+            if "endpoint:__synthetic__:" in target:
+                identifier = target.replace("endpoint:__synthetic__:", "")
+                providers.append({
+                    "identifier": identifier,
+                    "protocol": edge.get("properties", {}).get("protocol", "unknown"),
+                })
+
+    consumers = []
+    for edge in edges:
+        if edge.get("type") == "consumes_rpc":
+            target = edge.get("target", "")
+            if "endpoint:__synthetic__:" in target:
+                target_interface = target.replace("endpoint:__synthetic__:", "")
+                consumers.append({
+                    "identifier": edge.get("source", "").split(":")[-1],
+                    "protocol": edge.get("properties", {}).get("protocol", "unknown"),
+                    "targetInterface": target_interface,
+                })
+
+    kafka_exports = []
+    kafka_imports = []
+    for edge in edges:
+        if edge.get("type") == "subscribes":
+            target = edge.get("target", "")
+            if "topic:__synthetic__:" in target:
+                topic = target.replace("topic:__synthetic__:", "")
+                kafka_imports.append({"topic": topic, "role": "subscriber"})
+
+    synthetic = [
+        n["id"] for n in nodes if n.get("id", "").startswith("endpoint:__synthetic__:")
+    ]
+
+    git_hash = ""
+    git_branch = ""
+    try:
+        project_dir = os.path.dirname(os.path.dirname(output_path))
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=project_dir,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            git_hash = result.stdout.strip()
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=project_dir,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            git_branch = result.stdout.strip()
+    except Exception:
+        pass
+
+    manifest = {
+        "version": "1.0",
+        "service": kg.get("projectName", ""),
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "gitCommitHash": git_hash,
+        "gitBranch": git_branch,
+        "metadata": {
+            "languages": metadata.get("languages", []),
+            "frameworks": metadata.get("frameworks", []),
+            "nodeCount": len(nodes),
+            "edgeCount": len(edges),
+            "fileCount": file_count,
+        },
+        "exports": {
+            "providers": sorted(providers, key=lambda x: x["identifier"]),
+            "kafkaTopics": sorted(kafka_exports, key=lambda x: x.get("topic", "")),
+        },
+        "imports": {
+            "consumers": sorted(consumers, key=lambda x: x["identifier"]),
+            "kafkaTopics": sorted(kafka_imports, key=lambda x: x.get("topic", "")),
+        },
+        "endpoints": {
+            "synthetic": sorted(synthetic),
+        },
+    }
+
+    Path(output_path).write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return manifest
+
+
 # ── Main ──────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -1531,6 +1636,14 @@ def main() -> None:
 
     size_kb = output_path.stat().st_size / 1024
     print(f"\nWritten to {output_path} ({size_kb:.0f} KB)", file=sys.stderr)
+
+    # Generate manifest.json for cross-repo sharing
+    manifest_path = project_root / ".understand-anything" / "manifest.json"
+    try:
+        generate_manifest(assembled, str(manifest_path))
+        print(f"Manifest written to {manifest_path}", file=sys.stderr)
+    except Exception as e:
+        print(f"WARNING: Failed to generate manifest: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":

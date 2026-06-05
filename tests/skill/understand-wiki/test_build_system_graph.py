@@ -77,6 +77,18 @@ class TestDiscoverServices(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp()
 
+    def _create_service(self, name: str) -> None:
+        svc_dir = os.path.join(self.tmpdir, name, ".understand-anything")
+        os.makedirs(svc_dir, exist_ok=True)
+        with open(os.path.join(svc_dir, "knowledge-graph.json"), "w", encoding="utf-8") as f:
+            json.dump(_make_kg(name), f)
+
+    def _write_system_json(self, config: dict) -> None:
+        config_dir = os.path.join(self.tmpdir, ".understand-anything")
+        os.makedirs(config_dir, exist_ok=True)
+        with open(os.path.join(config_dir, "system.json"), "w", encoding="utf-8") as f:
+            json.dump(config, f)
+
     def test_discovers_services_with_kg(self) -> None:
         """Services with knowledge-graph.json are discovered."""
         svc_a = os.path.join(self.tmpdir, "order-service", ".understand-anything")
@@ -109,6 +121,73 @@ class TestDiscoverServices(unittest.TestCase):
 
         result = discover_services(self.tmpdir)
         self.assertEqual(len(result), 0)
+
+    def test_system_json_exclude_glob(self) -> None:
+        """system.json exclude patterns filter services via fnmatch globs."""
+        self._create_service("order-service")
+        self._create_service("payment-service")
+        self._create_service("deprecated-auth")
+        self._write_system_json({
+            "version": "1.0",
+            "name": "ultron-platform",
+            "discovery": {
+                "mode": "auto",
+                "exclude": ["deprecated-*"],
+                "include": [],
+            },
+        })
+
+        result = discover_services(self.tmpdir)
+        names = sorted(s["name"] for s in result)
+        self.assertEqual(names, ["order-service", "payment-service"])
+
+    def test_system_json_include_whitelist(self) -> None:
+        """Non-empty include list acts as whitelist; exclude is ignored."""
+        self._create_service("order-service")
+        self._create_service("payment-service")
+        self._create_service("inventory-service")
+        self._write_system_json({
+            "version": "1.0",
+            "name": "ultron-platform",
+            "discovery": {
+                "mode": "auto",
+                "exclude": ["payment-service"],
+                "include": ["order-service"],
+            },
+        })
+
+        result = discover_services(self.tmpdir)
+        names = [s["name"] for s in result]
+        self.assertEqual(names, ["order-service"])
+
+    def test_no_system_json_backward_compat(self) -> None:
+        """Without system.json, all services with KGs are discovered."""
+        self._create_service("order-service")
+        self._create_service("payment-service")
+        self._create_service("inventory-service")
+
+        result = discover_services(self.tmpdir)
+        names = sorted(s["name"] for s in result)
+        self.assertEqual(names, ["inventory-service", "order-service", "payment-service"])
+
+    def test_exclude_glob_wildcard(self) -> None:
+        """Multiple glob patterns exclude matching services."""
+        self._create_service("order-service")
+        self._create_service("test-runner")
+        self._create_service("auth-legacy")
+        self._write_system_json({
+            "version": "1.0",
+            "name": "ultron-platform",
+            "discovery": {
+                "mode": "auto",
+                "exclude": ["test-*", "*-legacy"],
+                "include": [],
+            },
+        })
+
+        result = discover_services(self.tmpdir)
+        names = sorted(s["name"] for s in result)
+        self.assertEqual(names, ["order-service"])
 
 
 class TestExtractServiceInfo(unittest.TestCase):
@@ -314,6 +393,27 @@ class TestBuildSystemGraph(unittest.TestCase):
         self.assertEqual(sg["nodes"], [])
         self.assertEqual(sg["edges"], [])
         self.assertEqual(sg["project"]["serviceCount"], 0)
+
+    def test_system_name_in_graph(self) -> None:
+        """system.json name and description appear in the output graph."""
+        self._create_service_kg("order-service", [], [])
+        config_dir = self.project_root / ".understand-anything"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        system_config = {
+            "version": "1.0",
+            "name": "test-platform",
+            "description": "Test platform description",
+            "discovery": {"mode": "auto", "exclude": [], "include": []},
+        }
+        (config_dir / "system.json").write_text(
+            json.dumps(system_config),
+            encoding="utf-8",
+        )
+
+        graph = build_system_graph(self.tmpdir)
+
+        self.assertEqual(graph["project"]["name"], "test-platform")
+        self.assertEqual(graph["project"]["description"], "Test platform description")
 
 
 class TestWikiEnrichment(unittest.TestCase):

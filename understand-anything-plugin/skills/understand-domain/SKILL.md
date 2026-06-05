@@ -135,6 +135,38 @@ This phase uses different strategies depending on Path:
 3. The agent writes to `$PROJECT_ROOT/.understand-anything/intermediate/domain-discovery.json`
 4. Read the discovery output. If 0 domains found, report error and stop.
 
+#### Phase 4a-audit: Domain Discovery Audit
+
+1. Run the audit script:
+   ```bash
+   python "$PLUGIN_ROOT/skills/understand-domain/audit_domain_discovery.py" "$PROJECT_ROOT"
+   ```
+2. Read `$PROJECT_ROOT/.understand-anything/intermediate/domain-audit.json`
+3. If `shouldRefine` is `false`, proceed to Phase 4b
+4. If `shouldRefine` is `true`, proceed to Phase 4a-refine
+
+#### Phase 4a-refine: Domain Discovery Refinement
+
+1. Read the `domain-discoverer` agent prompt from `$PLUGIN_ROOT/agents/domain-discoverer.md`
+2. Prepare refinement context by combining:
+   - The original `kg-summary.json` content
+   - The current `domain-discovery.json` content
+   - The audit warnings from `domain-audit.json`
+3. Dispatch a subagent with the `domain-discoverer` prompt + refinement context, adding this instruction:
+   ```
+   REFINEMENT PASS: The previous domain discovery was audited and the following issues were found.
+   Review each warning and decide whether to split the flagged domains.
+   If splitting, create new domain entries with appropriate module assignments.
+   If not splitting, explain why in your text response.
+
+   <audit-warnings>
+   {JSON array of warnings from domain-audit.json}
+   </audit-warnings>
+   ```
+4. The agent overwrites `$PROJECT_ROOT/.understand-anything/intermediate/domain-discovery.json`
+5. Re-run the audit script to verify improvement (warnings may remain — that's acceptable)
+6. Proceed to Phase 4b
+
 #### Phase 4b: KG Splitting
 
 1. Run the splitting script:

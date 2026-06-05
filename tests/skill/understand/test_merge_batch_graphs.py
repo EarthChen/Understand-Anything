@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -1585,6 +1586,143 @@ class TestRecoverRpcMqFromExtraction(unittest.TestCase):
         self.assertGreater(recovered, 0)
         edge = next(e for e in assembled["edges"] if e["type"] == "consumes_rpc")
         self.assertIn("user-service", edge["target"])
+
+
+class TestGenerateManifest(unittest.TestCase):
+    """Tests for generate_manifest() — lightweight KG manifest extraction."""
+
+    def _manifest_path(self) -> tuple[str, tempfile.TemporaryDirectory[str]]:
+        tmp = tempfile.TemporaryDirectory()
+        path = str(Path(tmp.name) / ".understand-anything" / "manifest.json")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        return path, tmp
+
+    def test_manifest_basic_structure(self) -> None:
+        kg: dict[str, Any] = {
+            "projectName": "order-service",
+            "nodes": [
+                {"id": "file:src/Main.java", "type": "file"},
+                {"id": "class:OrderService", "type": "class"},
+            ],
+            "edges": [
+                {"source": "class:OrderService", "target": "file:src/Main.java", "type": "defined_in"},
+            ],
+            "metadata": {
+                "languages": ["java"],
+                "frameworks": ["spring-boot"],
+            },
+        }
+        output_path, tmp = self._manifest_path()
+        try:
+            manifest = mbg.generate_manifest(kg, output_path)
+            self.assertEqual(manifest["version"], "1.0")
+            self.assertEqual(manifest["service"], "order-service")
+            self.assertEqual(manifest["metadata"]["nodeCount"], 2)
+            self.assertEqual(manifest["metadata"]["edgeCount"], 1)
+            self.assertEqual(manifest["metadata"]["fileCount"], 1)
+            self.assertEqual(manifest["metadata"]["languages"], ["java"])
+            self.assertEqual(manifest["metadata"]["frameworks"], ["spring-boot"])
+            self.assertTrue(Path(output_path).exists())
+        finally:
+            tmp.cleanup()
+
+    def test_manifest_exports_providers(self) -> None:
+        kg: dict[str, Any] = {
+            "projectName": "order-service",
+            "nodes": [
+                {"id": "class:OrderServiceImpl", "type": "class"},
+                {"id": "endpoint:__synthetic__:OrderService", "type": "endpoint"},
+            ],
+            "edges": [
+                {
+                    "source": "class:OrderServiceImpl",
+                    "target": "endpoint:__synthetic__:OrderService",
+                    "type": "provides_rpc",
+                    "properties": {"protocol": "dubbo"},
+                },
+            ],
+            "metadata": {},
+        }
+        output_path, tmp = self._manifest_path()
+        try:
+            manifest = mbg.generate_manifest(kg, output_path)
+            providers = manifest["exports"]["providers"]
+            self.assertEqual(len(providers), 1)
+            self.assertEqual(providers[0]["identifier"], "OrderService")
+            self.assertEqual(providers[0]["protocol"], "dubbo")
+        finally:
+            tmp.cleanup()
+
+    def test_manifest_imports_consumers(self) -> None:
+        kg: dict[str, Any] = {
+            "projectName": "order-service",
+            "nodes": [
+                {"id": "class:UserClient", "type": "class"},
+                {"id": "endpoint:__synthetic__:UserService", "type": "endpoint"},
+            ],
+            "edges": [
+                {
+                    "source": "class:UserClient",
+                    "target": "endpoint:__synthetic__:UserService",
+                    "type": "consumes_rpc",
+                    "properties": {"protocol": "moa"},
+                },
+            ],
+            "metadata": {},
+        }
+        output_path, tmp = self._manifest_path()
+        try:
+            manifest = mbg.generate_manifest(kg, output_path)
+            consumers = manifest["imports"]["consumers"]
+            self.assertEqual(len(consumers), 1)
+            self.assertEqual(consumers[0]["identifier"], "UserClient")
+            self.assertEqual(consumers[0]["protocol"], "moa")
+            self.assertEqual(consumers[0]["targetInterface"], "UserService")
+        finally:
+            tmp.cleanup()
+
+    def test_manifest_kafka_topics(self) -> None:
+        kg: dict[str, Any] = {
+            "projectName": "order-service",
+            "nodes": [
+                {"id": "class:OrderListener", "type": "class"},
+                {"id": "topic:__synthetic__:user.updated", "type": "endpoint"},
+            ],
+            "edges": [
+                {
+                    "source": "class:OrderListener",
+                    "target": "topic:__synthetic__:user.updated",
+                    "type": "subscribes",
+                },
+            ],
+            "metadata": {},
+        }
+        output_path, tmp = self._manifest_path()
+        try:
+            manifest = mbg.generate_manifest(kg, output_path)
+            kafka_topics = manifest["imports"]["kafkaTopics"]
+            self.assertEqual(len(kafka_topics), 1)
+            self.assertEqual(kafka_topics[0]["topic"], "user.updated")
+            self.assertEqual(kafka_topics[0]["role"], "subscriber")
+        finally:
+            tmp.cleanup()
+
+    def test_manifest_empty_kg(self) -> None:
+        kg: dict[str, Any] = {}
+        output_path, tmp = self._manifest_path()
+        try:
+            manifest = mbg.generate_manifest(kg, output_path)
+            self.assertEqual(manifest["version"], "1.0")
+            self.assertEqual(manifest["service"], "")
+            self.assertEqual(manifest["metadata"]["nodeCount"], 0)
+            self.assertEqual(manifest["metadata"]["edgeCount"], 0)
+            self.assertEqual(manifest["metadata"]["fileCount"], 0)
+            self.assertEqual(manifest["exports"]["providers"], [])
+            self.assertEqual(manifest["imports"]["consumers"], [])
+            self.assertEqual(manifest["imports"]["kafkaTopics"], [])
+            self.assertEqual(manifest["endpoints"]["synthetic"], [])
+        finally:
+            tmp.cleanup()
 
 
 if __name__ == "__main__":

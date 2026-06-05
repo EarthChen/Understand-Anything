@@ -16,6 +16,11 @@ from typing import Any
 KEY_NODE_TYPES = frozenset({"endpoint", "service", "pipeline", "table", "schema"})
 MAX_SUMMARIES_PER_MODULE = 3
 MAX_EDGE_SAMPLES = 3
+_VERB_PREFIXES = frozenset({
+    "get", "create", "update", "delete", "find", "list", "save",
+    "load", "remove", "add", "set", "check", "validate", "build",
+    "handle", "process", "fetch", "send", "receive",
+})
 
 
 def _get_module(path_or_id: str) -> str:
@@ -33,6 +38,52 @@ def _get_module(path_or_id: str) -> str:
     elif len(significant) >= 2:
         return significant[0]
     return "(root)"
+
+
+def _extract_entity_nouns(node_names: list[str]) -> list[str]:
+    """Extract core entity nouns from node names by stripping common verb prefixes."""
+    import re as _re
+    nouns: set[str] = set()
+    for name in node_names:
+        # Split on separators and CamelCase boundaries
+        parts = _re.split(r"[_\-/]|(?<=[a-z])(?=[A-Z])", name)
+        for part in parts:
+            if part.lower() not in _VERB_PREFIXES and len(part) > 2:
+                nouns.add(part)
+    return sorted(nouns)
+
+
+def _build_capability_clusters(modules: list[dict], key_nodes: list[dict]) -> list[dict]:
+    """Group keyNodes within a module by entity noun to identify capability clusters."""
+    mod_keynodes: dict[str, list[dict]] = defaultdict(list)
+    for kn in key_nodes:
+        mod_keynodes[kn["module"]].append(kn)
+
+    enriched_modules = []
+    for mod in modules:
+        path = mod["path"]
+        kns = mod_keynodes.get(path, [])
+        if not kns:
+            mod["candidateCapabilityClusters"] = []
+            enriched_modules.append(mod)
+            continue
+
+        clusters: dict[str, list[str]] = defaultdict(list)
+        for kn in kns:
+            nouns = _extract_entity_nouns([kn["name"]])
+            if nouns:
+                clusters[nouns[0]].append(kn["name"])
+            else:
+                clusters["_unclassified"].append(kn["name"])
+
+        mod["candidateCapabilityClusters"] = [
+            {"entityNoun": noun, "keyNodeNames": names}
+            for noun, names in sorted(clusters.items())
+            if len(names) >= 1
+        ]
+        enriched_modules.append(mod)
+
+    return enriched_modules
 
 
 def condense_kg(kg: dict[str, Any]) -> dict[str, Any]:
@@ -111,6 +162,8 @@ def condense_kg(kg: dict[str, Any]) -> dict[str, Any]:
             "count": data["count"],
             "samples": data["samples"],
         })
+
+    modules = _build_capability_clusters(modules, key_nodes)
 
     return {
         "project": project,

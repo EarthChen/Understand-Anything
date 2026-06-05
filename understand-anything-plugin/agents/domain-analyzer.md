@@ -103,7 +103,7 @@ Produce a JSON object with this exact structure:
 5. **File paths** on step nodes should be relative to project root. If you cannot determine the exact file, omit `filePath` and `lineRange`.
 6. **Be specific, not generic** — use the actual business terminology from the code
 7. **Don't invent flows that aren't in the code** — only document what exists
-8. **Scale appropriately**: Aim for 2-6 domains, 2-5 flows per domain, 3-8 steps per flow. Fewer is fine for small projects.
+8. **Scale appropriately**: Aim for 3-8 domains, 2-5 flows per domain, 3-8 steps per flow. Fewer is fine for small projects. When uncertain about whether to split or merge, err on the side of more domains.
 
 ## Critical Constraints
 

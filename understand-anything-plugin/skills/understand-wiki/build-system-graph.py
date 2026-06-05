@@ -11,6 +11,7 @@ Usage:
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import sys
@@ -30,6 +31,30 @@ FILE_NODE_TYPES = frozenset({
     "resource",
     "endpoint",
 })
+
+
+def _load_system_config(root: Path) -> dict[str, Any] | None:
+    system_config_path = root / ".understand-anything" / "system.json"
+    if not system_config_path.exists():
+        return None
+    try:
+        return json.loads(system_config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _apply_system_metadata(
+    graph: dict[str, Any],
+    system_config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if system_config:
+        if "project" not in graph:
+            graph["project"] = {}
+        if system_config.get("name"):
+            graph["project"]["name"] = system_config["name"]
+        if system_config.get("description"):
+            graph["project"]["description"] = system_config["description"]
+    return graph
 
 
 def discover_services(
@@ -52,6 +77,16 @@ def discover_services(
         except (json.JSONDecodeError, OSError):
             pass
 
+    system_config = _load_system_config(root)
+    if system_config:
+        discovery = system_config.get("discovery", {})
+        for pattern in discovery.get("exclude", []):
+            exclude_set.add(pattern)
+
+    include_patterns: list[str] = []
+    if system_config:
+        include_patterns = system_config.get("discovery", {}).get("include", [])
+
     services: list[dict[str, Any]] = []
     for entry in sorted(root.iterdir()):
         if not entry.is_dir():
@@ -59,7 +94,10 @@ def discover_services(
         name = entry.name
         if name.startswith(".") or name in SKIP_DIR_NAMES:
             continue
-        if name in exclude_set:
+        if include_patterns:
+            if not any(fnmatch.fnmatch(name, pattern) for pattern in include_patterns):
+                continue
+        elif any(fnmatch.fnmatch(name, pattern) for pattern in exclude_set):
             continue
 
         kg_path = entry / ".understand-anything" / "knowledge-graph.json"
@@ -166,11 +204,13 @@ def build_system_graph(
     services: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the system-level graph from per-service KGs."""
+    system_config = _load_system_config(Path(project_root))
+
     if services is None:
         services = discover_services(project_root)
 
     if not services:
-        return {
+        return _apply_system_metadata({
             "version": "1.0.0",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
             "project": {
@@ -182,7 +222,7 @@ def build_system_graph(
             "nodes": [],
             "edges": [],
             "serviceIndex": {},
-        }
+        }, system_config)
 
     service_infos: list[dict[str, Any]] = []
     for svc in services:
@@ -245,7 +285,7 @@ def build_system_graph(
 
     edges.extend(_match_rpc_edges(service_infos))
 
-    return {
+    return _apply_system_metadata({
         "version": "1.0.0",
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "project": {
@@ -257,7 +297,7 @@ def build_system_graph(
         "nodes": nodes,
         "edges": edges,
         "serviceIndex": service_index,
-    }
+    }, system_config)
 
 
 def enrich_from_wiki(graph: dict[str, Any], project_root: str) -> dict[str, Any]:
