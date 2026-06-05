@@ -1,0 +1,197 @@
+"""Deterministic endpoint extraction from ua-file-extract-results JSON.
+
+Reads annotations + method signatures to produce ServiceEndpointDoc JSON.
+Does NOT use LLM — pure structural extraction.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+_PROVIDER_ANNOTATIONS = {"MoaProvider", "DubboService", "GrpcService"}
+_CONSUMER_ANNOTATIONS = {"MoaConsumer", "DubboReference", "GrpcClient"}
+_CONSUMER_CLASS_ANNOTATIONS = {"FeignClient"}
+_SUBSCRIBER_ANNOTATIONS = {"KafkaListener"}
+
+_ANNOTATION_TO_PROTOCOL = {
+    "MoaProvider": "moa", "MoaConsumer": "moa",
+    "DubboService": "dubbo", "DubboReference": "dubbo",
+    "GrpcService": "grpc", "GrpcClient": "grpc",
+    "FeignClient": "http",
+}
+
+
+def _annotation_names(annotations: list[dict] | None) -> set[str]:
+    if not annotations:
+        return set()
+    return {a.get("name", "") for a in annotations if isinstance(a, dict)}
+
+
+def _annotation_args(annotations: list[dict] | None, name: str) -> dict:
+    if not annotations:
+        return {}
+    for a in annotations:
+        if isinstance(a, dict) and a.get("name") == name:
+            args = a.get("arguments", {})
+            return args if isinstance(args, dict) else {}
+    return {}
+
+
+def _match_methods_to_class(
+    functions: list[dict], class_name: str, file_path: str,
+) -> list[dict]:
+    """Match top-level functions to a class by checking if they belong to
+    the same file and their name appears in the class methods list."""
+    methods = []
+    for fn in functions:
+        if not isinstance(fn, dict):
+            continue
+        params = fn.get("params", [])
+        typed_params = []
+        for p in params:
+            if isinstance(p, dict):
+                typed_params.append({
+                    "name": p.get("name", "?"),
+                    "type": p.get("type", "unknown"),
+                })
+            elif isinstance(p, str):
+                typed_params.append({"name": p, "type": "unknown"})
+
+        methods.append({
+            "name": fn.get("name", "?"),
+            "params": typed_params,
+            "returnType": fn.get("returnType", "void"),
+            "lineRange": [fn.get("startLine", 0), fn.get("endLine", 0)],
+        })
+    return methods
+
+
+def extract_endpoints_from_dir(
+    extraction_dir: Path, service_name: str,
+) -> dict[str, Any]:
+    """Read extraction results and produce a ServiceEndpointDoc dict."""
+    providers: list[dict] = []
+    consumers: list[dict] = []
+    kafka_topics: list[dict] = []
+
+    extraction_files = sorted(extraction_dir.glob("ua-file-extract-results-*.json"))
+
+    for ext_file in extraction_files:
+        try:
+            data = json.loads(ext_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        results = data.get("results")
+        if not isinstance(results, list):
+            continue
+
+        for file_result in results:
+            file_path = file_result.get("path", "")
+            classes = file_result.get("classes", [])
+            functions = file_result.get("functions", [])
+            if not isinstance(classes, list):
+                classes = []
+            if not isinstance(functions, list):
+                functions = []
+
+            for cls in classes:
+                if not isinstance(cls, dict):
+                    continue
+                cls_name = cls.get("name", "")
+                if not cls_name:
+                    continue
+
+                ann_names = _annotation_names(cls.get("annotations"))
+                interfaces = cls.get("interfaces", [])
+                if not isinstance(interfaces, list):
+                    interfaces = []
+
+                provider_anns = ann_names & _PROVIDER_ANNOTATIONS
+                if provider_anns and interfaces:
+                    ann_name = next(iter(provider_anns))
+                    protocol = _ANNOTATION_TO_PROTOCOL.get(ann_name, "unknown")
+                    ann_args = _annotation_args(cls.get("annotations"), ann_name)
+                    methods = _match_methods_to_class(functions, cls_name, file_path)
+
+                    for iface in interfaces:
+                        if not isinstance(iface, str) or not iface:
+                            continue
+                        providers.append({
+                            "identifier": iface,
+                            "protocol": protocol,
+                            "framework": ann_name,
+                            "group": ann_args.get("group"),
+                            "version": ann_args.get("version"),
+                            "methods": methods,
+                            "sourceRef": {"file": file_path},
+                        })
+
+                consumer_anns = ann_names & _CONSUMER_CLASS_ANNOTATIONS
+                if consumer_anns:
+                    ann_name = next(iter(consumer_anns))
+                    protocol = _ANNOTATION_TO_PROTOCOL.get(ann_name, "unknown")
+                    ann_args = _annotation_args(cls.get("annotations"), ann_name)
+                    target = (
+                        ann_args.get("value")
+                        or ann_args.get("name")
+                        or ann_args.get("url")
+                        or cls_name
+                    )
+                    consumers.append({
+                        "identifier": cls_name,
+                        "protocol": protocol,
+                        "framework": ann_name,
+                        "targetInterface": target if isinstance(target, str) else cls_name,
+                        "sourceRef": {"file": file_path},
+                    })
+
+                typed_props = cls.get("typedProperties", [])
+                if isinstance(typed_props, list):
+                    for prop in typed_props:
+                        if not isinstance(prop, dict):
+                            continue
+                        prop_anns = _annotation_names(prop.get("annotations"))
+                        field_consumer_anns = prop_anns & _CONSUMER_ANNOTATIONS
+                        if field_consumer_anns:
+                            ann_name = next(iter(field_consumer_anns))
+                            protocol = _ANNOTATION_TO_PROTOCOL.get(ann_name, "unknown")
+                            iface_name = prop.get("type", prop.get("name", "?"))
+                            consumers.append({
+                                "identifier": iface_name,
+                                "protocol": protocol,
+                                "framework": ann_name,
+                                "targetInterface": iface_name,
+                                "sourceRef": {"file": file_path},
+                            })
+
+            for fn in functions:
+                if not isinstance(fn, dict):
+                    continue
+                fn_anns = _annotation_names(fn.get("annotations"))
+                if fn_anns & _SUBSCRIBER_ANNOTATIONS:
+                    for ann_name in fn_anns & _SUBSCRIBER_ANNOTATIONS:
+                        ann_args = _annotation_args(fn.get("annotations"), ann_name)
+                        topics = ann_args.get("topics", ann_args.get("value", ""))
+                        if isinstance(topics, str):
+                            topics = [topics] if topics else []
+                        elif not isinstance(topics, list):
+                            topics = []
+                        for topic in topics:
+                            if not topic:
+                                continue
+                            kafka_topics.append({
+                                "topic": topic,
+                                "role": "subscriber",
+                                "handlerMethod": fn.get("name"),
+                                "sourceRef": {"file": file_path},
+                            })
+
+    return {
+        "service": service_name,
+        "description": f"RPC/MQ endpoints for {service_name}",
+        "providers": providers,
+        "consumers": consumers,
+        "kafkaTopics": kafka_topics,
+    }
