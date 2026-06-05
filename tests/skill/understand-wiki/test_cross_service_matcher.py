@@ -224,6 +224,33 @@ class TestMatchRpcRelationships(unittest.TestCase):
         rels = mod.match_rpc_relationships(providers, consumers)
         self.assertEqual(len(rels), 0)
 
+    def test_method_level_matching_includes_methods(self):
+        """When providers have methods, matching should include them in callee."""
+        providers = [
+            {
+                "service": "order-service",
+                "interface": "OrderService",
+                "implementor": "OrderServiceImpl",
+                "implementor_id": "class:OrderServiceImpl.java:OrderServiceImpl",
+                "file": "src/OrderServiceImpl.java",
+                "methods": ["createOrder", "getOrder"],
+            }
+        ]
+        consumers = [
+            {
+                "service": "payment-service",
+                "interface": "OrderService",
+                "consumer_class": "PaymentHandler",
+                "consumer_id": "class:PaymentHandler.java:PaymentHandler",
+                "file": "src/PaymentHandler.java",
+            }
+        ]
+        result = mod.match_rpc_relationships(providers, consumers)
+        self.assertEqual(len(result), 1)
+        rel = result[0]
+        self.assertIn("methods", rel["callee"])
+        self.assertEqual(rel["callee"]["methods"], ["createOrder", "getOrder"])
+
 
 class TestMatchEventRelationships(unittest.TestCase):
     def test_outputs_topic_publisher_subscribers_format(self):

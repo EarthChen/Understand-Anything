@@ -181,6 +181,7 @@ def match_rpc_relationships(
                         "node": provider["implementor_id"],
                         "interface": provider["interface"],
                         "method": f"{provider['implementor']}.*()",
+                        "methods": provider.get("methods", []),
                     },
                     "type": "moa_rpc",
                     "evidence": "script-matched",
