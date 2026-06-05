@@ -83,7 +83,7 @@ export function validateWikiIndex(data: unknown, filePath: string): ValidationIs
     issues.push({ file: filePath, severity: "error", message: "index.entries is empty" });
     return issues;
   }
-  const validTypes = new Set(["overview", "architecture", "domain", "flow", "step", "service"]);
+  const validTypes = new Set(["overview", "architecture", "domain", "flow", "step", "service", "endpoint"]);
   for (let i = 0; i < index.entries.length; i++) {
     const entry = index.entries[i] as Record<string, unknown>;
     if (!entry.id || typeof entry.id !== "string") {
@@ -100,6 +100,30 @@ export function validateWikiIndex(data: unknown, filePath: string): ValidationIs
     }
   }
   return issues;
+}
+
+export function validateWikiEndpointDoc(
+  doc: unknown,
+): { valid: boolean; issues: string[]; warnings: string[] } {
+  const issues: string[] = [];
+  const warnings: string[] = [];
+  if (!doc || typeof doc !== "object") {
+    return { valid: false, issues: ["endpoint doc is not an object"], warnings };
+  }
+  const d = doc as Record<string, unknown>;
+  if (typeof d.service !== "string" || !d.service) {
+    issues.push("endpoint doc missing 'service' string");
+  }
+  if (!Array.isArray(d.providers)) {
+    issues.push("endpoint doc missing 'providers' array");
+  }
+  if (!Array.isArray(d.consumers)) {
+    issues.push("endpoint doc missing 'consumers' array");
+  }
+  if (!Array.isArray(d.kafkaTopics)) {
+    issues.push("endpoint doc missing 'kafkaTopics' array");
+  }
+  return { valid: issues.length === 0, issues, warnings };
 }
 
 export function validateWikiDomainPage(data: unknown, filePath: string): ValidationIssue[] {

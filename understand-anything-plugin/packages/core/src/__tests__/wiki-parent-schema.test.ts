@@ -3,6 +3,8 @@ import {
   validateParentWikiOverview,
   validateParentWikiArchitecture,
   validateParentWikiCrossDomain,
+  validateWikiIndex,
+  validateWikiEndpointDoc,
 } from "../wiki-schema";
 
 describe("validateParentWikiOverview", () => {
@@ -203,5 +205,42 @@ describe("validateParentWikiCrossDomain", () => {
     const issues = validateParentWikiCrossDomain("invalid", "domains/x.json");
     expect(issues).toHaveLength(1);
     expect(issues[0].severity).toBe("error");
+  });
+});
+
+describe("validateWikiIndex — endpoint type", () => {
+  it("accepts 'endpoint' as a valid wiki index type", () => {
+    const index = {
+      entries: [
+        { id: "ep-1", name: "Order Endpoints", type: "endpoint", summary: "RPC endpoints for order service" },
+      ],
+    };
+    const issues = validateWikiIndex(index, "index.json");
+    expect(issues.filter((i) => i.severity === "error")).toHaveLength(0);
+  });
+});
+
+describe("validateWikiEndpointDoc", () => {
+  it("validates a well-formed ServiceEndpointDoc", () => {
+    const doc = {
+      service: "order-service",
+      description: "Order service RPC endpoints",
+      providers: [{
+        identifier: "OrderService",
+        protocol: "moa",
+        framework: "MOA",
+        methods: [{ name: "createOrder", params: [{ name: "req", type: "CreateOrderReq" }], returnType: "OrderDTO" }],
+      }],
+      consumers: [],
+      kafkaTopics: [],
+    };
+    const result = validateWikiEndpointDoc(doc);
+    expect(result.valid).toBe(true);
+  });
+
+  it("rejects ServiceEndpointDoc missing service field", () => {
+    const doc = { description: "test", providers: [], consumers: [], kafkaTopics: [] };
+    const result = validateWikiEndpointDoc(doc);
+    expect(result.valid).toBe(false);
   });
 });

@@ -125,6 +125,7 @@ export { generateStarterIgnoreFile } from "./ignore-generator.js";
 export {
   validateWikiMeta,
   validateWikiIndex,
+  validateWikiEndpointDoc,
   validateWikiDomainPage,
   validateWikiServiceOverview,
   validateParentWikiOverview,

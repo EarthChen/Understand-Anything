@@ -48,10 +48,44 @@ export interface WikiMeta {
 export interface WikiIndexEntry {
   id: string;
   name: string;
-  type: "overview" | "architecture" | "domain" | "flow" | "step" | "service";
+  type: "overview" | "architecture" | "domain" | "flow" | "step" | "service" | "endpoint";
   service?: string;
   domain?: string;
   summary: string;
+}
+
+export interface EndpointMethodSignature {
+  name: string;
+  params: Array<{ name: string; type: string }>;
+  returnType: string;
+  lineRange?: [number, number];
+}
+
+export interface ServiceEndpointDoc {
+  service: string;
+  description: string;
+  providers: Array<{
+    identifier: string;
+    protocol: string;
+    framework: string;
+    group?: string;
+    version?: string;
+    methods: EndpointMethodSignature[];
+    sourceRef?: { file: string; lineRange?: [number, number] };
+  }>;
+  consumers: Array<{
+    identifier: string;
+    protocol: string;
+    framework: string;
+    targetInterface: string;
+    sourceRef?: { file: string; lineRange?: [number, number] };
+  }>;
+  kafkaTopics: Array<{
+    topic: string;
+    role: "publisher" | "subscriber";
+    handlerMethod?: string;
+    sourceRef?: { file: string; lineRange?: [number, number] };
+  }>;
 }
 
 export interface WikiIndex {

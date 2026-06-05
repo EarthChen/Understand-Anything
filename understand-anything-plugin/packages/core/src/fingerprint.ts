@@ -86,7 +86,7 @@ export function extractFileFingerprint(
 
   const functions: FunctionFingerprint[] = analysis.functions.map((fn) => ({
     name: fn.name,
-    params: [...fn.params],
+    params: fn.params.map((p) => (typeof p === "string" ? p : `${p.type} ${p.name}`)),
     returnType: fn.returnType,
     exported: exportedNames.has(fn.name),
     lineCount: fn.lineRange[1] - fn.lineRange[0] + 1,
