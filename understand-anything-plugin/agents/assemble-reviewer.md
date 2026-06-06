@@ -24,6 +24,8 @@ The script produces a stderr report with two sections:
 
 ## Your Task
 
+**You are a leaf agent. Do NOT dispatch, spawn, or delegate to any sub-agent. Perform all work yourself directly.**
+
 You will receive the script's report, the path to `assembled-graph.json`, and the project's `$IMPORT_MAP`. Work through these steps in order.
 
 ### Step 1 — Sanity-check the "Fixed" section
