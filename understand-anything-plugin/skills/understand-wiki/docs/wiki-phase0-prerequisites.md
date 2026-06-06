@@ -260,7 +260,7 @@ fi
 When KG or DG is missing (Step 5) or stale (Step 5a), you **MUST** dispatch `upstream-updater` subagents from `$PLUGIN_ROOT/agents/upstream-updater.md`. **Never** run `/understand` or `/understand-domain` inline in your own context — this will exhaust your context window. Each upstream skill has 5–7 phases with nested subagents; they must run in isolated agent contexts.
 
 **CRITICAL — How to dispatch:** Use your platform's subagent/worker dispatch mechanism:
-- **Claude Code**: `dispatch_agent` tool or `Task` subagent
+- **Claude Code**: `Agent` tool (spawn a new agent with `subagent_type: "general-purpose"`, passing the dispatch prompt as the `prompt` parameter)
 - **Codex (OpenAI)**: Launch separate agent tasks / create parallel tool calls
 - **OpenCode / other platforms**: Use the equivalent multi-agent or worker spawn capability
 

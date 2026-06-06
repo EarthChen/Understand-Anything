@@ -62,10 +62,12 @@ Read the result:
 
 Only triggered when `--review` is in `$ARGUMENTS`.
 
-Dispatch a subagent using the `wiki-reviewer` agent definition (at `$PLUGIN_ROOT/agents/wiki-reviewer.md`).
+Dispatch a subagent using the `wiki-reviewer` agent definition (at `$PLUGIN_ROOT/agents/wiki-reviewer.md`). Claude Code: use the `Agent` tool with `subagent_type: "general-purpose"` and pass the dispatch prompt below as the `prompt` parameter.
 
 **Dispatch prompt:**
 
+> Read the agent definition at `$PLUGIN_ROOT/agents/wiki-reviewer.md` and follow its instructions.
+>
 > Review the Wiki quality for service `$SERVICE_NAME`.
 > Project root: `$SERVICE_ROOT`
 > Wiki directory: `$SERVICE_ROOT/.understand-anything/wiki`

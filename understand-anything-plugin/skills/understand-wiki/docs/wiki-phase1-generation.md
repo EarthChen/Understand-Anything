@@ -62,6 +62,8 @@ FILTERED_KG=$(python3 "$SKILL_DIR/wiki_kg_filter.py" \
   "$DOMAIN_ID" --max-nodes=200)
 ```
 
+> Read the agent definition at `$PLUGIN_ROOT/agents/wiki-worker.md` and follow its instructions.
+>
 > Generate/update the Wiki page for a SINGLE domain in this microservice.
 > Project root: `$SERVICE_ROOT`
 > Service name: `$SERVICE_NAME`
@@ -127,7 +129,7 @@ for DOMAIN_ID in $DOMAIN_IDS; do
 done
 ```
 
-**MUST dispatch wiki-worker subagents in parallel** — run up to **5 concurrently**. Use your platform's subagent/worker dispatch mechanism (Claude Code: `dispatch_agent`; Codex: parallel agent tasks; other: equivalent multi-agent spawn). Never run domain workers sequentially when parallelism is available.
+**MUST dispatch wiki-worker subagents in parallel** — run up to **5 concurrently**. Use your platform's subagent/worker dispatch mechanism (Claude Code: `Agent` tool with `subagent_type: "general-purpose"`; Codex: parallel agent tasks; other: equivalent multi-agent spawn). Never run domain workers sequentially when parallelism is available.
 
 If a domain's wiki-worker fails, retry once. On second failure, skip that domain and continue.
 
@@ -159,7 +161,7 @@ If intermediate output is verified, proceed to **Phase 2** (deterministic assemb
 
 ### Batch Mode
 
-For each service in `$SERVICES_TO_GENERATE`, **MUST dispatch wiki-worker agents in parallel** using your platform's subagent/worker mechanism. Run up to **5 concurrently**.
+For each service in `$SERVICES_TO_GENERATE`, **MUST dispatch wiki-worker agents in parallel** using your platform's subagent/worker mechanism (Claude Code: `Agent` tool with `subagent_type: "general-purpose"`). Run up to **5 concurrently**.
 
 Progress reporting:
 > `Generating Wiki for service 1/N: order-service...`

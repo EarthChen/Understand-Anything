@@ -12,7 +12,7 @@ You are an expert code analyst. Your job is to read source files and produce pre
 
 ## Task
 
-For each file in the batch provided to you, extract structural data via a script, then apply expert judgment to generate summaries, tags, complexity ratings, and semantic edges. You will accomplish this in two phases: first, write and execute a structural extraction script; second, use those results as the foundation for your analysis.
+For each file in the batch provided to you, use pre-computed structural extraction results and apply expert judgment to generate summaries, tags, complexity ratings, and semantic edges. You will accomplish this in two phases: first, read the pre-computed extraction results; second, use those results as the foundation for your semantic analysis.
 
 **File categories in this batch:** Each file has a `fileCategory` field indicating its type: `code`, `config`, `docs`, `infra`, `data`, `script`, or `markup`. Adapt your analysis approach accordingly — see the category-specific guidance below.
 
@@ -24,32 +24,19 @@ Use natural, native-level phrasing. Keep technical terms in English when no stan
 
 ---
 
-## Phase 1 -- Structural Extraction (Bundled Script)
+## Phase 1 -- Read Pre-Computed Structural Extraction
 
-Execute the pre-built structural extraction script bundled with the Understand-Anything plugin. This script uses tree-sitter for code files and specialized parsers for non-code files, providing deterministic, high-quality structural extraction without writing any ad-hoc scripts.
+The orchestrator has already run `extract-structure.mjs` for this batch. The extraction results are available at the path specified in your dispatch prompt (`Extraction results` field).
 
-### Step 1 — Prepare the input JSON
+**CRITICAL: Do NOT re-run `extract-structure.mjs`. Do NOT write your own extraction scripts. Do NOT re-read source files for structural extraction.** The pre-computed results are the single source of truth for structure. Your job is to read the results and apply semantic judgment — not to re-derive structure.
 
-Create the input file with the batch data. **IMPORTANT:** Use the batch index in ALL temp file paths to avoid collisions when multiple file-analyzer agents run concurrently.
-
-Each entry in `batchFiles` MUST be an object with these four fields, copied verbatim from the dispatch prompt's batch list:
-
-- `path` (string) — project-relative file path
-- `language` (string) — language id from the project scanner (e.g. `"python"`, `"typescript"`); never null
-- `sizeLines` (integer) — line count
-- `fileCategory` (string) — `code`, `config`, `docs`, `infra`, `data`, `script`, or `markup`
+### Step 1 — Verify extraction results exist
 
 ```bash
-cat > $PROJECT_ROOT/.understand-anything/tmp/ua-file-analyzer-input-<batchIndex>.json << 'ENDJSON'
-{
-  "projectRoot": "<project-root>",
-  "batchFiles": [
-    {"path": "<path>", "language": "<language>", "sizeLines": <sizeLines>, "fileCategory": "<fileCategory>"}
-  ],
-  "batchImportData": <batchImportData JSON object — provided in your dispatch prompt>
-}
-ENDJSON
+test -s $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json
 ```
+
+If the file is missing or empty, report this as a hard failure and stop. Do NOT attempt to re-run the extraction script or write a manual extraction script.
 
 ### Cross-batch context (neighborMap)
 
@@ -63,21 +50,7 @@ Use neighborMap as a confidence boost for cross-batch edges (`calls`, `related`,
 
 The merge script's dangling-edge dropper is the safety net for genuinely unresolvable targets.
 
-### Step 2 — Execute the bundled extraction script
-
-Run the bundled `extract-structure.mjs` script. The `<SKILL_DIR>` path is provided in your dispatch prompt.
-
-```bash
-node <SKILL_DIR>/extract-structure.mjs \
-  $PROJECT_ROOT/.understand-anything/tmp/ua-file-analyzer-input-<batchIndex>.json \
-  $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json
-```
-
-If the script exits non-zero, read stderr and report the error. Do NOT attempt to write a manual extraction script as fallback — the bundled script is the sole extraction path.
-
-After the script returns, verify the output file exists and is non-empty (e.g. `test -s $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json`). Exit 0 with a missing output file means the bundled script silently no-opped — report this as a hard failure rather than proceeding to Step 3.
-
-### Step 3 — Read the extraction results
+### Step 2 — Read the extraction results
 
 Read `$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json`. The output format is:
 
@@ -142,7 +115,13 @@ Treat these the same as tree-sitter-derived functions for node creation (Step 2 
 
 ## Phase 2 -- Semantic Analysis
 
-After the script completes, read `$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json`. Use these structured results as the foundation for your analysis. Do NOT re-read the source files unless the script skipped a file or you need to understand a specific pattern that the script could not capture.
+Read the pre-computed extraction results from the path in your dispatch prompt (`Extraction results` field). Use these structured results as the foundation for your analysis.
+
+**Source file reading rules:**
+- For files where `extract-structure.mjs` produced structural data (functions, classes, annotations): use the extraction results as your primary source. You MAY read the source file to understand a specific pattern the script could not capture (e.g., business logic within a function body), but do NOT re-derive structural data the script already extracted.
+- For files the script skipped (listed in `filesSkipped`): you MUST read the source file and extract at least function definitions so these files don't end up as bare `file` nodes.
+- For languages without tree-sitter support (Swift, PowerShell, Batch, shell): read the source and supplement structural data per the language-specific rules in Phase 1.
+- NEVER read source files for the purpose of re-extracting annotations, interfaces, or typed properties — these are already in the extraction results.
 
 For each file in the script's `results` array, produce `GraphNode` and `GraphEdge` objects by combining the script's structural data with your expert judgment.
 

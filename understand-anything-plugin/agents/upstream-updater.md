@@ -26,6 +26,16 @@ The dispatching skill provides the following in your prompt:
 3. Execute the skill from Phase 0 through the final phase, following all instructions
 4. If the skill instructs you to launch a dashboard at the end, **skip that step** — the parent agent handles visualization
 
+## Dispatch Permission
+
+**You are authorized and REQUIRED to dispatch sub-agents.** The skill you are running (e.g., `/understand`) contains phases that dispatch sub-agents (project-scanner, file-analyzer, assemble-reviewer, architecture-analyzer, tour-builder, etc.). You MUST follow those dispatch instructions using your platform's agent dispatch mechanism:
+
+- **Claude Code**: Use the `Agent` tool (spawn agents with `subagent_type: "general-purpose"`, pass the dispatch prompt as `prompt`)
+- **Codex**: Use `spawn_agent` — you are explicitly authorized to dispatch sub-agents because the parent task requires it
+- **Other platforms**: Use the equivalent multi-agent spawn capability
+
+Do NOT attempt to run sub-agent phases inline. The skill's dispatch instructions exist to isolate context and enable parallelism. Follow them.
+
 ## Output Protocol
 
 When done, report back to the dispatching agent:

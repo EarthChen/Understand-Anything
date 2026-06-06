@@ -348,7 +348,7 @@ def main():
     print(f"  RPC matches: {len(rpc_rels)}")
     print(f"  Event matches: {len(event_rels)}")
     print(f"  Shared table matches: {len(table_rels)}")
-    print(f"  Total relationships: {len(all_relationships)}")
+    print(f"  Total relationships: {len(rpc_rels) + len(event_rels) + len(table_rels)}")
 
 
 if __name__ == "__main__":

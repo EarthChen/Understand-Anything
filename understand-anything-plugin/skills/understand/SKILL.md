@@ -298,7 +298,60 @@ If the script exits non-zero, the failure is hard — relay the full stderr to t
 
 Load `.understand-anything/intermediate/batches.json` (produced by Phase 1.5). Iterate the `batches[]` array.
 
-Report: `[Phase 2/7] Analyzing files — <totalFiles> files in <totalBatches> batches (up to 5 concurrent)...`
+#### Step 0 — Deterministic structural extraction (MUST complete before agent dispatch)
+
+Run `extract-structure.mjs` for **every batch** to produce extraction result files. This is a deterministic step — do NOT delegate it to file-analyzer sub-agents. The extraction results are required by `merge-batch-graphs.py` for RPC/MQ annotation recovery.
+
+**Step 0a — Generate all input files:**
+
+Write a helper script that reads `batches.json` and produces one input JSON per batch. This avoids heredoc issues with special characters in `batchImportData`.
+
+```bash
+python3 - << 'PYSCRIPT'
+import json, sys, os
+project_root = os.environ.get("PROJECT_ROOT", sys.argv[1])
+tmp_dir = os.path.join(project_root, ".understand-anything", "tmp")
+batches_path = os.path.join(project_root, ".understand-anything", "intermediate", "batches.json")
+os.makedirs(tmp_dir, exist_ok=True)
+batches = json.load(open(batches_path))["batches"]
+for i, batch in enumerate(batches):
+    inp = {
+        "projectRoot": project_root,
+        "batchFiles": batch["batchFiles"],
+        "batchImportData": batch.get("batchImportData", {}),
+    }
+    out_path = os.path.join(tmp_dir, f"ua-file-analyzer-input-{i}.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(inp, f, ensure_ascii=False)
+    print(f"  Wrote {out_path} ({len(batch['batchFiles'])} files)")
+PYSCRIPT
+```
+
+**Step 0b — Run extraction for all batches (up to 5 concurrently):**
+
+For each batch `i`, run the extraction script. Process up to **5 batches in parallel** — do NOT run them sequentially.
+
+```bash
+node <SKILL_DIR>/extract-structure.mjs \
+  $PROJECT_ROOT/.understand-anything/tmp/ua-file-analyzer-input-<i>.json \
+  $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<i>.json
+```
+
+**Step 0c — Verify all outputs:**
+
+```bash
+for i in $(seq 0 $((TOTAL_BATCHES - 1))); do
+  test -s $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-$i.json || {
+    echo "FATAL: extraction results missing for batch $i" >&2; exit 1;
+  }
+done
+```
+
+If any extraction script exits non-zero or any output file is missing/empty, report the error and abort Phase 2. Do NOT proceed with agent dispatch without extraction results.
+
+Report: `[Phase 2/7] Structural extraction complete for <totalBatches> batches. Dispatching analyzers...`
+
+#### Step 1 — Dispatch file-analyzer agents
 
 For each batch, dispatch a subagent using the `file-analyzer` agent definition (at `agents/file-analyzer.md`). Run up to **5 subagents concurrently**. Append the following additional context:
 
@@ -317,6 +370,7 @@ Dispatch prompt template (fill in batch-specific values from `batches.json[i]`):
 > Languages: `<languages>`
 > Batch: `<batchIndex>/<totalBatches>`
 > Skill directory (for bundled scripts): `<SKILL_DIR>`
+> **Extraction results (already generated — do NOT re-run extract-structure.mjs):** `$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json`
 > Output: write to `$PROJECT_ROOT/.understand-anything/intermediate/batch-<batchIndex>.json` (single-file mode) OR `batch-<batchIndex>-part-<k>.json` (split mode, per Step B of your output protocol).
 >
 > Pre-resolved import data for this batch (use directly — do NOT re-resolve imports from source):
@@ -373,7 +427,7 @@ node <SKILL_DIR>/compute-batches.mjs $PROJECT_ROOT \
 
 This produces a `batches.json` that contains only batches with changed files, but neighborMap entries still reference unchanged files (with their full-graph batchIndex) so cross-batch edges remain emittable.
 
-Then dispatch file-analyzer subagents per the same template as the full path.
+Run deterministic structural extraction for all changed batches (same Step 0 as the full path above), then dispatch file-analyzer subagents per the same template as the full path.
 
 After batches complete:
 1. Remove old nodes whose `filePath` matches any changed file from the existing graph
