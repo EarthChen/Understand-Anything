@@ -32,10 +32,15 @@ def load_knowledge_graph(service_root: str) -> dict | None:
         return json.load(f)
 
 
+def build_nodes_index(kg: dict) -> dict[str, dict]:
+    """Build a mapping from node ID to node data for fast lookup."""
+    return {n["id"]: n for n in kg.get("nodes", [])}
+
+
 def extract_rpc_providers(kg: dict, service_name: str) -> list[dict]:
     """Extract all provides_rpc edges and their associated nodes."""
     providers = []
-    nodes_by_id = {n["id"]: n for n in kg.get("nodes", [])}
+    nodes_by_id = build_nodes_index(kg)
 
     for edge in kg.get("edges", []):
         if edge["type"] == "provides_rpc":
@@ -69,7 +74,7 @@ def extract_rpc_providers(kg: dict, service_name: str) -> list[dict]:
 def extract_rpc_consumers(kg: dict, service_name: str) -> list[dict]:
     """Extract all consumes_rpc edges and their associated nodes."""
     consumers = []
-    nodes_by_id = {n["id"]: n for n in kg.get("nodes", [])}
+    nodes_by_id = build_nodes_index(kg)
 
     for edge in kg.get("edges", []):
         if edge["type"] == "consumes_rpc":
@@ -90,7 +95,7 @@ def extract_rpc_consumers(kg: dict, service_name: str) -> list[dict]:
 def extract_event_publishers(kg: dict, service_name: str) -> list[dict]:
     """Extract publishes edges (Kafka topics, event bus, etc.)."""
     publishers = []
-    nodes_by_id = {n["id"]: n for n in kg.get("nodes", [])}
+    nodes_by_id = build_nodes_index(kg)
 
     for edge in kg.get("edges", []):
         if edge["type"] == "publishes":
@@ -110,7 +115,7 @@ def extract_event_publishers(kg: dict, service_name: str) -> list[dict]:
 def extract_event_subscribers(kg: dict, service_name: str) -> list[dict]:
     """Extract subscribes edges."""
     subscribers = []
-    nodes_by_id = {n["id"]: n for n in kg.get("nodes", [])}
+    nodes_by_id = build_nodes_index(kg)
 
     for edge in kg.get("edges", []):
         if edge["type"] == "subscribes":
@@ -130,7 +135,7 @@ def extract_event_subscribers(kg: dict, service_name: str) -> list[dict]:
 def extract_table_accesses(kg: dict, service_name: str) -> list[dict]:
     """Extract reads_from/writes_to edges to table nodes."""
     accesses = []
-    nodes_by_id = {n["id"]: n for n in kg.get("nodes", [])}
+    nodes_by_id = build_nodes_index(kg)
 
     for edge in kg.get("edges", []):
         if edge["type"] in ("reads_from", "writes_to"):
@@ -294,7 +299,7 @@ def extract_wrapper_providers(kg: dict, service_name: str) -> list[dict]:
     2. 同一服务中有 provides_rpc 边指向同一个接口
     """
     wrappers = []
-    nodes_by_id = {n["id"]: n for n in kg.get("nodes", [])}
+    nodes_by_id = build_nodes_index(kg)
 
     # 找所有 consumes_rpc 的 source
     rpc_consumers = {}
@@ -349,7 +354,7 @@ def extract_injects(kg: dict, service_name: str) -> list[dict]:
     提取所有 injects 边，表示依赖注入关系。
     """
     injects = []
-    nodes_by_id = {n["id"]: n for n in kg.get("nodes", [])}
+    nodes_by_id = build_nodes_index(kg)
 
     for edge in kg.get("edges", []):
         if edge["type"] == "injects":
