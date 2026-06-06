@@ -4,6 +4,8 @@ Report: `[Phase 1/5] Generating service Wiki...`
 
 ### Dispatch Strategy (Incremental vs Full)
 
+The following bash template shows the branching logic. Actual dispatch instructions are in the sections below — follow those, not the comments in this template.
+
 ```bash
 if [ "$INCREMENTAL" = true ] && [ -n "$DIRTY_DOMAINS" ]; then
   # --- Incremental Path: only regenerate dirty domains ---
@@ -62,7 +64,11 @@ FILTERED_KG=$(python3 "$SKILL_DIR/wiki_kg_filter.py" \
   "$DOMAIN_ID" --max-nodes=200)
 ```
 
+**Dispatch a `wiki-worker` subagent** for this domain. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+
 > Read the agent definition at `$PLUGIN_ROOT/agents/wiki-worker.md` and follow its instructions.
+>
+> You are authorized to dispatch sub-agents as required by the parent task.
 >
 > Generate/update the Wiki page for a SINGLE domain in this microservice.
 > Project root: `$SERVICE_ROOT`
@@ -117,7 +123,7 @@ If no domains found, report error and stop.
 
 #### Step 3 — Dispatch Per-Domain wiki-workers
 
-For each domain, use the same dispatch pattern as Incremental mode:
+For each domain, build a domain-scoped KG first:
 
 ```bash
 for DOMAIN_ID in $DOMAIN_IDS; do
@@ -125,15 +131,12 @@ for DOMAIN_ID in $DOMAIN_IDS; do
     "$SERVICE_UA/knowledge-graph.json" \
     "$SERVICE_UA/domain-graph.json" \
     "$DOMAIN_ID" --max-nodes=200)
-  # Dispatch wiki-worker with the same prompt as Incremental Dispatch (see above)
 done
 ```
 
-**MUST dispatch wiki-worker subagents in parallel** — run up to **5 concurrently**. Use your platform's subagent/worker dispatch mechanism (Claude Code: `Agent` tool with `subagent_type: "general-purpose"`; Codex: parallel agent tasks; other: equivalent multi-agent spawn). Never run domain workers sequentially when parallelism is available.
+**Dispatch `wiki-worker` subagents in parallel** (up to **5 concurrently**). See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md). For each domain, use the same prompt template as [Incremental Dispatch](#incremental-dispatch--per-domain-worker-prompt) with the domain-scoped `$FILTERED_KG`.
 
 If a domain's wiki-worker fails, retry once. On second failure, skip that domain and continue.
-
-**Dispatch prompt:** Use the same template as "Incremental Dispatch — Per-Domain wiki-worker Prompt" above.
 
 #### Step 4 — Enrich Service Description
 
@@ -161,7 +164,7 @@ If intermediate output is verified, proceed to **Phase 2** (deterministic assemb
 
 ### Batch Mode
 
-For each service in `$SERVICES_TO_GENERATE`, **MUST dispatch wiki-worker agents in parallel** using your platform's subagent/worker mechanism (Claude Code: `Agent` tool with `subagent_type: "general-purpose"`). Run up to **5 concurrently**.
+For each service in `$SERVICES_TO_GENERATE`, **MUST dispatch wiki-worker agents in parallel** (up to **5 concurrently**). See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md). Use the same per-domain dispatch prompt template as [Incremental Dispatch](#incremental-dispatch--per-domain-worker-prompt), passing the service's own `$SERVICE_ROOT`, `$SERVICE_NAME`, KG, and DG.
 
 Progress reporting:
 > `Generating Wiki for service 1/N: order-service...`

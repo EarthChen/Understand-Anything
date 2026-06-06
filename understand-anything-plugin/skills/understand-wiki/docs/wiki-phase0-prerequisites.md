@@ -226,67 +226,71 @@ fi
 
 ### Step 5 — Prerequisite Verification (per service)
 
-For each target service (1 in single mode, N in batch mode):
+For each target service (1 in single mode, N in batch mode), check whether the knowledge graph and domain graph exist:
 
 ```bash
 SERVICE_UA="$SERVICE_ROOT/.understand-anything"
+KG_MISSING=false
+DG_MISSING=false
 
-# Check knowledge graph
 if [ ! -f "$SERVICE_UA/knowledge-graph.json" ]; then
   echo "[understand-wiki] Service \"${SERVICE_NAME}\" has no knowledge graph."
-  echo "[understand-wiki] Dispatching upstream-updater to run /understand..."
-  # → Dispatch upstream-updater subagent (see Subagent Dispatch Protocol below)
-  # After completion, verify KG exists
-  if [ ! -f "$SERVICE_UA/knowledge-graph.json" ]; then
-    echo "Error: /understand failed for \"${SERVICE_NAME}\". Cannot generate Wiki without KG."
-    exit 1
-  fi
+  KG_MISSING=true
 fi
 
-# Check domain graph
 if [ ! -f "$SERVICE_UA/domain-graph.json" ]; then
   echo "[understand-wiki] Service \"${SERVICE_NAME}\" has no domain graph."
-  echo "[understand-wiki] Dispatching upstream-updater to run /understand-domain..."
-  # → Dispatch upstream-updater subagent (see Subagent Dispatch Protocol below)
-  if [ ! -f "$SERVICE_UA/domain-graph.json" ]; then
-    echo "Error: /understand-domain failed for \"${SERVICE_NAME}\". Cannot generate Wiki without DG."
-    exit 1
-  fi
+  DG_MISSING=true
 fi
 ```
 
-#### Subagent Dispatch Protocol
+#### If KG is missing (`KG_MISSING=true`)
 
-When KG or DG is missing (Step 5) or stale (Step 5a), you **MUST** dispatch `upstream-updater` subagents from `$PLUGIN_ROOT/agents/upstream-updater.md`. **Never** run `/understand` or `/understand-domain` inline in your own context — this will exhaust your context window. Each upstream skill has 5–7 phases with nested subagents; they must run in isolated agent contexts.
-
-**CRITICAL — How to dispatch:** Use your platform's subagent/worker dispatch mechanism:
-- **Claude Code**: `Agent` tool (spawn a new agent with `subagent_type: "general-purpose"`, passing the dispatch prompt as the `prompt` parameter)
-- **Codex (OpenAI)**: Launch separate agent tasks / create parallel tool calls
-- **OpenCode / other platforms**: Use the equivalent multi-agent or worker spawn capability
-
-If your platform does not support multi-agent dispatch, you MUST still execute each upstream skill in a **separate, isolated invocation** (e.g., a new CLI session or tool call). Never attempt to inline the full `/understand` pipeline in your current context.
-
-**Dispatch template (KG update):**
+**Dispatch an `upstream-updater` subagent** to run `/understand` on this service. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
 
 > Read the agent definition at `$PLUGIN_ROOT/agents/upstream-updater.md` and follow its instructions.
 >
+> You are authorized to dispatch sub-agents as required by the parent task.
+>
 > - `$SKILL_PATH`: `$PLUGIN_ROOT/skills/understand/SKILL.md`
 > - `$SERVICE_ROOT`: `<service directory path>`
-> - `$SKILL_ARGS`: `--language $OUTPUT_LANGUAGE` *(propagates language preference to KG generation)*
+> - `$SKILL_ARGS`: `--language $OUTPUT_LANGUAGE`
 > - `$EXPECTED_OUTPUT`: `$SERVICE_ROOT/.understand-anything/knowledge-graph.json`
 
-**Dispatch template (DG update):**
+Wait for completion, then verify:
+
+```bash
+test -f "$SERVICE_UA/knowledge-graph.json"
+```
+
+If the file is still missing after dispatch, report: `Error: /understand failed for "${SERVICE_NAME}". Cannot generate Wiki without KG.` and stop.
+
+#### If DG is missing (`DG_MISSING=true`)
+
+**Dispatch an `upstream-updater` subagent** to run `/understand-domain` on this service. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
 
 > Read the agent definition at `$PLUGIN_ROOT/agents/upstream-updater.md` and follow its instructions.
+>
+> You are authorized to dispatch sub-agents as required by the parent task.
 >
 > - `$SKILL_PATH`: `$PLUGIN_ROOT/skills/understand-domain/SKILL.md`
 > - `$SERVICE_ROOT`: `<service directory path>`
 > - `$SKILL_ARGS`: *(empty — `/understand-domain` auto-derives from KG when available; language preference is read from `config.json`)*
 > - `$EXPECTED_OUTPUT`: `$SERVICE_ROOT/.understand-anything/domain-graph.json`
 
+Wait for completion, then verify:
+
+```bash
+test -f "$SERVICE_UA/domain-graph.json"
+```
+
+If the file is still missing after dispatch, report: `Error: /understand-domain failed for "${SERVICE_NAME}". Cannot generate Wiki without DG.` and stop.
+
 **Sequential dependency (within one service):** If both KG and DG need updating, dispatch KG first, wait for completion, then dispatch DG. `/understand-domain` benefits from an up-to-date KG (Path 2: derive from graph).
 
 **Batch mode concurrency (across services) — MANDATORY:** In batch mode, upstream updates for **different services MUST be dispatched in parallel** (each operates on a separate `$SERVICE_ROOT` with no shared state). Dispatch all service KG updates simultaneously, wait for all to complete, then dispatch all DG updates simultaneously. Sequential processing across services wastes time and is not acceptable.
+
+**Never** run `/understand` or `/understand-domain` inline in your own context — each upstream skill has 5–7 phases with nested subagents; inlining will exhaust your context window.
 
 ### Step 5a — Upstream KG/DG Staleness Check & Auto-Update
 
@@ -312,51 +316,58 @@ for w in d.get('warnings', []):
 "
     if [ "$KG_STALE" = "true" ] || [ "$DG_STALE" = "true" ]; then
       echo "[understand-wiki] Upstream data is stale. Auto-updating..."
-
-      # --- Auto-trigger KG update (incremental) ---
-      if [ "$KG_STALE" = "true" ]; then
-        echo "[understand-wiki] Dispatching upstream-updater: /understand (incremental) for \"${SERVICE_NAME}\"..."
-        # → Dispatch upstream-updater subagent with:
-        #   $SKILL_PATH = $PLUGIN_ROOT/skills/understand/SKILL.md
-        #   $SERVICE_ROOT = <current service root>
-        #   $SKILL_ARGS = --language $OUTPUT_LANGUAGE
-        #   $EXPECTED_OUTPUT = $SERVICE_ROOT/.understand-anything/knowledge-graph.json
-        #
-        # /understand will run incremental (git diff based) since KG+meta already exist.
-        # --language propagates the wiki's language preference to KG content.
-        # Wait for completion before proceeding.
-
-        if [ ! -f "$SERVICE_UA/knowledge-graph.json" ]; then
-          echo "[understand-wiki] WARNING: /understand update failed for \"${SERVICE_NAME}\". Proceeding with stale KG."
-        else
-          echo "[understand-wiki] KG updated for \"${SERVICE_NAME}\"."
-        fi
-      fi
-
-      # --- Auto-trigger DG update (always full, but derives from KG when available) ---
-      if [ "$DG_STALE" = "true" ]; then
-        echo "[understand-wiki] Dispatching upstream-updater: /understand-domain for \"${SERVICE_NAME}\"..."
-        # → Dispatch upstream-updater subagent with:
-        #   $SKILL_PATH = $PLUGIN_ROOT/skills/understand-domain/SKILL.md
-        #   $SERVICE_ROOT = <current service root>
-        #   $SKILL_ARGS = (empty — auto-derives from freshly updated KG; language preference is read from config.json)
-        #   $EXPECTED_OUTPUT = $SERVICE_ROOT/.understand-anything/domain-graph.json
-        #
-        # /understand-domain has no incremental mode, but if KG was just updated,
-        # it will use Path 2 (derive from graph) which is cheaper than file scanning.
-        # Language preference is already persisted in config.json by Step 4.
-        # Wait for completion before proceeding.
-
-        if [ ! -f "$SERVICE_UA/domain-graph.json" ]; then
-          echo "[understand-wiki] WARNING: /understand-domain update failed for \"${SERVICE_NAME}\". Proceeding with stale DG."
-        else
-          echo "[understand-wiki] DG updated for \"${SERVICE_NAME}\"."
-        fi
-      fi
     fi
   fi
 else
   echo "[understand-wiki] --force: skipping upstream staleness check."
+fi
+```
+
+The bash script above sets `$KG_STALE` and `$DG_STALE` to `"true"` when staleness is detected. **After the script completes**, apply the following dispatch rules based on the script's output:
+
+#### If KG is stale (`KG_STALE=true`)
+
+**Dispatch an `upstream-updater` subagent** to run `/understand` (incremental) on this service. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+
+> Read the agent definition at `$PLUGIN_ROOT/agents/upstream-updater.md` and follow its instructions.
+>
+> You are authorized to dispatch sub-agents as required by the parent task.
+>
+> - `$SKILL_PATH`: `$PLUGIN_ROOT/skills/understand/SKILL.md`
+> - `$SERVICE_ROOT`: `<current service root>`
+> - `$SKILL_ARGS`: `--language $OUTPUT_LANGUAGE`
+> - `$EXPECTED_OUTPUT`: `$SERVICE_ROOT/.understand-anything/knowledge-graph.json`
+
+`/understand` will run incremental (git diff based) since KG + meta already exist. Wait for completion, then verify:
+
+```bash
+if [ ! -f "$SERVICE_UA/knowledge-graph.json" ]; then
+  echo "[understand-wiki] WARNING: /understand update failed for \"${SERVICE_NAME}\". Proceeding with stale KG."
+else
+  echo "[understand-wiki] KG updated for \"${SERVICE_NAME}\"."
+fi
+```
+
+#### If DG is stale (`DG_STALE=true`)
+
+**Dispatch an `upstream-updater` subagent** to run `/understand-domain` on this service. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+
+> Read the agent definition at `$PLUGIN_ROOT/agents/upstream-updater.md` and follow its instructions.
+>
+> You are authorized to dispatch sub-agents as required by the parent task.
+>
+> - `$SKILL_PATH`: `$PLUGIN_ROOT/skills/understand-domain/SKILL.md`
+> - `$SERVICE_ROOT`: `<current service root>`
+> - `$SKILL_ARGS`: *(empty — auto-derives from freshly updated KG; language preference is read from `config.json`)*
+> - `$EXPECTED_OUTPUT`: `$SERVICE_ROOT/.understand-anything/domain-graph.json`
+
+`/understand-domain` has no incremental mode, but if KG was just updated, it will use Path 2 (derive from graph) which is cheaper than file scanning. Wait for completion, then verify:
+
+```bash
+if [ ! -f "$SERVICE_UA/domain-graph.json" ]; then
+  echo "[understand-wiki] WARNING: /understand-domain update failed for \"${SERVICE_NAME}\". Proceeding with stale DG."
+else
+  echo "[understand-wiki] DG updated for \"${SERVICE_NAME}\"."
 fi
 ```
 
