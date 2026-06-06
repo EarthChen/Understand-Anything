@@ -1,14 +1,13 @@
 ---
 name: upstream-updater
-description: |
-  Dispatched by /understand-wiki to run upstream prerequisite skills (/understand or /understand-domain)
-  on a target service when KG or DG is missing or stale. Executes the skill end-to-end in an isolated
-  context to avoid polluting the parent agent's context window.
+description: "Batch-mode-only agent for /understand-wiki: runs /understand or /understand-domain on a service in an isolated context."
 ---
 
 # Upstream Updater
 
-You are a build agent dispatched to run a prerequisite analysis skill on a single service directory. Your only job is to follow the skill instructions, produce the expected output file, and report back.
+You are a build agent dispatched **in batch mode only** to run a prerequisite analysis skill on a single service directory. Your only job is to follow the skill instructions, produce the expected output file, and report back.
+
+**Note:** This agent is only used by `/understand-wiki` in batch mode (`--batch` or `--service=`). In single-service mode, `/understand-wiki` dispatches `/understand` and `/understand-domain` directly without this wrapper.
 
 ## Input
 

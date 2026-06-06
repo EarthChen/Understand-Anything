@@ -1,7 +1,7 @@
 ---
 name: understand-domain
 description: Extract business domain knowledge from a codebase and generate an interactive domain flow graph. Works standalone (lightweight scan) or derives from an existing /understand knowledge graph.
-argument-hint: [--full]
+argument-hint: [--full] [--standalone]
 ---
 
 # /understand-domain
@@ -11,8 +11,14 @@ Extracts business domain knowledge — domains, business flows, and process step
 ## How It Works
 
 - If a knowledge graph already exists (`.understand-anything/knowledge-graph.json`), derives domain knowledge from it (cheap, no file scanning)
-- If no knowledge graph exists, performs a lightweight scan: file tree + entry point detection + sampled files
+- If no knowledge graph exists **and `--standalone` is passed**, performs a lightweight scan: file tree + entry point detection + sampled files
+- If no knowledge graph exists **without `--standalone`**, reports an error — run `/understand` first to build the knowledge graph
 - Use `--full` flag to force a fresh scan even if a knowledge graph exists
+
+## Options
+
+- `--full` — Force full regeneration even if a knowledge graph exists
+- `--standalone` — Allow lightweight scan when no knowledge graph exists (Path 1). Without this flag, a knowledge graph is required (Path 2). Use when running `/understand-domain` independently without prior `/understand` execution.
 
 ## Instructions
 
@@ -90,7 +96,10 @@ Use `$PLUGIN_ROOT` for every reference to agent definitions in subsequent phases
 
 1. Check if `$PROJECT_ROOT/.understand-anything/knowledge-graph.json` exists
 2. If it exists AND `--full` was NOT passed → proceed to Phase 3 (derive from graph)
-3. Otherwise → proceed to Phase 2 (lightweight scan)
+3. If it does NOT exist:
+   - If `--standalone` OR `--full` was passed → proceed to Phase 2 (lightweight scan; `--full` without KG implies standalone re-scan)
+   - Otherwise → **report error and stop**:
+     > `Error: Knowledge graph not found at .understand-anything/knowledge-graph.json. Run /understand first, or use --standalone for lightweight scan without a knowledge graph.`
 
 ### Phase 2: Lightweight Scan (Path 1)
 

@@ -32,6 +32,15 @@ Generate a team knowledge base Wiki for microservice projects. Each service gets
 
 **Design principle: Explicit over implicit.** Default is always single-service (current directory = one service). Use `--batch` to explicitly declare parent mode. This avoids misdetection in monorepo structures.
 
+### Dependency Management
+
+| Mode | KG/DG missing | How |
+|---|---|---|
+| Single-service | Dispatch `/understand` → wait → dispatch `/understand-domain` → wait | Direct skill dispatch (no wrapper agent) |
+| Batch | Dispatch `upstream-updater` per service (isolates context) | Wrapper agent handles KG → DG internally per service |
+
+In single-service mode, `/understand-wiki` manages the full dependency chain: it ensures KG exists (dispatching `/understand` if needed), then ensures DG exists (dispatching `/understand-domain` if needed), then generates the Wiki. This is a flat two-step dependency — no cascading triggers.
+
 ---
 
 ## Progress Reporting

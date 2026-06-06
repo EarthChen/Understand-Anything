@@ -246,45 +246,45 @@ fi
 
 #### If KG is missing (`KG_MISSING=true`)
 
-**Dispatch an `upstream-updater` subagent** to run `/understand` on this service. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+**Single mode:** Read the skill definition at `$PLUGIN_ROOT/skills/understand/SKILL.md` and execute its instructions inline with working directory `$SERVICE_ROOT` and arguments `--language $OUTPUT_LANGUAGE`. Expected output: `$SERVICE_ROOT/.understand-anything/knowledge-graph.json`.
+
+After execution, verify:
+
+```bash
+test -f "$SERVICE_UA/knowledge-graph.json"
+```
+
+If the file is still missing, report: `Error: /understand failed for "${SERVICE_NAME}". Cannot generate Wiki without KG.` and stop.
+
+**Batch mode:** Dispatch an `upstream-updater` subagent. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
 
 > Read the agent definition at `$PLUGIN_ROOT/agents/upstream-updater.md` and follow its instructions.
->
-> You are authorized to dispatch sub-agents as required by the parent task.
 >
 > - `$SKILL_PATH`: `$PLUGIN_ROOT/skills/understand/SKILL.md`
 > - `$SERVICE_ROOT`: `<service directory path>`
 > - `$SKILL_ARGS`: `--language $OUTPUT_LANGUAGE`
 > - `$EXPECTED_OUTPUT`: `$SERVICE_ROOT/.understand-anything/knowledge-graph.json`
 
-Wait for completion, then verify:
-
-```bash
-test -f "$SERVICE_UA/knowledge-graph.json"
-```
-
-If the file is still missing after dispatch, report: `Error: /understand failed for "${SERVICE_NAME}". Cannot generate Wiki without KG.` and stop.
-
 #### If DG is missing (`DG_MISSING=true`)
 
-**Dispatch an `upstream-updater` subagent** to run `/understand-domain` on this service. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+**Single mode:** Read the skill definition at `$PLUGIN_ROOT/skills/understand-domain/SKILL.md` and execute its instructions inline with working directory `$SERVICE_ROOT`. Expected output: `$SERVICE_ROOT/.understand-anything/domain-graph.json`.
 
-> Read the agent definition at `$PLUGIN_ROOT/agents/upstream-updater.md` and follow its instructions.
->
-> You are authorized to dispatch sub-agents as required by the parent task.
->
-> - `$SKILL_PATH`: `$PLUGIN_ROOT/skills/understand-domain/SKILL.md`
-> - `$SERVICE_ROOT`: `<service directory path>`
-> - `$SKILL_ARGS`: *(empty — `/understand-domain` auto-derives from KG when available; language preference is read from `config.json`)*
-> - `$EXPECTED_OUTPUT`: `$SERVICE_ROOT/.understand-anything/domain-graph.json`
-
-Wait for completion, then verify:
+After execution, verify:
 
 ```bash
 test -f "$SERVICE_UA/domain-graph.json"
 ```
 
-If the file is still missing after dispatch, report: `Error: /understand-domain failed for "${SERVICE_NAME}". Cannot generate Wiki without DG.` and stop.
+If the file is still missing, report: `Error: /understand-domain failed for "${SERVICE_NAME}". Cannot generate Wiki without DG.` and stop.
+
+**Batch mode:** Dispatch an `upstream-updater` subagent. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+
+> Read the agent definition at `$PLUGIN_ROOT/agents/upstream-updater.md` and follow its instructions.
+>
+> - `$SKILL_PATH`: `$PLUGIN_ROOT/skills/understand-domain/SKILL.md`
+> - `$SERVICE_ROOT`: `<service directory path>`
+> - `$SKILL_ARGS`: *(empty — auto-derives from KG; language preference is read from `config.json`)*
+> - `$EXPECTED_OUTPUT`: `$SERVICE_ROOT/.understand-anything/domain-graph.json`
 
 **Sequential dependency (within one service):** If both KG and DG need updating, dispatch KG first, wait for completion, then dispatch DG. `/understand-domain` benefits from an up-to-date KG (Path 2: derive from graph).
 
@@ -296,7 +296,7 @@ If the file is still missing after dispatch, report: `Error: /understand-domain 
 
 After KG and DG exist, verify they were generated from the current git HEAD. Wiki `meta.json` can be updated to the latest commit while graphs still reflect an older tree (silent stale upstream).
 
-**When stale upstream is detected, automatically dispatch `upstream-updater` subagents to refresh them** (same protocol as Step 5). This eliminates the manual step of re-running `/understand` and `/understand-domain` separately.
+**When stale upstream is detected, automatically refresh them** using the same dispatch pattern as Step 5 (single mode: dispatch skills directly; batch mode: dispatch via `upstream-updater`). This eliminates the manual step of re-running `/understand` and `/understand-domain` separately.
 
 Skip staleness check entirely when `--force` is set (proceed with existing graphs as-is):
 
@@ -327,12 +327,10 @@ The bash script above sets `$KG_STALE` and `$DG_STALE` to `"true"` when stalenes
 
 #### If KG is stale (`KG_STALE=true`)
 
-**Dispatch an `upstream-updater` subagent** to run `/understand` (incremental) on this service. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+**Single mode:** Read the skill definition at `$PLUGIN_ROOT/skills/understand/SKILL.md` and execute its instructions inline (incremental — git diff based since KG + meta already exist) with working directory `$SERVICE_ROOT` and arguments `--language $OUTPUT_LANGUAGE`. Expected output: `$SERVICE_ROOT/.understand-anything/knowledge-graph.json`.
 
-> Read the agent definition at `$PLUGIN_ROOT/agents/upstream-updater.md` and follow its instructions.
->
-> You are authorized to dispatch sub-agents as required by the parent task.
->
+**Batch mode:** Dispatch an `upstream-updater` subagent. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+
 > - `$SKILL_PATH`: `$PLUGIN_ROOT/skills/understand/SKILL.md`
 > - `$SERVICE_ROOT`: `<current service root>`
 > - `$SKILL_ARGS`: `--language $OUTPUT_LANGUAGE`
@@ -350,12 +348,10 @@ fi
 
 #### If DG is stale (`DG_STALE=true`)
 
-**Dispatch an `upstream-updater` subagent** to run `/understand-domain` on this service. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+**Single mode:** Read the skill definition at `$PLUGIN_ROOT/skills/understand-domain/SKILL.md` and execute its instructions inline with working directory `$SERVICE_ROOT`. Expected output: `$SERVICE_ROOT/.understand-anything/domain-graph.json`.
 
-> Read the agent definition at `$PLUGIN_ROOT/agents/upstream-updater.md` and follow its instructions.
->
-> You are authorized to dispatch sub-agents as required by the parent task.
->
+**Batch mode:** Dispatch an `upstream-updater` subagent. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+
 > - `$SKILL_PATH`: `$PLUGIN_ROOT/skills/understand-domain/SKILL.md`
 > - `$SERVICE_ROOT`: `<current service root>`
 > - `$SKILL_ARGS`: *(empty — auto-derives from freshly updated KG; language preference is read from `config.json`)*

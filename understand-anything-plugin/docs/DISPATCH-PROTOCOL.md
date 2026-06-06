@@ -101,24 +101,6 @@ For each batch, use this prompt:
 Wait for ALL dispatches to complete, then verify each output file exists.
 ```
 
-### Skill Dispatch via upstream-updater
-
-When a sub-agent needs to execute an entire skill (e.g., running `/understand` on a service):
-
-```markdown
-**Dispatch an `upstream-updater` subagent** to run `/understand` on this service.
-See [Dispatch Protocol](../docs/DISPATCH-PROTOCOL.md).
-
-> Read the agent definition at `$PLUGIN_ROOT/agents/upstream-updater.md` and follow its instructions.
->
-> - `$SKILL_PATH`: `$PLUGIN_ROOT/skills/understand/SKILL.md`
-> - `$SERVICE_ROOT`: `/path/to/service`
-> - `$SKILL_ARGS`: `--language zh`
-> - `$EXPECTED_OUTPUT`: `/path/to/service/.understand-anything/knowledge-graph.json`
-
-Wait for completion, then verify `$EXPECTED_OUTPUT` exists.
-```
-
 ---
 
 ## Verification Gates
