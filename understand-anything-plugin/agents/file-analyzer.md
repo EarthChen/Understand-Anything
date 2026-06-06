@@ -321,6 +321,10 @@ When `annotations` data is present in the structural extraction output, you MUST
 | `@GrpcClient` | gRPC | `consumes_rpc` | gRPC client stub |
 | `@KafkaTemplate` | Spring Kafka | `publishes` | Message producer (topic from method args or constant) |
 | `@KafkaListener` | Spring Kafka | `subscribes` | Message consumer (`topics` / `topicPattern` attribute) |
+| `@Autowired` | Spring | `injects` | Dependency injection (field/constructor/method) |
+| `@Resource` | Spring/Jakarta | `injects` | Dependency injection (field) |
+| `@Inject` | CDI/Jakarta | `injects` | Dependency injection (field/constructor/method) |
+| `@Value` | Spring | `injects` | Configuration value injection |
 
 **Edge shape (RPC):**
 
@@ -343,6 +347,34 @@ When `annotations` data is present in the structural extraction output, you MUST
 3. For `@FeignClient`, resolve the target from annotation `arguments.name` / `arguments.value` / `arguments.url`; framework = `feign`.
 4. Add tag `rpc-consumer`. Use `consumes_rpc` exclusively — do NOT also emit `depends_on` for the same remote service.
 5. If the interface definition is not in this batch, emit the edge anyway (merge script resolves or drops dangling targets).
+
+**Dependency Injection rules (`injects`):**
+
+1. Check `classes[].typedProperties[].annotations` for `@Autowired`, `@Resource`, or `@Inject`. The field's `type` gives the injected type name.
+2. Create edge from the containing class → injected type class.
+3. For `@Autowired` with `required=false`, still emit the edge (the dependency exists, just optional).
+4. For `@Value` annotations, skip — these inject configuration values, not service dependencies.
+5. Add tag `dependency-injection` to the containing class.
+6. If the injected type is not in this batch, emit the edge anyway (merge script resolves or drops dangling targets).
+
+**Edge shape (injects):**
+
+- **Source:** `class:<path>:<ClassName>` (the class containing the injected field)
+- **Target:** `class:<path>:<InjectedType>` (the type being injected)
+- **Weight:** `0.8`
+- **Direction:** `forward`
+
+**Example injects edge:**
+
+```json
+{
+  "source": "class:src/main/java/com/example/OrderService.java:OrderService",
+  "target": "class:src/main/java/com/example/wrapper/UserIntimacyMoaWrapperService.java:UserIntimacyMoaWrapperService",
+  "type": "injects",
+  "direction": "forward",
+  "weight": 0.8
+}
+```
 
 **Message-queue rules (`publishes` / `subscribes`):**
 
