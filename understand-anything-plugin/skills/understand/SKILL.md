@@ -281,12 +281,58 @@ Report: `[Phase 1.5/7] Computing semantic batches...`
 
 Run the bundled batching script:
 ```bash
-node <SKILL_DIR>/compute-batches.mjs $PROJECT_ROOT
+node <SKILL_DIR>/compute-batches.mjs $PROJECT_ROOT \
+  [--max-community-size=N] [--min-batch-size=N] [--max-merge-target=N] [--dry-run]
 ```
+
+**Tunable parameters** (adjust based on project size to control batch count):
+
+| Flag | Default | When to adjust |
+|---|---|---|
+| `--max-community-size` | 50 | Lower (35) for strict modularity; raise (70) for fewer, larger batches |
+| `--min-batch-size` | 8 | Lower (3) to keep small modules separate; raise (12) for fewer batches |
+| `--max-merge-target` | 40 | Lower (25) for tighter misc batches; raise (50) for fewer batches |
+| `--dry-run` | off | Run diagnostics only, do not write batches.json |
 
 Reads `.understand-anything/intermediate/scan-result.json`, writes `.understand-anything/intermediate/batches.json`.
 
+**Automatic weak-batch absorption.** After merging small batches, the script automatically identifies "weak" batches (≤5 files, intra-edge ratio <20%, mergeable) and absorbs them into their strongest adjacent batch by import edge count. This runs without any parameter tuning — the orchestrator only needs to intervene if absorption can't solve the problem. The `Diagnostic:` line reports `absorbed=N` (number of weak batches absorbed).
+
 Capture stderr. Append any line starting with `Warning:` to `$PHASE_WARNINGS` for the final report.
+
+**Interpreting the diagnostic output.** The script emits to stderr:
+- `Diagnostic:` line — batch count, avg size, intra-edge ratio, current params
+- `Recommendation:` line — quality assessment (HIGH/MODERATE/LOW)
+- Per-batch listing (in `--dry-run` mode) — each batch's files, directories, and intra-edge count
+
+**Decision logic:** The global intra-edge ratio is a rough guide. **Per-batch listings are the primary decision source.** Inspect each batch's files and directories to judge quality:
+
+- **Small batches (≤5 files) with 0-1 intra-edges** → files are unrelated; raising `--min-batch-size` will merge them
+- **Large batches (20+ files) from one package** → cohesive, don't split further
+- **Batches with files from many unrelated directories** → consider raising `--max-community-size` to keep related files together
+- **Singleton batches (1 file)** → should have been merged; check `--min-batch-size`
+
+After inspection, adjust the parameter(s) that address the specific problems you see, then re-run with `--dry-run` to verify.
+
+**Parameter sensitivity — adjust from narrowest to widest impact:**
+
+| Parameter | Scope | Use when |
+|---|---|---|
+| `--min-batch-size` | Only merges small batches; large batches unchanged | Small batches (≤5 files) have unrelated files |
+| `--max-merge-target` | Only changes misc batch cap | Misc batches are too large or too many |
+| `--max-community-size` | Global — re-runs Louvain, reshuffles all batches | Large batches need splitting differently |
+
+**Always try `--min-batch-size` first** — it only affects small-batch merging and won't touch good large batches. Only adjust `--max-community-size` if the other two can't solve the problem, since it reshuffles everything and may destroy good batches.
+
+**Verify stability:** After re-running, check that batches which were good in the previous run still have similar file compositions. If a previously good batch now has completely different files, the parameter change was too aggressive.
+
+Do NOT re-run more than once — use the second run's result regardless.
+
+**Dry-run workflow** (recommended for large projects >300 files):
+1. Run with `--dry-run` to inspect batch composition without writing batches.json
+2. Read per-batch listings and quality assessment
+3. Adjust parameters based on what you see, re-run `--dry-run` to verify
+4. Once satisfied, run without `--dry-run` to produce the final batches.json
 
 If the script exits non-zero, the failure is hard — relay the full stderr to the user as a Phase 1.5 failure. Do not attempt to recover; the script's internal fallback (count-based) already handles recoverable issues. A non-zero exit means a fundamental problem (missing input file, malformed JSON, etc.).
 
@@ -327,9 +373,13 @@ for i, batch in enumerate(batches):
 PYSCRIPT
 ```
 
-**Step 0b — Run extraction for all batches (up to 5 concurrently):**
+**Step 0b — Run extraction for batches that still need it (up to 5 concurrently):**
 
-For each batch `i`, run the extraction script. Process up to **5 batches in parallel** — do NOT run them sequentially.
+Before running extraction, detect already-completed extractions. For each batch `i`, check if `$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<i>.json` exists and is non-empty. Skip batches that already have extraction results (this enables automatic resume when a previous run was interrupted). If an output file exists but contains invalid JSON (e.g. truncated from a crash), treat it as incomplete and re-process.
+
+If all extraction results already exist, skip directly to Step 0c.
+
+For remaining batches, run the extraction script. Process up to **5 batches in parallel** — do NOT run them sequentially.
 
 ```bash
 node <SKILL_DIR>/extract-structure.mjs \
@@ -353,7 +403,18 @@ Report: `[Phase 2/7] Structural extraction complete for <totalBatches> batches. 
 
 #### Step 1 — Dispatch file-analyzer agents
 
-For each batch, dispatch a subagent using the `file-analyzer` agent definition (at `agents/file-analyzer.md`). Run up to **5 subagents concurrently**. Append the following additional context:
+**Before dispatching**, detect already-completed batches by checking for existing output files. This enables automatic resume when a previous run was interrupted.
+
+For each batch in `batches.json`, check if its output already exists on disk:
+- Single-file: `$PROJECT_ROOT/.understand-anything/intermediate/batch-<batchIndex>.json` (non-empty)
+- Split-file: `$PROJECT_ROOT/.understand-anything/intermediate/batch-<batchIndex>-part-*.json` (at least one non-empty part)
+
+If an output file exists but contains invalid JSON (e.g. truncated from a crash), treat it as incomplete and re-process.
+
+Filter to only include batches **without** existing output. If all batches are complete, skip directly to the merge step. If some batches were skipped, report:
+> `Resuming: <N>/<total> batches already complete. Dispatching remaining <M>...`
+
+For remaining batches, dispatch a subagent using the `file-analyzer` agent definition (at `agents/file-analyzer.md`). Run up to **5 subagents concurrently**. Append the following additional context:
 
 > **Additional context from main session:**
 >

@@ -42,7 +42,7 @@ describe('compute-batches.mjs — Louvain basic', () => {
   });
 
   it('produces 3 batches for 3 disjoint cliques', () => {
-    const result = runScript(projectRoot);
+    const result = runScript(projectRoot, ['--min-batch-size=3']);
     expect(result.status).toBe(0);
 
     const batches = readBatches(projectRoot);
@@ -92,7 +92,7 @@ describe('compute-batches.mjs — size enforcement', () => {
   });
 
   it('splits a 40-node clique into batches ≤ 35', () => {
-    const result = runScript(projectRoot);
+    const result = runScript(projectRoot, ['--max-community-size=35']);
     expect(result.status).toBe(0);
 
     const batches = readBatches(projectRoot);
@@ -188,7 +188,7 @@ describe('compute-batches.mjs — non-code grouping', () => {
 
   beforeEach(() => {
     root = setupProject('scan-result-non-code.json');
-    const result = runScript(root);
+    const result = runScript(root, ['--min-batch-size=3']);
     expect(result.status).toBe(0);
     batches = readBatches(root);
   });
@@ -304,7 +304,7 @@ describe('compute-batches.mjs — neighborMap + batchImportData', () => {
 
   beforeEach(() => {
     projectRoot = setupProject('scan-result-3-cliques.json');
-    const result = runScript(projectRoot);
+    const result = runScript(projectRoot, ['--min-batch-size=3']);
     expect(result.status).toBe(0);
     batches = readBatches(projectRoot);
     batchOf = new Map();
@@ -393,7 +393,7 @@ describe('compute-batches.mjs — neighborMap + batchImportData', () => {
       join(root, '.understand-anything', 'intermediate', 'scan-result.json'),
       JSON.stringify(scan));
 
-    const result = runScript(root);
+    const result = runScript(root, ['--min-batch-size=3']);
     expect(result.status).toBe(0);
     const out = readBatches(root);
 
@@ -498,7 +498,7 @@ describe('compute-batches.mjs — merge-small', () => {
   });
 
   it('merges 100 isolated singletons into a small number of misc batches', () => {
-    const result = runScript(projectRoot);
+    const result = runScript(projectRoot, ['--min-batch-size=3', '--max-merge-target=25']);
     expect(result.status).toBe(0);
 
     const batches = readBatches(projectRoot);
@@ -583,7 +583,7 @@ describe('compute-batches.mjs — --changed-files', () => {
     // Only the auth clique is changed
     writeFileSync(changedPath, ['src/auth/login.ts', 'src/auth/tokens.ts'].join('\n'));
 
-    const result = runScript(root, [`--changed-files=${changedPath}`]);
+    const result = runScript(root, [`--changed-files=${changedPath}`, '--min-batch-size=3']);
     expect(result.status).toBe(0);
 
     const out = readBatches(root);

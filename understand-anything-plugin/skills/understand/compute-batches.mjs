@@ -242,14 +242,9 @@ function countBasedAssignment(codeFiles, batchSize = 12) {
  * Returns the rewritten batch list with reassigned batchIndex (1-based,
  * keepers first preserving their relative order, misc batches appended).
  */
-function mergeSmallBatches(bareBatches) {
-  // MIN_BATCH_SIZE=3: below this, file-analyzer dispatch overhead (subagent
-  // spin-up, prompt setup) dwarfs the per-file analysis cost — not worth a
-  // standalone batch.
-  const MIN_BATCH_SIZE = 3;
-  // MAX_MERGE_TARGET=25: stays below MAX_COMMUNITY_SIZE=35 so the misc-batch
-  // agent retains headroom for neighborMap context without overflowing.
-  const MAX_MERGE_TARGET = 25;
+function mergeSmallBatches(bareBatches, opts = {}) {
+  const MIN_BATCH_SIZE = opts.minBatchSize ?? 8;
+  const MAX_MERGE_TARGET = opts.maxMergeTarget ?? 40;
 
   const keepers = [];
   const smallMergeable = [];
@@ -298,14 +293,122 @@ function mergeSmallBatches(bareBatches) {
   }));
 }
 
+/**
+ * Absorb structurally weak batches into their strongest adjacent batch.
+ * A batch is "weak" when it is mergeable, has <= 5 files, and its intra-edge
+ * ratio (edges where both endpoints are inside the batch / all edges touching
+ * the batch) is below 0.2 — meaning the files barely reference each other.
+ *
+ * For each weak batch, find adjacent batches (those sharing import edges with
+ * the weak batch's files) and merge into the one with the most connecting
+ * edges, provided the combined size stays within maxCommunitySize.
+ *
+ * Returns the rewritten batch list with reassigned sequential batchIndex.
+ */
+function absorbWeakBatches(batches, importMap, opts = {}) {
+  const maxCommunitySize = opts.maxCommunitySize ?? 50;
+
+  // Build path → batchIndex lookup (O(1) per file instead of O(batches)).
+  const pathToBatch = new Map();
+  for (const b of batches) {
+    for (const f of b.files) pathToBatch.set(f.path, b.batchIndex);
+  }
+
+  // Single pass: compute intra/cross counts AND per-batch neighbor edge map.
+  const intraByBatch = new Map(batches.map(b => [b.batchIndex, 0]));
+  const crossByBatch = new Map(batches.map(b => [b.batchIndex, 0]));
+  // neighborEdges: batchIndex → Map<neighborBatchIndex, edgeCount>
+  const neighborEdges = new Map(batches.map(b => [b.batchIndex, new Map()]));
+
+  for (const [src, targets] of Object.entries(importMap)) {
+    const srcBatch = pathToBatch.get(src);
+    if (srcBatch === undefined) continue;
+    for (const tgt of targets) {
+      const tgtBatch = pathToBatch.get(tgt);
+      if (tgtBatch === undefined) continue;
+      if (srcBatch === tgtBatch) {
+        intraByBatch.set(srcBatch, intraByBatch.get(srcBatch) + 1);
+      } else {
+        crossByBatch.set(srcBatch, crossByBatch.get(srcBatch) + 1);
+        crossByBatch.set(tgtBatch, crossByBatch.get(tgtBatch) + 1);
+        const srcNeighbors = neighborEdges.get(srcBatch);
+        srcNeighbors.set(tgtBatch, (srcNeighbors.get(tgtBatch) || 0) + 1);
+        const tgtNeighbors = neighborEdges.get(tgtBatch);
+        tgtNeighbors.set(srcBatch, (tgtNeighbors.get(srcBatch) || 0) + 1);
+      }
+    }
+  }
+
+  // Index batches by batchIndex for O(1) lookup.
+  const batchByIndex = new Map(batches.map(b => [b.batchIndex, b]));
+
+  // Identify weak batches and absorb them.
+  const absorbed = new Set();
+  let sizeRejected = 0;
+  for (const b of batches) {
+    if (b.mergeable === false) continue;
+    if (b.files.length > 5) continue;
+
+    const intra = intraByBatch.get(b.batchIndex) || 0;
+    const cross = crossByBatch.get(b.batchIndex) || 0;
+    const total = intra + cross;
+    const ratio = total > 0 ? intra / total : 0;
+    if (ratio >= 0.2) continue;
+
+    // Use pre-computed neighbor edges instead of re-scanning importMap.
+    const edgeCounts = neighborEdges.get(b.batchIndex);
+    if (!edgeCounts || edgeCounts.size === 0) continue; // isolated
+
+    // Pick strongest neighbor.
+    const [targetBatchIdx] = [...edgeCounts.entries()]
+      .sort((a, bb) => bb[1] - a[1])[0];
+
+    const targetBatch = batchByIndex.get(targetBatchIdx);
+    if (!targetBatch) continue;
+    if (targetBatch.files.length + b.files.length > maxCommunitySize) {
+      sizeRejected++;
+      continue;
+    }
+
+    // Merge: add weak batch's files into target.
+    targetBatch.files.push(...b.files);
+    absorbed.add(b.batchIndex);
+  }
+
+  if (sizeRejected > 0) {
+    process.stderr.write(
+      `Info: compute-batches: ${sizeRejected} weak batch(es) skipped — combined size would exceed maxCommunitySize=${maxCommunitySize}\n`,
+    );
+  }
+
+  if (absorbed.size === 0) return batches;
+
+  // Renumber surviving batches sequentially, preserving all fields.
+  const survivors = batches.filter(b => !absorbed.has(b.batchIndex));
+  return survivors.map((b, i) => ({
+    ...b,
+    batchIndex: i + 1,
+  }));
+}
+
 // ── Main: load → Louvain (or count-fallback) → enrich → write batches.json ─
 async function main() {
   const projectRoot = process.argv[2];
   if (!projectRoot) {
-    process.stderr.write('Usage: node compute-batches.mjs <project-root> [--changed-files=<path>]\n');
+    process.stderr.write(
+      'Usage: node compute-batches.mjs <project-root> [--changed-files=<path>] ' +
+      '[--max-community-size=N] [--min-batch-size=N] [--max-merge-target=N] [--dry-run]\n',
+    );
     process.exit(1);
   }
 
+  // ── Configurable batch parameters (CLI flags with sensible defaults) ──
+  const config = {
+    maxCommunitySize: 50,
+    minBatchSize: 8,
+    maxMergeTarget: 40,
+  };
+  let dryRun = false;
   let changedFiles = null;
   for (const arg of process.argv.slice(3)) {
     const m = arg.match(/^--changed-files=(.+)$/);
@@ -326,6 +429,11 @@ async function main() {
         .filter(Boolean);
       changedFiles = new Set(lines);
     }
+    const numMatch = arg.match(/^--(max-community-size|min-batch-size|max-merge-target)=(\d+)$/);
+    if (numMatch) {
+      config[numMatch[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = Number(numMatch[2]);
+    }
+    if (arg === '--dry-run') dryRun = true;
   }
 
   const scanPath = join(projectRoot, '.understand-anything', 'intermediate', 'scan-result.json');
@@ -340,6 +448,10 @@ async function main() {
   const nonCodeFiles = files.filter(f => f.fileCategory !== 'code');
   const importMap = scan.importMap || {};
 
+  process.stderr.write(
+    `Config: maxCommunitySize=${config.maxCommunitySize}, ` +
+    `minBatchSize=${config.minBatchSize}, maxMergeTarget=${config.maxMergeTarget}\n`,
+  );
   process.stderr.write(`Loaded ${files.length} files (${codeFiles.length} code).\n`);
 
   const exportsByPath = await extractExports(projectRoot, codeFiles);
@@ -366,7 +478,7 @@ async function main() {
   }
 
   // Size enforcement only on louvain output. count-fallback already chunked.
-  const MAX_COMMUNITY_SIZE = 35;
+  const MAX_COMMUNITY_SIZE = config.maxCommunitySize;
   const splitCommunities = new Map();
   let nextSyntheticId = 0;
   if (algorithm === 'louvain') {
@@ -424,8 +536,20 @@ async function main() {
     mergeable: g.mergeable,
   }));
   const bareBatches = [...codeBatchObjsBare, ...nonCodeBatchObjsBare];
-  const mergedBareBatches = mergeSmallBatches(bareBatches);
-  const batchOf = buildBatchOfMap(mergedBareBatches);
+  const mergedBareBatches = mergeSmallBatches(bareBatches, {
+    minBatchSize: config.minBatchSize,
+    maxMergeTarget: config.maxMergeTarget,
+  });
+  const absorbedBatches = absorbWeakBatches(mergedBareBatches, importMap, {
+    maxCommunitySize: config.maxCommunitySize,
+  });
+  const absorbedCount = mergedBareBatches.length - absorbedBatches.length;
+  if (absorbedCount > 0) {
+    process.stderr.write(
+      `Info: compute-batches: absorbed ${absorbedCount} weak batches into adjacent strong batches\n`,
+    );
+  }
+  const batchOf = buildBatchOfMap(absorbedBatches);
 
   // Build reverse import map: target → [sources that import target]
   const reverseImportMap = new Map();
@@ -448,7 +572,7 @@ async function main() {
   const MAX_NEIGHBORS = 50;
 
   // Second-pass: enrich each batch with batchImportData + neighborMap
-  const batches = mergedBareBatches.map(b => {
+  const batches = absorbedBatches.map(b => {
     const batchPaths = new Set(b.files.map(f => f.path));
     const batchImportData = {};
     const neighborMap = {};
@@ -514,11 +638,93 @@ async function main() {
     batches: finalBatches,
   };
 
-  const outPath = join(projectRoot, '.understand-anything', 'intermediate', 'batches.json');
-  writeFileSync(outPath, JSON.stringify(output, null, 2), 'utf-8');
+  // ── Diagnostic: intra-batch edge ratio + orchestrator recommendation ──
   const batchSizes = finalBatches.map(b => b.files.length);
   const maxSize = batchSizes.length ? Math.max(...batchSizes) : 0;
   const minSize = batchSizes.length ? Math.min(...batchSizes) : 0;
+  const avgSize = batchSizes.length ? (batchSizes.reduce((a, b) => a + b, 0) / batchSizes.length).toFixed(1) : 0;
+
+  const fileToBatch = new Map();
+  for (const b of finalBatches) {
+    for (const f of b.files) fileToBatch.set(f.path, b.batchIndex);
+  }
+  let intra = 0, cross = 0;
+  for (const [src, targets] of Object.entries(importMap)) {
+    const sb = fileToBatch.get(src);
+    if (sb === undefined) continue;
+    for (const tgt of targets) {
+      const tb = fileToBatch.get(tgt);
+      if (tb === undefined) continue;
+      if (sb === tb) intra++; else cross++;
+    }
+  }
+  const total = intra + cross;
+  const intraRatio = total > 0 ? (intra / total * 100).toFixed(1) : '0.0';
+
+  process.stderr.write(
+    `Diagnostic: ${finalBatches.length} batches, avg=${avgSize} files/batch, ` +
+    `intra-edge=${intraRatio}% (${intra}/${total}), ` +
+    `sizes(max=${maxSize},min=${minSize}), ` +
+    `absorbed=${absorbedCount}, ` +
+    `params(maxCommunitySize=${config.maxCommunitySize},minBatchSize=${config.minBatchSize},maxMergeTarget=${config.maxMergeTarget})\n`,
+  );
+
+  // Orchestrator recommendation — per-batch inspection is primary, global ratio is a rough guide
+  const ratio = parseFloat(intraRatio);
+  const smallCount = finalBatches.filter(b => b.files.length <= 5).length;
+  const largeCount = finalBatches.filter(b => b.files.length > 30).length;
+  if (ratio >= 60 && finalBatches.length > 15) {
+    process.stderr.write(
+      `Recommendation: quality=HIGH (intra-edge ${intraRatio}% >= 60%), batches=${finalBatches.length}. ` +
+      `Global grouping is good. Inspect per-batch listings to decide which batches to merge. ` +
+      `Hint: ${smallCount} small batches (<=5 files) — try --min-batch-size first (safe, won't touch large batches).\n`,
+    );
+  } else if (ratio >= 60 && finalBatches.length <= 15) {
+    process.stderr.write(
+      `Recommendation: quality=HIGH (intra-edge ${intraRatio}%), batches=${finalBatches.length}. ` +
+      `Good balance. No adjustment needed.\n`,
+    );
+  } else if (ratio >= 40) {
+    process.stderr.write(
+      `Recommendation: quality=MODERATE (intra-edge ${intraRatio}%), batches=${finalBatches.length}. ` +
+      `Inspect per-batch listings: merge small batches with low intra-edges; keep large cohesive batches. ` +
+      `Hint: ${smallCount} small batches, ${largeCount} large batches — try --min-batch-size first.\n`,
+    );
+  } else {
+    process.stderr.write(
+      `Recommendation: quality=LOW (intra-edge ${intraRatio}%), batches=${finalBatches.length}. ` +
+      `Boundaries are weak. Inspect per-batch listings to identify which groupings make sense. ` +
+      `Hint: --max-community-size will reshuffle all batches; only use if smaller params can't help.\n`,
+    );
+  }
+
+  if (dryRun) {
+    // Per-batch content listing for orchestrator inspection
+    for (const b of finalBatches) {
+      const paths = b.files.map(f => f.path).sort();
+      const dirs = [...new Set(paths.map(p => {
+        const parts = p.split('/');
+        return parts.length > 2 ? parts.slice(0, -1).join('/') : parts[0];
+      }))];
+      let batchIntra = 0;
+      for (const f of paths) {
+        for (const t of (importMap[f] || [])) {
+          if (fileToBatch.get(t) === b.batchIndex) batchIntra++;
+        }
+      }
+      process.stderr.write(
+        `\n  Batch ${b.batchIndex} (${b.files.length} files, ${batchIntra} intra-edges):\n` +
+        `    Dirs: ${dirs.join(', ')}\n` +
+        paths.map(p => `    ${p}`).join('\n') + '\n',
+      );
+    }
+    process.stderr.write(`\nDry-run mode. No batches written. Adjust parameters and re-run without --dry-run.\n`);
+    process.exit(0);
+  }
+
+  // ── Write batches.json ──
+  const outPath = join(projectRoot, '.understand-anything', 'intermediate', 'batches.json');
+  writeFileSync(outPath, JSON.stringify(output, null, 2), 'utf-8');
   process.stderr.write(
     `Wrote ${finalBatches.length} batches (sizes: max=${maxSize}, min=${minSize}) to ${outPath}\n`,
   );

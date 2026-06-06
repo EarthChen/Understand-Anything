@@ -123,7 +123,9 @@ If no domains found, report error and stop.
 
 #### Step 3 — Dispatch Per-Domain wiki-workers
 
-For each domain, build a domain-scoped KG first:
+**Before dispatching**, detect already-generated domains by checking if `domains/<DOMAIN_ID>.json` exists and is non-empty in `$SERVICE_ROOT/.understand-anything/intermediate/wiki/domains/`. Skip domains that already have output (this enables automatic resume when a previous run was interrupted). If an output file exists but contains invalid JSON (e.g. truncated from a crash), treat it as incomplete and re-process. If all domains are complete, skip directly to Step 4.
+
+For each remaining domain, build a domain-scoped KG first:
 
 ```bash
 for DOMAIN_ID in $DOMAIN_IDS; do

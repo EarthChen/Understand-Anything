@@ -57,7 +57,9 @@ Dispatch `article-analyzer` subagents to extract implicit knowledge:
 
 2. Prepare batches of 10-15 articles each, grouped by category when possible (articles in the same category are more likely to have implicit cross-references)
 
-3. For each batch, dispatch an `article-analyzer` subagent with:
+3. **Before dispatching**, detect already-analyzed batches by checking if `analysis-batch-{N}.json` exists and is non-empty in the intermediate directory. Skip batches that already have output (this enables automatic resume when a previous run was interrupted). If an output file exists but contains invalid JSON (e.g. truncated from a crash), treat it as incomplete and re-process. If all batches are complete, skip directly to Phase 4.
+
+4. For each remaining batch, dispatch an `article-analyzer` subagent with:
    - The batch of articles (id, name, summary, wikilinks, category, content from knowledgeMeta)
    - The full list of existing node IDs (so the agent can reference them)
    - The batch number for output file naming
@@ -65,9 +67,9 @@ Dispatch `article-analyzer` subagents to extract implicit knowledge:
    
    The agent will write `analysis-batch-{N}.json` to the intermediate directory.
 
-4. Run up to 3 batches concurrently. Wait for all batches to complete.
+5. Run up to 3 batches concurrently. Wait for all batches to complete.
 
-5. If any batch fails, log a warning but continue — the scan-manifest provides a solid base graph even without LLM analysis.
+6. If any batch fails, log a warning but continue — the scan-manifest provides a solid base graph even without LLM analysis.
 
 ### Phase 4: MERGE
 

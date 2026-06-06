@@ -178,13 +178,14 @@ This phase uses different strategies depending on Path:
 #### Phase 4c: Flow Extraction (parallel, up to 3 concurrent)
 
 1. Read the `domain-flow-extractor` agent prompt from `$PLUGIN_ROOT/agents/domain-flow-extractor.md`
-2. For each domain in `domain-discovery.json`:
+2. **Before dispatching**, detect already-extracted domains by checking if `intermediate/flows-<name>.json` exists and is non-empty. Skip domains that already have output (this enables automatic resume when a previous run was interrupted). If an output file exists but contains invalid JSON (e.g. truncated from a crash), treat it as incomplete and re-process. If all domains are complete, skip directly to Phase 4d.
+3. For each remaining domain in `domain-discovery.json`:
    - Read `intermediate/domain-<name>.json` as context
    - Dispatch a subagent with the `domain-flow-extractor` prompt + domain KG subset
    - The agent writes to `intermediate/flows-<name>.json`
-3. Run up to **3 subagents concurrently** (same pattern as `/understand` Phase 2 batches)
-4. If a domain's flow extraction fails, retry once. If it fails again, skip that domain and continue with others.
-5. Wait for all to complete.
+4. Run up to **3 subagents concurrently** (same pattern as `/understand` Phase 2 batches)
+5. If a domain's flow extraction fails, retry once. If it fails again, skip that domain and continue with others.
+6. Wait for all to complete.
 
 #### Phase 4d: Merge
 
