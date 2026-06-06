@@ -246,6 +246,7 @@ export const en = {
     middleware: { forward: "middleware for", backward: "uses middleware" },
     provides_rpc: { forward: "provides RPC", backward: "RPC provided by" },
     consumes_rpc: { forward: "consumes RPC", backward: "RPC consumed by" },
+    injects: { forward: "injects", backward: "injected by" },
     reads_from: { forward: "reads from", backward: "read by" },
     writes_to: { forward: "writes to", backward: "written by" },
     transforms: { forward: "transforms", backward: "transformed by" },

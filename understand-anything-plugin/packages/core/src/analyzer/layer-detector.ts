@@ -68,9 +68,14 @@ const LAYER_PATTERNS: Array<{ patterns: string[]; layerName: string; description
 
 /**
  * Convert a layer name to a kebab-case layer ID.
+ * Strips non-alphanumeric characters; falls back to "unnamed" if slug is empty.
  */
 function toLayerId(name: string): string {
-  return `layer:${name.toLowerCase().replace(/\s+/g, "-")}`;
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `layer:${slug || "unnamed"}`;
 }
 
 /**

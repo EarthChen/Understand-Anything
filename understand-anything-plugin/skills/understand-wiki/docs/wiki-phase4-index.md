@@ -29,3 +29,24 @@ Write `$PROJECT_ROOT/.understand-anything/wiki/meta.json`:
   "serviceCount": 3
 }
 ```
+
+### Endpoint Index
+
+Aggregate per-service endpoint files into a parent-level index for Dashboard consumption.
+
+```bash
+mkdir -p "$PROJECT_ROOT/.understand-anything/wiki/endpoints"
+for svc in $SERVICES; do
+  cp "$PROJECT_ROOT/$svc/.understand-anything/wiki/endpoints/"*.json \
+     "$PROJECT_ROOT/.understand-anything/wiki/endpoints/" 2>/dev/null || true
+done
+python3 "$SKILL_DIR/build-endpoint-index.py" \
+  --wiki-dir "$PROJECT_ROOT/.understand-anything/wiki"
+```
+
+**Behavior:**
+- Copies per-service endpoint files from service-level wiki dirs to parent wiki dir
+- Runs `build-endpoint-index.py` to produce `endpoints/index.json` with `byService`, `byProtocol`, and `byTopic` groupings
+- Dashboard serves this at `/api/wiki/endpoints/index`
+
+**On failure:** Log warning and continue (endpoint index is optional).

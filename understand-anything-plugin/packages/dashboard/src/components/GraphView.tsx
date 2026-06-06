@@ -244,8 +244,17 @@ function useOverviewGraph() {
     // `computeLayerStats`, which iterates `layer.nodeIds` against the
     // `nodesById` index — O(K) per layer instead of the previous
     // O(N) Array.filter that ran `layer.nodeIds.includes(n.id)` (#102).
-    const clusterNodes: LayerClusterFlowNode[] = layers.map((layer, i) => {
+    // Deduplicate layers by id to prevent React Flow duplicate node ID errors.
+    const seenLayerIds = new Set<string>();
+    const uniqueLayers = layers.filter((layer) => {
+      if (!layer.id || seenLayerIds.has(layer.id)) return false;
+      seenLayerIds.add(layer.id);
+      return true;
+    });
+    const clusterNodes: LayerClusterFlowNode[] = uniqueLayers.map((layer) => {
       const { aggregateComplexity } = computeLayerStats(layer, nodesById);
+      // Use original index from layers to keep color stable after deduplication
+      const originalIndex = layers.indexOf(layer);
 
       return {
         id: layer.id,
@@ -257,7 +266,7 @@ function useOverviewGraph() {
           layerDescription: layer.description,
           fileCount: layer.nodeIds.length,
           aggregateComplexity,
-          layerColorIndex: i,
+          layerColorIndex: originalIndex,
           searchMatchCount: searchMatchByLayer.get(layer.id),
           onDrillIn: drillIntoLayer,
         },

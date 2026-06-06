@@ -158,9 +158,9 @@ export default function FilterPanel() {
                   {t.filterPanel.layers}
                 </h3>
                 <div className="space-y-1.5">
-                  {layers.map((layer) => (
+                  {layers.map((layer, i) => (
                     <label
-                      key={layer.id}
+                      key={`${layer.id}-${i}`}
                       className="flex items-center gap-2 cursor-pointer hover:bg-elevated/50 rounded px-2 py-1 transition-colors"
                     >
                       <input

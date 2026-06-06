@@ -188,10 +188,21 @@ def merge(root: Path) -> dict:
     article_layer_map: dict[str, str] = {}  # article_id → layer_id
     layer_members: dict[str, list[str]] = {}  # layer_id → [node_ids]
 
+    seen_layer_ids: set[str] = set()
+    cat_layer_map: dict[str, str] = {}  # cat_name → deduplicated layer_id
+
     for cat in categories:
         cat_name = cat["name"]
-        cat_slug = cat_name.lower().replace(" ", "-")
+        cat_slug = re.sub(r"[^a-z0-9]+", "-", cat_name.lower()).strip("-") or "unnamed"
         layer_id = f"layer:{cat_slug}"
+        # Deduplicate layer IDs
+        base_id = layer_id
+        n = 1
+        while layer_id in seen_layer_ids:
+            n += 1
+            layer_id = f"{base_id}-{n}"
+        seen_layer_ids.add(layer_id)
+        cat_layer_map[cat_name] = layer_id
         topic_id = f"topic:{cat_slug}"
         members = [e["source"] for e in final_edges
                    if e["type"] == "categorized_under" and e["target"] == topic_id]
@@ -278,8 +289,10 @@ def merge(root: Path) -> dict:
     layers = []
     for cat in categories:
         cat_name = cat["name"]
-        cat_slug = cat_name.lower().replace(" ", "-")
-        layer_id = f"layer:{cat_slug}"
+        layer_id = cat_layer_map.get(cat_name)
+        if not layer_id:
+            cat_slug = re.sub(r"[^a-z0-9]+", "-", cat_name.lower()).strip("-") or "unnamed"
+            layer_id = f"layer:{cat_slug}"
         members = list(dict.fromkeys(layer_members.get(layer_id, [])))  # Deduplicate preserving order
         layers.append({
             "id": layer_id,
@@ -304,7 +317,7 @@ def merge(root: Path) -> dict:
     # --- Build tour from index.md category ordering ---
     tour = []
     for i, cat in enumerate(categories):
-        cat_slug = cat["name"].lower().replace(" ", "-")
+        cat_slug = re.sub(r"[^a-z0-9]+", "-", cat["name"].lower()).strip("-") or "unnamed"
         topic_id = f"topic:{cat_slug}"
         # Pick representative articles (up to 3 per category)
         members = [e["source"] for e in final_edges

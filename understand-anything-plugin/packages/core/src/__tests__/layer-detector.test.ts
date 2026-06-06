@@ -186,3 +186,26 @@ describe("applyLLMLayers", () => {
     expect(otherLayer!.nodeIds).toContain("f3");
   });
 });
+
+describe("toLayerId edge cases (via applyLLMLayers)", () => {
+  it("produces valid non-empty IDs for Chinese layer names", () => {
+    const graph = makeGraph([
+      makeNode({ id: "f1", name: "a.ts", filePath: "src/a.ts" }),
+    ]);
+    const result = applyLLMLayers(graph, [
+      { name: "文档", description: "docs", filePatterns: ["src/"] },
+    ]);
+    expect(result[0].id).toBe("layer:unnamed");
+    expect(result[0].id).not.toBe("layer:");
+  });
+
+  it("produces valid ID for ASCII name", () => {
+    const graph = makeGraph([
+      makeNode({ id: "f1", name: "a.ts", filePath: "src/a.ts" }),
+    ]);
+    const result = applyLLMLayers(graph, [
+      { name: "API Layer", description: "api", filePatterns: ["src/"] },
+    ]);
+    expect(result[0].id).toBe("layer:api-layer");
+  });
+});

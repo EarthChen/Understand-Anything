@@ -6,7 +6,25 @@ After wiki-worker writes raw content to `$PROJECT_ROOT/.understand-anything/inte
 
 ### Pipeline Sequence
 
-Three scripts run in strict order:
+Four scripts run in strict order:
+
+#### Script 0: Endpoint Extraction (`extract-endpoints.py`)
+
+```bash
+mkdir -p "$PROJECT_ROOT/.understand-anything/intermediate/wiki/endpoints"
+python3 "$SKILL_DIR/extract-endpoints.py" \
+  "$SERVICE_ROOT/.understand-anything/tmp" \
+  "$SERVICE_NAME" \
+  --output="$PROJECT_ROOT/.understand-anything/intermediate/wiki/endpoints/$SERVICE_NAME.json"
+```
+
+**Behavior:**
+- Reads `ua-file-extract-results-*.json` from the extraction directory
+- Detects MoaProvider, DubboService, GrpcService, FeignClient, KafkaListener annotations
+- Produces `ServiceEndpointDoc` JSON with `providers`, `consumers`, and `kafkaTopics` arrays
+- Skips gracefully if extraction directory is missing or empty
+
+**On failure:** Log warning and continue (endpoint data is optional for wiki assembly).
 
 #### Script 1: Schema Validation (`validate-wiki-schema.mjs`)
 
@@ -67,6 +85,7 @@ When running in incremental mode (only dirty domains regenerated):
 
 | Script | Error | Action |
 |--------|-------|--------|
+| extract-endpoints.py | Extraction dir missing or empty | Log warning, skip (endpoint data optional) |
 | validate-wiki-schema.mjs | Auto-fixable issues | Fix in-place, log as warnings |
 | validate-wiki-schema.mjs | Hard schema errors | Log, proceed with warnings (warn-then-continue) |
 | build-wiki-index.py | No wiki files found | Write empty index, log warning |

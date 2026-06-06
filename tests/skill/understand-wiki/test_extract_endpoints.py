@@ -184,5 +184,48 @@ class TestExtractEndpoints(unittest.TestCase):
         self.assertEqual(consumer["targetInterface"], "OrderService")
 
 
+class TestMatchMethodsToClass(unittest.TestCase):
+    """Test _match_methods_to_class filtering behavior."""
+
+    def test_filters_functions_by_class_methods(self):
+        functions = [
+            {"name": "createOrder", "params": [], "returnType": "void", "startLine": 10, "endLine": 20},
+            {"name": "getOrder", "params": [], "returnType": "void", "startLine": 22, "endLine": 30},
+            {"name": "helperUtil", "params": [], "returnType": "void", "startLine": 40, "endLine": 50},
+        ]
+        result = extract_endpoints._match_methods_to_class(functions, ["createOrder", "getOrder"])
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["name"], "createOrder")
+        self.assertEqual(result[1]["name"], "getOrder")
+
+    def test_empty_class_methods_returns_all(self):
+        functions = [
+            {"name": "createOrder", "params": [], "returnType": "void", "startLine": 10, "endLine": 20},
+            {"name": "helperUtil", "params": [], "returnType": "void", "startLine": 40, "endLine": 50},
+        ]
+        result = extract_endpoints._match_methods_to_class(functions, [])
+        self.assertEqual(len(result), 2)
+
+    def test_no_matching_functions_returns_empty(self):
+        functions = [
+            {"name": "helperUtil", "params": [], "returnType": "void", "startLine": 40, "endLine": 50},
+        ]
+        result = extract_endpoints._match_methods_to_class(functions, ["createOrder"])
+        self.assertEqual(len(result), 0)
+
+    def test_multi_class_same_file_no_leakage(self):
+        """Two classes in the same file should not share methods."""
+        functions = [
+            {"name": "fooMethod", "params": [], "returnType": "void", "startLine": 10, "endLine": 20},
+            {"name": "barMethod", "params": [], "returnType": "void", "startLine": 30, "endLine": 40},
+        ]
+        foo_methods = extract_endpoints._match_methods_to_class(functions, ["fooMethod"])
+        bar_methods = extract_endpoints._match_methods_to_class(functions, ["barMethod"])
+        self.assertEqual(len(foo_methods), 1)
+        self.assertEqual(foo_methods[0]["name"], "fooMethod")
+        self.assertEqual(len(bar_methods), 1)
+        self.assertEqual(bar_methods[0]["name"], "barMethod")
+
+
 if __name__ == "__main__":
     unittest.main()

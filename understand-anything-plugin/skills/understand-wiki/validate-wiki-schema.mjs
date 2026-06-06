@@ -192,6 +192,84 @@ if (!existsSync(wikiDir)) {
   }
 }
 
+// --- Quality gate rules ---
+
+// Rule 1: Check knowledge-graph.json layer ID integrity
+const kgPath = serviceRoot
+  ? join(serviceRoot, ".understand-anything", "knowledge-graph.json")
+  : null;
+if (kgPath && existsSync(kgPath)) {
+  const kg = loadJSON(kgPath);
+  if (kg && Array.isArray(kg.layers)) {
+    const seenIds = new Set();
+    for (const layer of kg.layers) {
+      const id = layer.id;
+      if (!id || id === "layer:") {
+        addIssue("warning", `Layer has empty or bare 'layer:' id: ${JSON.stringify(layer)}`);
+      }
+      if (id && seenIds.has(id)) {
+        addIssue("warning", `Duplicate layer id: ${id}`);
+      }
+      if (id) seenIds.add(id);
+    }
+  }
+}
+
+// Rule 2: Service wiki has entryPoints but no endpoint data
+if (!isParent && existsSync(wikiDir)) {
+  const servicePath = join(wikiDir, "service.json");
+  if (existsSync(servicePath)) {
+    const svcData = loadJSON(servicePath);
+    if (svcData && Array.isArray(svcData.entryPoints) && svcData.entryPoints.length > 0) {
+      const endpointsDir = join(wikiDir, "endpoints");
+      const svcName = svcData.name || "";
+      const endpointFile = join(endpointsDir, `${svcName}.json`);
+      if (!existsSync(endpointFile)) {
+        addIssue(
+          "warning",
+          `service.json has ${svcData.entryPoints.length} entryPoints but no endpoints/${svcName}.json found`,
+        );
+      }
+    }
+  }
+}
+
+// Rule 3: Provider has sourceRef but empty methods
+if (!isParent && existsSync(wikiDir)) {
+  const endpointsDir = join(wikiDir, "endpoints");
+  if (existsSync(endpointsDir)) {
+    for (const f of readdirSync(endpointsDir).filter((n) => n.endsWith(".json") && n !== "index.json")) {
+      const data = loadJSON(join(endpointsDir, f));
+      if (!data || !Array.isArray(data.providers)) continue;
+      for (const p of data.providers) {
+        if (p.sourceRef && (!Array.isArray(p.methods) || p.methods.length === 0)) {
+          addIssue(
+            "warning",
+            `endpoints/${f}: provider '${p.identifier}' has sourceRef but empty methods`,
+          );
+        }
+      }
+    }
+  }
+}
+
+// Rule 4: Parent wiki has 2+ services but no endpoints/index.json
+if (isParent && existsSync(wikiDir)) {
+  const overviewPath = join(wikiDir, "overview.json");
+  if (existsSync(overviewPath)) {
+    const overview = loadJSON(overviewPath);
+    if (overview && Array.isArray(overview.services) && overview.services.length >= 2) {
+      const indexFile = join(wikiDir, "endpoints", "index.json");
+      if (!existsSync(indexFile)) {
+        addIssue(
+          "warning",
+          `Parent wiki has ${overview.services.length} services but no endpoints/index.json`,
+        );
+      }
+    }
+  }
+}
+
 const reportPath = join(dirname(wikiDir), "wiki-validation-report.json");
 writeJSON(reportPath, report);
 

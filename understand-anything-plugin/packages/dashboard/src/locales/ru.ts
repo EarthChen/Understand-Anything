@@ -246,6 +246,7 @@ export const ru = {
     middleware: { forward: "middleware для", backward: "использует middleware" },
     provides_rpc: { forward: "предоставляет RPC", backward: "RPC предоставлен" },
     consumes_rpc: { forward: "потребляет RPC", backward: "RPC потреблён" },
+    injects: { forward: "внедряет", backward: "внедрено" },
     reads_from: { forward: "читает из", backward: "читается" },
     writes_to: { forward: "пишет в", backward: "записывается" },
     transforms: { forward: "преобразует", backward: "преобразуется" },

@@ -42,7 +42,7 @@ export default function LayerLegend() {
           const color = getLayerColor(i);
           const isActive = navigationLevel === "layer-detail" && layer.id === activeLayerId;
           return (
-            <div key={layer.id} className="flex items-center gap-1 whitespace-nowrap">
+            <div key={`${layer.id}-${i}`} className="flex items-center gap-1 whitespace-nowrap">
               <span
                 className="inline-block w-2 h-2 rounded-full"
                 style={{

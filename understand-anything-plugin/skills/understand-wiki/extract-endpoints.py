@@ -39,13 +39,20 @@ def _annotation_args(annotations: list[dict] | None, name: str) -> dict:
 
 
 def _match_methods_to_class(
-    functions: list[dict], class_name: str, file_path: str,
+    functions: list[dict], class_method_names: list[str],
 ) -> list[dict]:
-    """Match top-level functions to a class by checking if they belong to
-    the same file and their name appears in the class methods list."""
+    """Filter functions to only those whose name appears in the class's method list.
+
+    Falls back to returning all functions if class_method_names is empty
+    (tree-sitter may not always extract the methods list).
+    """
+    method_set = set(class_method_names) if class_method_names else None
     methods = []
     for fn in functions:
         if not isinstance(fn, dict):
+            continue
+        fn_name = fn.get("name")
+        if method_set is not None and fn_name not in method_set:
             continue
         params = fn.get("params", [])
         typed_params = []
@@ -59,7 +66,7 @@ def _match_methods_to_class(
                 typed_params.append({"name": p, "type": "unknown"})
 
         methods.append({
-            "name": fn.get("name", "?"),
+            "name": fn_name or "?",
             "params": typed_params,
             "returnType": fn.get("returnType", "void"),
             "lineRange": [fn.get("startLine", 0), fn.get("endLine", 0)],
@@ -113,7 +120,7 @@ def extract_endpoints_from_dir(
                     ann_name = next(iter(provider_anns))
                     protocol = _ANNOTATION_TO_PROTOCOL.get(ann_name, "unknown")
                     ann_args = _annotation_args(cls.get("annotations"), ann_name)
-                    methods = _match_methods_to_class(functions, cls_name, file_path)
+                    methods = _match_methods_to_class(functions, cls.get("methods", []))
 
                     for iface in interfaces:
                         if not isinstance(iface, str) or not iface:
@@ -195,3 +202,24 @@ def extract_endpoints_from_dir(
         "consumers": consumers,
         "kafkaTopics": kafka_topics,
     }
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Extract RPC/MQ endpoint metadata from file extraction results",
+    )
+    parser.add_argument("extraction_dir", help="Directory containing ua-file-extract-results-*.json")
+    parser.add_argument("service_name", help="Name of the service being analyzed")
+    parser.add_argument("--output", required=True, help="Output JSON file path")
+    args = parser.parse_args()
+
+    result = extract_endpoints_from_dir(Path(args.extraction_dir), args.service_name)
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.output).write_text(
+        json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    print(f"Extracted {len(result['providers'])} providers, "
+          f"{len(result['consumers'])} consumers, "
+          f"{len(result['kafkaTopics'])} kafka topics for {args.service_name}")
