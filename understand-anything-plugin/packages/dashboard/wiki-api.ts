@@ -181,40 +181,6 @@ export class WikiDataService {
     return path.basename(this.projectRoot);
   }
 
-  resolveSourcePath(filePath: string): string {
-    const segments = filePath.split("/");
-    if (segments.length < 2) return filePath;
-    const firstSeg = segments[0];
-    const candidate = path.join(this.projectRoot, firstSeg);
-    if (fs.existsSync(candidate)) return filePath;
-
-    const topo = this.discoverWikis();
-    for (const svc of topo.services) {
-      const svcServiceJson = path.join(svc.wikiDir, "service.json");
-      try {
-        const sj = JSON.parse(fs.readFileSync(svcServiceJson, "utf-8")) as Record<string, unknown>;
-        if (typeof sj.name === "string" && sj.name === firstSeg) {
-          return [svc.name, ...segments.slice(1)].join("/");
-        }
-      } catch {
-        // skip
-      }
-    }
-
-    // Fallback: check if filePath exists under any subproject's real root directory.
-    // This handles cases where sourceRef uses a Maven module directory as the first
-    // segment (e.g. "ultron-composite-service/src/...") but the actual file lives
-    // inside a parent subproject directory (e.g. "ultron-composite/ultron-composite-service/src/...").
-    for (const svc of topo.services) {
-      const serviceRoot = path.dirname(path.dirname(svc.wikiDir));
-      if (fs.existsSync(path.join(serviceRoot, filePath))) {
-        return [svc.name, ...segments].join("/");
-      }
-    }
-
-    return filePath;
-  }
-
   getGlobalIndex(): { entries: WikiIndexEntry[]; topology: WikiTopology } {
     const topo = this.discoverWikis();
     const entries: WikiIndexEntry[] = [];

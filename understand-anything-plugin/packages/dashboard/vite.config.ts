@@ -6,13 +6,12 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { WikiDataService } from "./wiki-api";
-import { readWikiSourceFile } from "./wiki-source";
+import { readSource } from "./source-reader";
 
 // Generate a one-time token when the server process starts.
 // This token is printed to the terminal and must be in the URL
 // to fetch knowledge-graph.json or diff-overlay.json.
 const ACCESS_TOKEN = process.env.UNDERSTAND_ACCESS_TOKEN || crypto.randomBytes(16).toString("hex");
-const MAX_SOURCE_FILE_BYTES = 1024 * 1024;
 
 function graphFileCandidates(fileName: string): string[] {
   const graphDir = process.env.GRAPH_DIR;
@@ -71,111 +70,10 @@ function graphFilePathSet(graphFile: string, projectRoot: string): Set<string> {
   return allowed;
 }
 
-function detectLanguage(filePath: string): string {
-  const ext = path.extname(filePath).slice(1).toLowerCase();
-  const byExt: Record<string, string> = {
-    bash: "bash",
-    c: "c",
-    cc: "cpp",
-    cpp: "cpp",
-    cs: "csharp",
-    css: "css",
-    go: "go",
-    h: "c",
-    hpp: "cpp",
-    html: "markup",
-    java: "java",
-    js: "javascript",
-    jsx: "jsx",
-    json: "json",
-    md: "markdown",
-    mjs: "javascript",
-    py: "python",
-    rb: "ruby",
-    rs: "rust",
-    sh: "bash",
-    ts: "typescript",
-    tsx: "tsx",
-    txt: "text",
-    yaml: "yaml",
-    yml: "yaml",
-  };
-  return byExt[ext] ?? "text";
-}
-
 function sendJson(res: import("http").ServerResponse, statusCode: number, payload: unknown) {
   res.statusCode = statusCode;
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(payload));
-}
-
-function rejectFileRequest(message: string, statusCode = 400) {
-  return { statusCode, payload: { error: message } };
-}
-
-function readSourceFile(url: URL) {
-  const requestedPath = url.searchParams.get("path") ?? "";
-  if (!requestedPath) return rejectFileRequest("Missing path");
-  if (requestedPath.includes("\0")) return rejectFileRequest("Invalid path");
-  if (path.isAbsolute(requestedPath)) return rejectFileRequest("Absolute paths are not allowed");
-
-  const normalizedPath = path.normalize(requestedPath);
-  if (
-    normalizedPath === "." ||
-    normalizedPath.startsWith(`..${path.sep}`) ||
-    normalizedPath === ".." ||
-    path.isAbsolute(normalizedPath)
-  ) {
-    return rejectFileRequest("Path must stay inside the project");
-  }
-
-  const graphFile = findGraphFile("knowledge-graph.json");
-  if (!graphFile) {
-    return rejectFileRequest("No knowledge graph found. Run /understand first.", 404);
-  }
-
-  const projectRoot = projectRootFromGraphFile(graphFile);
-  const absoluteFile = path.resolve(projectRoot, normalizedPath);
-  const relativeToRoot = path.relative(projectRoot, absoluteFile);
-  if (
-    !relativeToRoot ||
-    relativeToRoot.startsWith(`..${path.sep}`) ||
-    relativeToRoot === ".." ||
-    path.isAbsolute(relativeToRoot)
-  ) {
-    return rejectFileRequest("Path must stay inside the project");
-  }
-  const safeRelativePath = relativeToRoot.split(path.sep).join("/");
-  if (!graphFilePathSet(graphFile, projectRoot).has(safeRelativePath)) {
-    return rejectFileRequest("File is not in the knowledge graph", 404);
-  }
-
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(absoluteFile);
-  } catch {
-    return rejectFileRequest("File not found", 404);
-  }
-
-  if (!stat.isFile()) return rejectFileRequest("Path is not a file");
-  if (stat.size > MAX_SOURCE_FILE_BYTES) {
-    return rejectFileRequest("File is too large to preview", 413);
-  }
-
-  const buffer = fs.readFileSync(absoluteFile);
-  if (buffer.includes(0)) return rejectFileRequest("Binary files cannot be previewed", 415);
-
-  const content = buffer.toString("utf8");
-  return {
-    statusCode: 200,
-    payload: {
-      path: safeRelativePath,
-      language: detectLanguage(relativeToRoot),
-      content,
-      sizeBytes: buffer.byteLength,
-      lineCount: content.length === 0 ? 0 : content.split(/\r\n|\n|\r/).length,
-    },
-  };
 }
 
 export default defineConfig({
@@ -280,7 +178,7 @@ export default defineConfig({
             pathname === "/diff-overlay.json" ||
             pathname === "/meta.json" ||
             pathname === "/config.json" ||
-            pathname === "/file-content.json" ||
+            pathname === "/api/source" ||
             pathname === "/api/graph" ||
             pathname.startsWith("/wiki/") ||
             pathname.startsWith("/api/wiki");
@@ -333,19 +231,6 @@ export default defineConfig({
               );
               return;
             }
-            if (apiPath === "/source") {
-              const rawFile = url.searchParams.get("file") ?? "";
-              const resolvedFile = ws.resolveSourcePath(rawFile);
-              const result = readWikiSourceFile(
-                ws.getProjectRoot(),
-                resolvedFile,
-                url.searchParams.get("start"),
-                url.searchParams.get("end"),
-              );
-              sendJson(res, result.statusCode, result.payload);
-              return;
-            }
-
             // /api/wiki/service/:name/domain/:d
             const svcDomainMatch = apiPath.match(/^\/service\/([^/]+)\/domain\/([^/]+)$/);
             if (svcDomainMatch) {
@@ -440,8 +325,47 @@ export default defineConfig({
             return;
           }
 
-          if (pathname === "/file-content.json") {
-            const result = readSourceFile(url);
+          // --- Unified source file reading API ---
+          if (pathname === "/api/source") {
+            const file = url.searchParams.get("file") ?? "";
+            const service = url.searchParams.get("service");
+            const mode = url.searchParams.get("mode") ?? "wiki";
+            const start = url.searchParams.get("start");
+            const end = url.searchParams.get("end");
+
+            const graphFile = findGraphFile("knowledge-graph.json");
+            if (!graphFile) {
+              sendJson(res, 404, { error: "No knowledge graph found" });
+              return;
+            }
+            const baseRoot = projectRootFromGraphFile(graphFile);
+
+            let projectRoot = baseRoot;
+            if (service) {
+              const serviceRoot = path.join(baseRoot, service);
+              if (!fs.existsSync(path.join(serviceRoot, ".understand-anything"))) {
+                sendJson(res, 404, { error: `Service "${service}" not found` });
+                return;
+              }
+              projectRoot = serviceRoot;
+            }
+
+            // Build KG allowlist for graph mode
+            let kgAllowlist: Set<string> | undefined;
+            if (mode === "graph") {
+              const kgPath = path.join(projectRoot, ".understand-anything", "knowledge-graph.json");
+              if (fs.existsSync(kgPath)) {
+                kgAllowlist = graphFilePathSet(kgPath, projectRoot);
+              }
+            }
+
+            const result = readSource({
+              projectRoot,
+              filePath: file,
+              startLine: start,
+              endLine: end,
+              kgAllowlist,
+            });
             sendJson(res, result.statusCode, result.payload);
             return;
           }

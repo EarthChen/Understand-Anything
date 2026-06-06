@@ -11,11 +11,14 @@ interface CodeViewerProps {
 }
 
 interface SourceFile {
-  path: string;
+  file: string;
+  displayPath: string;
   language: string;
   content: string;
-  sizeBytes: number;
+  startLine: number;
+  endLine: number;
   lineCount: number;
+  sizeBytes: number;
 }
 
 type SourceState =
@@ -23,9 +26,10 @@ type SourceState =
   | { status: "loaded"; source: SourceFile; error: null }
   | { status: "error"; source: null; error: string };
 
-function fileContentUrl(filePath: string, token: string): string {
-  const params = new URLSearchParams({ token, path: filePath });
-  return `/file-content.json?${params.toString()}`;
+function sourceFileUrl(filePath: string, token: string, service?: string | null): string {
+  const params = new URLSearchParams({ token, file: filePath, mode: "graph" });
+  if (service) params.set("service", service);
+  return `/api/source?${params.toString()}`;
 }
 
 function fallbackLanguage(filePath: string | undefined): string {
@@ -67,6 +71,7 @@ export default function CodeViewer({
   const viewMode = useDashboardStore((s) => s.viewMode);
   const codeViewerNodeId = useDashboardStore((s) => s.codeViewerNodeId);
   const closeCodeViewer = useDashboardStore((s) => s.closeCodeViewer);
+  const activeService = useDashboardStore((s) => s.activeService);
   const activeGraph = viewMode === "domain" && domainGraph ? domainGraph : graph;
   // Files tab always builds its tree from the structural graph, so a node ID opened from
   // there may not exist in the active (domain) graph — fall back to the structural graph.
@@ -99,7 +104,7 @@ export default function CodeViewer({
     const controller = new AbortController();
     setState({ status: "loading", source: null, error: null });
 
-    fetch(fileContentUrl(node.filePath, accessToken), { signal: controller.signal })
+    fetch(sourceFileUrl(node.filePath, accessToken, activeService), { signal: controller.signal })
       .then(async (res) => {
         const data = (await res.json()) as SourceFile | { error?: string };
         if (!res.ok) {
@@ -117,7 +122,7 @@ export default function CodeViewer({
       });
 
     return () => controller.abort();
-  }, [accessToken, node?.filePath]);
+  }, [accessToken, node?.filePath, activeService]);
 
   const highlightedRange = useMemo(() => {
     if (!node?.lineRange) return null;

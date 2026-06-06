@@ -322,7 +322,7 @@ describe("WikiView integration", () => {
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
-        expect.stringContaining("/api/wiki/source"),
+        expect.stringContaining("/api/source"),
         expect.any(Object),
       );
     });

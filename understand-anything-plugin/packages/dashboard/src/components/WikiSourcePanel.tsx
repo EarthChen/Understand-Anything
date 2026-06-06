@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Highlight, themes } from "prism-react-renderer";
+import { useDashboardStore } from "../store";
 
 interface WikiSourceResponse {
   file: string;
+  displayPath: string;
   content: string;
   startLine: number;
   endLine: number;
   language: string;
+  lineCount: number;
+  sizeBytes: number;
 }
 
 type PanelState =
@@ -18,13 +22,15 @@ function wikiSourceUrl(
   file: string,
   lineRange: [number, number] | undefined,
   token: string,
+  service?: string | null,
 ): string {
-  const params = new URLSearchParams({ token, file });
+  const params = new URLSearchParams({ token, file, mode: "wiki" });
+  if (service) params.set("service", service);
   if (lineRange) {
     params.set("start", String(lineRange[0]));
     params.set("end", String(lineRange[1]));
   }
-  return `/api/wiki/source?${params.toString()}`;
+  return `/api/source?${params.toString()}`;
 }
 
 export function WikiSourcePanel({
@@ -38,6 +44,7 @@ export function WikiSourcePanel({
   accessToken: string;
   onClose: () => void;
 }) {
+  const activeService = useDashboardStore((s) => s.activeService);
   const [state, setState] = useState<PanelState>({
     status: "loading",
     data: null,
@@ -57,7 +64,7 @@ export function WikiSourcePanel({
     const controller = new AbortController();
     setState({ status: "loading", data: null, error: null });
 
-    fetch(wikiSourceUrl(path, lineRange, accessToken), { signal: controller.signal })
+    fetch(wikiSourceUrl(path, lineRange, accessToken, activeService), { signal: controller.signal })
       .then(async (res) => {
         const data = (await res.json()) as WikiSourceResponse | { error?: string };
         if (!res.ok) {
@@ -75,7 +82,7 @@ export function WikiSourcePanel({
       });
 
     return () => controller.abort();
-  }, [path, lineRange, accessToken]);
+  }, [path, lineRange, accessToken, activeService]);
 
   const highlightRange = useMemo(() => {
     if (state.status !== "loaded") return null;
