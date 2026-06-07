@@ -1,0 +1,611 @@
+{
+  "name": "hub-graph",
+  "description": "Two 30-file clusters (auth, payments) connected through a single hub file (src/shared/index.ts). Without --exclude-hubs Louvain groups them together; with --exclude-hubs the hub is removed from the graph and the clusters separate.",
+  "languages": [
+    "typescript"
+  ],
+  "frameworks": [],
+  "files": [
+    {
+      "path": "src/auth/auth0.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth1.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth2.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth3.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth4.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth5.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth6.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth7.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth8.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth9.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth10.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth11.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth12.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth13.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth14.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth15.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth16.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth17.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth18.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth19.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth20.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth21.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth22.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth23.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth24.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth25.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth26.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth27.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth28.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/auth/auth29.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay0.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay1.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay2.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay3.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay4.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay5.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay6.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay7.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay8.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay9.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay10.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay11.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay12.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay13.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay14.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay15.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay16.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay17.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay18.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay19.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay20.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay21.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay22.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay23.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay24.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay25.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay26.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay27.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay28.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/payments/pay29.ts",
+      "language": "typescript",
+      "sizeLines": 10,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/shared/index.ts",
+      "language": "typescript",
+      "sizeLines": 5,
+      "fileCategory": "code"
+    }
+  ],
+  "totalFiles": 61,
+  "filteredByIgnore": 0,
+  "estimatedComplexity": "moderate",
+  "importMap": {
+    "src/auth/auth0.ts": [
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth1.ts": [
+      "src/auth/auth0.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth2.ts": [
+      "src/auth/auth1.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth3.ts": [
+      "src/auth/auth2.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth4.ts": [
+      "src/auth/auth3.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth5.ts": [
+      "src/auth/auth4.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth6.ts": [
+      "src/auth/auth5.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth7.ts": [
+      "src/auth/auth6.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth8.ts": [
+      "src/auth/auth7.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth9.ts": [
+      "src/auth/auth8.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth10.ts": [
+      "src/auth/auth9.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth11.ts": [
+      "src/auth/auth10.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth12.ts": [
+      "src/auth/auth11.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth13.ts": [
+      "src/auth/auth12.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth14.ts": [
+      "src/auth/auth13.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth15.ts": [
+      "src/auth/auth14.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth16.ts": [
+      "src/auth/auth15.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth17.ts": [
+      "src/auth/auth16.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth18.ts": [
+      "src/auth/auth17.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth19.ts": [
+      "src/auth/auth18.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth20.ts": [
+      "src/auth/auth19.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth21.ts": [
+      "src/auth/auth20.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth22.ts": [
+      "src/auth/auth21.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth23.ts": [
+      "src/auth/auth22.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth24.ts": [
+      "src/auth/auth23.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth25.ts": [
+      "src/auth/auth24.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth26.ts": [
+      "src/auth/auth25.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth27.ts": [
+      "src/auth/auth26.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth28.ts": [
+      "src/auth/auth27.ts",
+      "src/shared/index.ts"
+    ],
+    "src/auth/auth29.ts": [
+      "src/auth/auth28.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay0.ts": [],
+    "src/payments/pay1.ts": [
+      "src/payments/pay0.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay2.ts": [
+      "src/payments/pay1.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay3.ts": [
+      "src/payments/pay2.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay4.ts": [
+      "src/payments/pay3.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay5.ts": [
+      "src/payments/pay4.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay6.ts": [
+      "src/payments/pay5.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay7.ts": [
+      "src/payments/pay6.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay8.ts": [
+      "src/payments/pay7.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay9.ts": [
+      "src/payments/pay8.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay10.ts": [
+      "src/payments/pay9.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay11.ts": [
+      "src/payments/pay10.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay12.ts": [
+      "src/payments/pay11.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay13.ts": [
+      "src/payments/pay12.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay14.ts": [
+      "src/payments/pay13.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay15.ts": [
+      "src/payments/pay14.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay16.ts": [
+      "src/payments/pay15.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay17.ts": [
+      "src/payments/pay16.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay18.ts": [
+      "src/payments/pay17.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay19.ts": [
+      "src/payments/pay18.ts",
+      "src/shared/index.ts"
+    ],
+    "src/payments/pay20.ts": [
+      "src/payments/pay19.ts"
+    ],
+    "src/payments/pay21.ts": [
+      "src/payments/pay20.ts"
+    ],
+    "src/payments/pay22.ts": [
+      "src/payments/pay21.ts"
+    ],
+    "src/payments/pay23.ts": [
+      "src/payments/pay22.ts"
+    ],
+    "src/payments/pay24.ts": [
+      "src/payments/pay23.ts"
+    ],
+    "src/payments/pay25.ts": [
+      "src/payments/pay24.ts"
+    ],
+    "src/payments/pay26.ts": [
+      "src/payments/pay25.ts"
+    ],
+    "src/payments/pay27.ts": [
+      "src/payments/pay26.ts"
+    ],
+    "src/payments/pay28.ts": [
+      "src/payments/pay27.ts"
+    ],
+    "src/payments/pay29.ts": [
+      "src/payments/pay28.ts"
+    ],
+    "src/shared/index.ts": [
+      "src/auth/auth0.ts",
+      "src/payments/pay0.ts"
+    ]
+  }
+}

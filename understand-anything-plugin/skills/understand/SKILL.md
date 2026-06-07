@@ -277,64 +277,81 @@ If the scan result includes `filteredByIgnore > 0`, report:
 
 ## Phase 1.5 — BATCH
 
-Report: `[Phase 1.5/7] Computing semantic batches...`
-
-Run the bundled batching script:
-```bash
-node <SKILL_DIR>/compute-batches.mjs $PROJECT_ROOT \
-  [--max-community-size=N] [--min-batch-size=N] [--max-merge-target=N] [--dry-run]
-```
-
-**Tunable parameters** (adjust based on project size to control batch count):
-
-| Flag | Default | When to adjust |
-|---|---|---|
-| `--max-community-size` | 50 | Lower (35) for strict modularity; raise (70) for fewer, larger batches |
-| `--min-batch-size` | 8 | Lower (3) to keep small modules separate; raise (12) for fewer batches |
-| `--max-merge-target` | 40 | Lower (25) for tighter misc batches; raise (50) for fewer batches |
-| `--dry-run` | off | Run diagnostics only, do not write batches.json |
+Report: `[Phase 1.5/7] Computing structural batches...`
 
 Reads `.understand-anything/intermediate/scan-result.json`, writes `.understand-anything/intermediate/batches.json`.
 
-**Automatic weak-batch absorption.** After merging small batches, the script automatically identifies "weak" batches (≤5 files, intra-edge ratio <20%, mergeable) and absorbs them into their strongest adjacent batch by import edge count. This runs without any parameter tuning — the orchestrator only needs to intervene if absorption can't solve the problem. The `Diagnostic:` line reports `absorbed=N` (number of weak batches absorbed).
+**Tunable parameters:**
 
-Capture stderr. Append any line starting with `Warning:` to `$PHASE_WARNINGS` for the final report.
-
-**Interpreting the diagnostic output.** The script emits to stderr:
-- `Diagnostic:` line — batch count, avg size, intra-edge ratio, current params
-- `Recommendation:` line — quality assessment (HIGH/MODERATE/LOW)
-- Per-batch listing (in `--dry-run` mode) — each batch's files, directories, and intra-edge count
-
-**Decision logic:** The global intra-edge ratio is a rough guide. **Per-batch listings are the primary decision source.** Inspect each batch's files and directories to judge quality:
-
-- **Small batches (≤5 files) with 0-1 intra-edges** → files are unrelated; raising `--min-batch-size` will merge them
-- **Large batches (20+ files) from one package** → cohesive, don't split further
-- **Batches with files from many unrelated directories** → consider raising `--max-community-size` to keep related files together
-- **Singleton batches (1 file)** → should have been merged; check `--min-batch-size`
-
-After inspection, adjust the parameter(s) that address the specific problems you see, then re-run with `--dry-run` to verify.
-
-**Parameter sensitivity — adjust from narrowest to widest impact:**
-
-| Parameter | Scope | Use when |
+| Flag | Default | When to adjust |
 |---|---|---|
-| `--min-batch-size` | Only merges small batches; large batches unchanged | Small batches (≤5 files) have unrelated files |
-| `--max-merge-target` | Only changes misc batch cap | Misc batches are too large or too many |
-| `--max-community-size` | Global — re-runs Louvain, reshuffles all batches | Large batches need splitting differently |
+| `--min-batch-size` | 8 | Raise (12→15) to merge more small batches |
+| `--max-merge-target` | 40 | Raise (50→60) to allow larger misc batches |
+| `--max-community-size` | 50 | Raise (60→70) for fewer, larger batches; lower (35) for stricter modularity |
+| `--exclude-hubs` | off | Set to N to exclude files with degree > N from Louvain (e.g., `--exclude-hubs=50`). Hub files are reassigned to their strongest importing batch after community detection. |
+| `--max-dirs-per-batch` | off | Set to N to split batches spanning > N second-level directories (e.g., `--max-dirs-per-batch=2`). Prevents mixing unrelated business directories in one batch. |
+| `--dry-run` | off | Preview diagnostics only, do not write batches.json |
 
-**Always try `--min-batch-size` first** — it only affects small-batch merging and won't touch good large batches. Only adjust `--max-community-size` if the other two can't solve the problem, since it reshuffles everything and may destroy good batches.
+### Step 1: Dry-run preview
 
-**Verify stability:** After re-running, check that batches which were good in the previous run still have similar file compositions. If a previously good batch now has completely different files, the parameter change was too aggressive.
+Run with `--dry-run` first to preview batching quality:
+```bash
+node <SKILL_DIR>/compute-batches.mjs $PROJECT_ROOT --dry-run 2>&1
+```
 
-Do NOT re-run more than once — use the second run's result regardless.
+Capture stderr. Extract:
+- `Diagnostic:` line — batch count, avg size, intra-edge ratio, absorbed count, current params
+- `Recommendation:` line — quality assessment (HIGH/MODERATE/LOW)
+- Per-batch listings — each batch's file count, directories, and intra-edge count
 
-**Dry-run workflow** (recommended for large projects >300 files):
-1. Run with `--dry-run` to inspect batch composition without writing batches.json
-2. Read per-batch listings and quality assessment
-3. Adjust parameters based on what you see, re-run `--dry-run` to verify
-4. Once satisfied, run without `--dry-run` to produce the final batches.json
+### Step 2: Analyze quality
 
-If the script exits non-zero, the failure is hard — relay the full stderr to the user as a Phase 1.5 failure. Do not attempt to recover; the script's internal fallback (count-based) already handles recoverable issues. A non-zero exit means a fundamental problem (missing input file, malformed JSON, etc.).
+Evaluate using these criteria:
+
+**Good enough → proceed to Step 4:**
+- `Recommendation: quality=HIGH`
+- Batch count reasonable (target: ~15–25 files per batch)
+- No more than 20% singletons (≤2 files)
+
+**Needs tuning → proceed to Step 3:**
+
+| Symptom | Adjustment |
+|---|---|
+| Many small batches (≤5 files) with 0–1 intra-edges | Raise `--min-batch-size` (8→12→15) |
+| Singleton batches that should have been merged | Raise `--min-batch-size` |
+| Batches mixing files from many unrelated directories | Raise `--max-community-size` (50→60→70) |
+| Misc batches too large or too many | Raise `--max-merge-target` (40→50→60) |
+| Overall too many batches for project size | Raise `--min-batch-size` first, then `--max-merge-target` |
+| `quality=LOW` and intra-edge < 40% | Raise `--min-batch-size` + `--max-community-size` |
+| Per-batch intra-ratio < 20% for many batches | Raise `--min-batch-size` to consolidate weak batches |
+| Hub files detected (hub-files > 0 in Diagnostic) | Try `--exclude-hubs=N` where N is slightly below the lowest hub degree |
+| Mixed-dir batches in Coherence output | Try `--max-dirs-per-batch=2` to enforce directory boundaries |
+
+### Step 3: Adjust and re-preview (max 3 rounds)
+
+Apply the adjustment, re-run `--dry-run` to verify:
+```bash
+node <SKILL_DIR>/compute-batches.mjs $PROJECT_ROOT --dry-run \
+  --min-batch-size=N [--max-merge-target=N] [--max-community-size=N] 2>&1
+```
+
+Check that previously good batches still have similar file compositions. If a good batch now has completely different files, roll back the change.
+
+Return to Step 2. **Max 3 tuning rounds** — after 3 rounds, proceed with the best parameters seen.
+
+### Step 4: Final run
+
+Run without `--dry-run` using the chosen parameters:
+```bash
+node <SKILL_DIR>/compute-batches.mjs $PROJECT_ROOT \
+  [--min-batch-size=N] [--max-merge-target=N] [--max-community-size=N]
+```
+
+Capture stderr. Append any `Warning:` lines to `$PHASE_WARNINGS`. Report the final `Diagnostic:` line to the user.
+
+**Automatic weak-batch absorption.** The script automatically absorbs weak batches (≤5 files, intra-edge <20%) into their strongest neighbor. `Diagnostic:` reports `absorbed=N`. This needs no tuning — only intervene if absorption can't solve the problem.
+
+If the script exits non-zero, relay the full stderr to the user as a Phase 1.5 failure. Do not attempt to recover — the script's internal fallback (count-based) already handles recoverable issues.
 
 ---
 

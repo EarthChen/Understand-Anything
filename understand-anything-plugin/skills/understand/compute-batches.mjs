@@ -198,7 +198,7 @@ function buildBatchOfMap(allBatches) {
  * and fall back if it does. Honors UA_COMPUTE_BATCHES_FORCE_LOUVAIN_THROW=1
  * to allow tests to exercise the fallback path.
  */
-function runLouvain(codeFiles, importMap) {
+function runLouvain(codeFiles, importMap, resolution = 1.0) {
   if (process.env.UA_COMPUTE_BATCHES_FORCE_LOUVAIN_THROW === '1') {
     throw new Error('forced throw via UA_COMPUTE_BATCHES_FORCE_LOUVAIN_THROW');
   }
@@ -211,7 +211,7 @@ function runLouvain(codeFiles, importMap) {
       g.addEdge(src, tgt);
     }
   }
-  const cs = louvain(g);  // { nodeId: communityId }
+  const cs = louvain(g, { randomWalk: false, resolution });  // { nodeId: communityId }
   return new Map(Object.entries(cs));
 }
 
@@ -391,6 +391,49 @@ function absorbWeakBatches(batches, importMap, opts = {}) {
   }));
 }
 
+
+/**
+ * Split batches that span more than `maxDirs` distinct second-level directories.
+ * Each resulting sub-batch must have >= `minBatchSize` files or the batch is left intact.
+ * Returns rewritten batch list with sequential batchIndex.
+ */
+function splitMixedDirBatches(batches, maxDirs, minBatchSize) {
+  const secondLevelDir = p => {
+    const parts = p.split('/');
+    return parts.length > 1 ? parts[1] : parts[0];
+  };
+
+  const result = [];
+  let splitCount = 0;
+  for (const b of batches) {
+    const dirGroups = new Map();
+    for (const f of b.files) {
+      const d = secondLevelDir(f.path);
+      if (!dirGroups.has(d)) dirGroups.set(d, []);
+      dirGroups.get(d).push(f);
+    }
+    if (dirGroups.size > maxDirs && dirGroups.size > 1) {
+      const canSplit = [...dirGroups.values()].every(g => g.length >= minBatchSize);
+      if (canSplit) {
+        splitCount++;
+        for (const [, files] of dirGroups) {
+          result.push({ files });
+        }
+        continue;
+      }
+    }
+    result.push({ files: b.files });
+  }
+
+  if (splitCount > 0) {
+    process.stderr.write(
+      `Info: compute-batches: split ${splitCount} batches exceeding --max-dirs-per-batch=${maxDirs}\n`,
+    );
+  }
+
+  return result.map((b, i) => ({ batchIndex: i + 1, files: b.files }));
+}
+
 // ── Main: load → Louvain (or count-fallback) → enrich → write batches.json ─
 async function main() {
   const projectRoot = process.argv[2];
@@ -407,6 +450,9 @@ async function main() {
     maxCommunitySize: 50,
     minBatchSize: 8,
     maxMergeTarget: 40,
+    excludeHubs: null,
+    maxDirsPerBatch: null,
+    resolution: null,
   };
   let dryRun = false;
   let changedFiles = null;
@@ -429,7 +475,7 @@ async function main() {
         .filter(Boolean);
       changedFiles = new Set(lines);
     }
-    const numMatch = arg.match(/^--(max-community-size|min-batch-size|max-merge-target)=(\d+)$/);
+    const numMatch = arg.match(/^--(max-community-size|min-batch-size|max-merge-target|exclude-hubs|max-dirs-per-batch|resolution)=(\d+(?:\.\d+)?)$/);
     if (numMatch) {
       config[numMatch[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = Number(numMatch[2]);
     }
@@ -454,20 +500,90 @@ async function main() {
   );
   process.stderr.write(`Loaded ${files.length} files (${codeFiles.length} code).\n`);
 
+  const effectiveResolution = config.resolution !== null ? config.resolution : 1.0;
   const exportsByPath = await extractExports(projectRoot, codeFiles);
 
   let algorithm = 'louvain';
   let perFileCommunity;
-  try {
-    perFileCommunity = runLouvain(codeFiles, importMap);
-  } catch (err) {
+  let hubFiles = [];
+  let hubDegrees = [];
+
+  if (config.excludeHubs !== null) {
+    const degree = new Map();
+    for (const f of codeFiles) degree.set(f.path, 0);
+    for (const [src, targets] of Object.entries(importMap)) {
+      if (degree.has(src)) degree.set(src, degree.get(src) + targets.length);
+      for (const tgt of targets) {
+        if (degree.has(tgt)) degree.set(tgt, degree.get(tgt) + 1);
+      }
+    }
+    const normalFiles = [];
+    for (const f of codeFiles) {
+      if (degree.get(f.path) >= config.excludeHubs) {
+        hubFiles.push(f);
+        hubDegrees.push(degree.get(f.path));
+      } else {
+        normalFiles.push(f);
+      }
+    }
+    const normalSet = new Set(normalFiles.map(f => f.path));
+    const filteredImportMap = {};
+    for (const [src, targets] of Object.entries(importMap)) {
+      if (!normalSet.has(src)) continue;
+      const ft = targets.filter(t => normalSet.has(t));
+      if (ft.length) filteredImportMap[src] = ft;
+    }
+    try {
+      perFileCommunity = runLouvain(normalFiles, filteredImportMap, effectiveResolution);
+    } catch (err) {
+      process.stderr.write(
+        `Warning: compute-batches: Louvain failed (${err.message}) ` +
+        `— falling back to count-based grouping (12 files/batch) ` +
+        `— module semantic boundaries lost\n`,
+      );
+      perFileCommunity = countBasedAssignment(normalFiles, 12);
+      algorithm = 'count-fallback';
+    }
+    for (const hub of hubFiles) {
+      const importers = [];
+      for (const [src, targets] of Object.entries(importMap)) {
+        if (targets.includes(hub.path)) importers.push(src);
+      }
+      const batchCounts = new Map();
+      for (const imp of importers) {
+        const cid = perFileCommunity.get(imp);
+        if (cid !== undefined) batchCounts.set(cid, (batchCounts.get(cid) || 0) + 1);
+      }
+      if (batchCounts.size > 0) {
+        const [bestCid] = [...batchCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+        perFileCommunity.set(hub.path, bestCid);
+      } else {
+        const outNeighbors = importMap[hub.path] || [];
+        for (const tgt of outNeighbors) {
+          const cid = perFileCommunity.get(tgt);
+          if (cid !== undefined) { perFileCommunity.set(hub.path, cid); break; }
+        }
+        if (!perFileCommunity.has(hub.path)) {
+          const cids = [...new Set(perFileCommunity.values())];
+          perFileCommunity.set(hub.path, cids[0] || '0');
+        }
+      }
+    }
     process.stderr.write(
-      `Warning: compute-batches: Louvain failed (${err.message}) ` +
-      `— falling back to count-based grouping (12 files/batch) ` +
-      `— module semantic boundaries lost\n`,
+      `Info: compute-batches: excluded ${hubFiles.length} hub files (degree > ${config.excludeHubs}) from Louvain — reassigned to strongest importing batch\n`,
     );
-    perFileCommunity = countBasedAssignment(codeFiles, 12);
-    algorithm = 'count-fallback';
+  } else {
+    try {
+      perFileCommunity = runLouvain(codeFiles, importMap, effectiveResolution);
+    } catch (err) {
+      process.stderr.write(
+        `Warning: compute-batches: Louvain failed (${err.message}) ` +
+        `— falling back to count-based grouping (12 files/batch) ` +
+        `— module semantic boundaries lost\n`,
+      );
+      perFileCommunity = countBasedAssignment(codeFiles, 12);
+      algorithm = 'count-fallback';
+    }
   }
 
   // Group files by community id
@@ -543,13 +659,18 @@ async function main() {
   const absorbedBatches = absorbWeakBatches(mergedBareBatches, importMap, {
     maxCommunitySize: config.maxCommunitySize,
   });
+  const dirSplitCount0 = absorbedBatches.length;
+  const batchesAfterDirSplit = config.maxDirsPerBatch !== null
+    ? splitMixedDirBatches(absorbedBatches, config.maxDirsPerBatch, Math.min(config.minBatchSize, 3))
+    : absorbedBatches;
+  const dirSplitCount = batchesAfterDirSplit.length - dirSplitCount0;
   const absorbedCount = mergedBareBatches.length - absorbedBatches.length;
   if (absorbedCount > 0) {
     process.stderr.write(
       `Info: compute-batches: absorbed ${absorbedCount} weak batches into adjacent strong batches\n`,
     );
   }
-  const batchOf = buildBatchOfMap(absorbedBatches);
+  const batchOf = buildBatchOfMap(batchesAfterDirSplit);
 
   // Build reverse import map: target → [sources that import target]
   const reverseImportMap = new Map();
@@ -572,7 +693,7 @@ async function main() {
   const MAX_NEIGHBORS = 50;
 
   // Second-pass: enrich each batch with batchImportData + neighborMap
-  const batches = absorbedBatches.map(b => {
+  const batches = batchesAfterDirSplit.map(b => {
     const batchPaths = new Set(b.files.map(f => f.path));
     const batchImportData = {};
     const neighborMap = {};
@@ -661,13 +782,31 @@ async function main() {
   const total = intra + cross;
   const intraRatio = total > 0 ? (intra / total * 100).toFixed(1) : '0.0';
 
+  const hubDiag = config.excludeHubs !== null
+    ? `, hub-files=${hubFiles.length}(degrees: ${hubDegrees.sort((a, b) => a - b).join(', ')})`
+    : '';
   process.stderr.write(
     `Diagnostic: ${finalBatches.length} batches, avg=${avgSize} files/batch, ` +
     `intra-edge=${intraRatio}% (${intra}/${total}), ` +
     `sizes(max=${maxSize},min=${minSize}), ` +
-    `absorbed=${absorbedCount}, ` +
+    `absorbed=${absorbedCount}` + hubDiag + `, ` +
     `params(maxCommunitySize=${config.maxCommunitySize},minBatchSize=${config.minBatchSize},maxMergeTarget=${config.maxMergeTarget})\n`,
   );
+
+  if (config.maxDirsPerBatch !== null) {
+    const secondLevelDir = p => {
+      const parts = p.split('/');
+      return parts.length > 1 ? parts[1] : parts[0];
+    };
+    let singleDir = 0, mixedDir = 0;
+    for (const b of finalBatches) {
+      const dirs = new Set(b.files.map(f => secondLevelDir(f.path)));
+      if (dirs.size <= 1) singleDir++; else mixedDir++;
+    }
+    process.stderr.write(
+      `Coherence: ${singleDir} single-dir, ${mixedDir} mixed-dir (split ${dirSplitCount} batches)\n`,
+    );
+  }
 
   // Orchestrator recommendation — per-batch inspection is primary, global ratio is a rough guide
   const ratio = parseFloat(intraRatio);
@@ -706,14 +845,17 @@ async function main() {
         const parts = p.split('/');
         return parts.length > 2 ? parts.slice(0, -1).join('/') : parts[0];
       }))];
-      let batchIntra = 0;
+      let batchIntra = 0, batchCross = 0;
       for (const f of paths) {
         for (const t of (importMap[f] || [])) {
           if (fileToBatch.get(t) === b.batchIndex) batchIntra++;
+          else batchCross++;
         }
       }
+      const batchTotal = batchIntra + batchCross;
+      const batchRatio = batchTotal > 0 ? (batchIntra / batchTotal * 100).toFixed(1) : '0.0';
       process.stderr.write(
-        `\n  Batch ${b.batchIndex} (${b.files.length} files, ${batchIntra} intra-edges):\n` +
+        `\n  Batch ${b.batchIndex} (${b.files.length} files, ${batchIntra} intra-edges, intra-ratio ${batchRatio}%):\n` +
         `    Dirs: ${dirs.join(', ')}\n` +
         paths.map(p => `    ${p}`).join('\n') + '\n',
       );
