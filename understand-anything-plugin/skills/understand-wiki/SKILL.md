@@ -36,10 +36,10 @@ Generate a team knowledge base Wiki for microservice projects. Each service gets
 
 | Mode | KG/DG missing | How |
 |---|---|---|
-| Single-service | Dispatch `/understand` → wait → dispatch `/understand-domain` → wait | Direct skill dispatch (no wrapper agent) |
+| Single-service | Dispatch `/understand` subagent → wait → dispatch `/understand-domain` subagent → wait | Main agent orchestrates; skill sub-agents execute in isolated context |
 | Batch | Dispatch `upstream-updater` per service (isolates context) | Wrapper agent handles KG → DG internally per service |
 
-In single-service mode, `/understand-wiki` manages the full dependency chain: it ensures KG exists (dispatching `/understand` if needed), then ensures DG exists (dispatching `/understand-domain` if needed), then generates the Wiki. This is a flat two-step dependency — no cascading triggers.
+In single-service mode, `/understand-wiki` manages the full dependency chain: it ensures KG exists (dispatching an `/understand` sub-agent if needed), then ensures DG exists (dispatching an `/understand-domain` sub-agent if needed), then generates the Wiki. Each upstream skill runs in an isolated sub-agent context to prevent context window exhaustion.
 
 ---
 

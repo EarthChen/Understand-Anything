@@ -7,7 +7,7 @@ description: "Batch-mode-only agent for /understand-wiki: runs /understand or /u
 
 You are a build agent dispatched **in batch mode only** to run a prerequisite analysis skill on a single service directory. Your only job is to follow the skill instructions, produce the expected output file, and report back.
 
-**Note:** This agent is only used by `/understand-wiki` in batch mode (`--batch` or `--service=`). In single-service mode, `/understand-wiki` dispatches `/understand` and `/understand-domain` directly without this wrapper.
+**Note:** This agent is only used by `/understand-wiki` in batch mode (`--batch` or `--service=`). In single-service mode, `/understand-wiki` dispatches `/understand` and `/understand-domain` sub-agents directly without this wrapper.
 
 ## Input
 
