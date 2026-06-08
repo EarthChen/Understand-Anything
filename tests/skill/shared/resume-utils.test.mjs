@@ -75,6 +75,52 @@ describe('getPendingItems', () => {
   });
 });
 
+describe('getPendingItems — checkpoint-aware', () => {
+  it('skips items with _checkpoint.status = complete', () => {
+    const items = [
+      { id: 1, outputPath: join(tmpDir, 'a.json') },
+      { id: 2, outputPath: join(tmpDir, 'b.json') },
+    ];
+    writeFileSync(items[0].outputPath, JSON.stringify({ _checkpoint: { status: 'complete' } }));
+    writeFileSync(items[1].outputPath, JSON.stringify({ _checkpoint: { status: 'complete' } }));
+    expect(getPendingItems(items)).toEqual([]);
+  });
+
+  it('returns items with _checkpoint.status = degraded', () => {
+    const items = [
+      { id: 1, outputPath: join(tmpDir, 'a.json') },
+      { id: 2, outputPath: join(tmpDir, 'b.json') },
+    ];
+    writeFileSync(items[0].outputPath, JSON.stringify({ _checkpoint: { status: 'complete' } }));
+    writeFileSync(items[1].outputPath, JSON.stringify({ _checkpoint: { status: 'degraded', reason: 'LLM failed' } }));
+    expect(getPendingItems(items)).toEqual([items[1]]);
+  });
+
+  it('returns items with _checkpoint.status = failed', () => {
+    const items = [
+      { id: 1, outputPath: join(tmpDir, 'a.json') },
+    ];
+    writeFileSync(items[0].outputPath, JSON.stringify({ _checkpoint: { status: 'failed', reason: 'timeout' } }));
+    expect(getPendingItems(items)).toEqual([items[0]]);
+  });
+
+  it('returns items with truncated JSON', () => {
+    const items = [
+      { id: 1, outputPath: join(tmpDir, 'a.json') },
+    ];
+    writeFileSync(items[0].outputPath, '{"nodes":[');
+    expect(getPendingItems(items)).toEqual([items[0]]);
+  });
+
+  it('backward compat: legacy files without _checkpoint are treated as complete', () => {
+    const items = [
+      { id: 1, outputPath: join(tmpDir, 'a.json') },
+    ];
+    writeFileSync(items[0].outputPath, JSON.stringify({ nodes: [] }));
+    expect(getPendingItems(items)).toEqual([]);
+  });
+});
+
 // ── getCompletedIds ───────────────────────────────────────────────────────
 
 describe('getCompletedIds', () => {
@@ -95,6 +141,36 @@ describe('getCompletedIds', () => {
     const items = [
       { id: 'a', outputPath: join(tmpDir, 'a.json') },
     ];
+    expect(getCompletedIds(items)).toEqual(new Set());
+  });
+});
+
+describe('getCompletedIds — checkpoint-aware', () => {
+  it('excludes degraded and failed checkpoints from completed set', () => {
+    const items = [
+      { id: 'a', outputPath: join(tmpDir, 'a.json') },
+      { id: 'b', outputPath: join(tmpDir, 'b.json') },
+      { id: 'c', outputPath: join(tmpDir, 'c.json') },
+    ];
+    writeFileSync(items[0].outputPath, JSON.stringify({ _checkpoint: { status: 'complete' } }));
+    writeFileSync(items[1].outputPath, JSON.stringify({ _checkpoint: { status: 'degraded', reason: 'LLM failed' } }));
+    writeFileSync(items[2].outputPath, JSON.stringify({ _checkpoint: { status: 'failed', reason: 'timeout' } }));
+    expect(getCompletedIds(items)).toEqual(new Set(['a']));
+  });
+
+  it('includes legacy JSON without _checkpoint in completed set', () => {
+    const items = [
+      { id: 'a', outputPath: join(tmpDir, 'a.json') },
+    ];
+    writeFileSync(items[0].outputPath, JSON.stringify({ nodes: [] }));
+    expect(getCompletedIds(items)).toEqual(new Set(['a']));
+  });
+
+  it('excludes truncated JSON from completed set', () => {
+    const items = [
+      { id: 'a', outputPath: join(tmpDir, 'a.json') },
+    ];
+    writeFileSync(items[0].outputPath, '{"nodes":[');
     expect(getCompletedIds(items)).toEqual(new Set());
   });
 });

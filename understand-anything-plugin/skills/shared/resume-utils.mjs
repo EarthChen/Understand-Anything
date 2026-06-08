@@ -1,9 +1,11 @@
 /**
  * resume-utils.mjs — Shared checkpoint/resume utilities for batch-processing skills.
  *
- * Instead of a separate progress file, uses existing output files on disk as
- * the checkpoint. If an output file exists and is non-empty, that item is
- * considered complete.
+ * Uses output files on disk as checkpoints with a three-state model:
+ * - complete: valid output, skip on resume
+ * - degraded: partial output, reprocess on next run
+ * - failed: error output, retry on next run
+ * Legacy files without _checkpoint metadata are treated as complete (backward compat).
  */
 
 import { existsSync, statSync, readdirSync, readFileSync } from 'node:fs';
@@ -11,24 +13,22 @@ import { join } from 'node:path';
 
 /**
  * Filter items to only those that still need processing.
- * An item is "pending" if its outputPath does not exist or is empty.
+ * An item is "pending" if its checkpoint is not valid (missing, empty, corrupted,
+ * degraded, or failed).
  *
  * @param {Array<{id: string|number, outputPath: string}>} allItems
- * @returns {Array<{id: string|number, outputPath: string}>} items without existing output
+ * @returns {Array<{id: string|number, outputPath: string}>} items needing reprocessing
  */
 export function getPendingItems(allItems) {
   return allItems.filter(item => {
-    try {
-      const stat = statSync(item.outputPath);
-      return stat.size === 0;
-    } catch {
-      return true;
-    }
+    const result = isValidCheckpoint(item.outputPath);
+    return !result.valid;
   });
 }
 
 /**
- * Return a Set of ids for items whose output files exist and are non-empty.
+ * Return a Set of ids for items with a valid checkpoint (complete status or legacy
+ * file without `_checkpoint` metadata).
  *
  * @param {Array<{id: string|number, outputPath: string}>} allItems
  * @returns {Set<string|number>}
@@ -36,12 +36,8 @@ export function getPendingItems(allItems) {
 export function getCompletedIds(allItems) {
   const ids = new Set();
   for (const item of allItems) {
-    try {
-      const stat = statSync(item.outputPath);
-      if (stat.size > 0) ids.add(item.id);
-    } catch {
-      // file missing — not completed
-    }
+    const result = isValidCheckpoint(item.outputPath);
+    if (result.valid) ids.add(item.id);
   }
   return ids;
 }
