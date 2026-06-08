@@ -159,6 +159,49 @@ Build `$LANGUAGE_DIRECTIVE`:
 
 **Locale guidance injection:** If `$OUTPUT_LANGUAGE` is NOT `en`, read the locale guidance file at `$SKILL_DIR/locales/<language-code>.md` (e.g., `$SKILL_DIR/locales/zh.md`, `$SKILL_DIR/locales/ja.md`, `$SKILL_DIR/locales/ko.md`). If the file exists, store its contents as `$WIKI_LOCALE_GUIDANCE`. This will be appended to the wiki-worker dispatch prompt under a `## Wiki Locale Guidance` header to provide language-specific formatting conventions for summaries, ubiquitous language, business rules, and technical term retention. If the locale file does not exist for the specified language, skip silently — the `$LANGUAGE_DIRECTIVE` still applies.
 
+### Repo Type Detection
+
+Parse `--repo-type` from `$ARGUMENTS`. Valid values: `backend` (default), `mobile`, `frontend`.
+
+```bash
+REPO_TYPE="backend"
+if echo "$ARGUMENTS" | grep -q -- "--repo-type"; then
+  REPO_TYPE=$(echo "$ARGUMENTS" | sed -n 's/.*--repo-type[= ]\([a-z]*\).*/\1/p')
+fi
+echo "[understand-wiki] Repo type: $REPO_TYPE"
+```
+
+**If `REPO_TYPE=mobile`:**
+
+1. Read `system.json` to find server facet path:
+```bash
+SERVER_FACET_PATH=""
+if [ -f "$PROJECT_ROOT/.understand-anything/system.json" ]; then
+  SERVER_FACET_PATH=$(python3 -c "
+import json, sys
+with open('$PROJECT_ROOT/.understand-anything/system.json') as f:
+    data = json.load(f)
+for facet in data.get('facets', []):
+    if facet.get('type') == 'backend':
+        print(facet.get('path', ''))
+        break
+")
+fi
+```
+
+2. Check if server wiki exists:
+```bash
+SERVER_WIKI_AVAILABLE=false
+if [ -n "$SERVER_FACET_PATH" ] && [ -f "$PROJECT_ROOT/$SERVER_FACET_PATH/.understand-anything/wiki/meta.json" ]; then
+  SERVER_WIKI_AVAILABLE=true
+  echo "[understand-wiki] Server wiki found at $SERVER_FACET_PATH — will use for precise domain classification"
+else
+  echo "[understand-wiki] WARNING: Server wiki not found — domain classification will use code-structure inference (degraded accuracy)"
+fi
+```
+
+3. Store in phase context: `REPO_TYPE`, `SERVER_WIKI_AVAILABLE`, `SERVER_FACET_PATH`
+
 ### Step 4.5 — RPC Annotations Configuration
 
 **Built-in frameworks are always detected** — the file-analyzer automatically recognizes the following annotations and emits `provides_rpc` / `consumes_rpc` / `publishes` / `subscribes` edges without any configuration:

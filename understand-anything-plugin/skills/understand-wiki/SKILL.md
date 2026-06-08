@@ -1,7 +1,7 @@
 ---
 name: understand-wiki
 description: Generate a comprehensive, navigable knowledge base Wiki for a microservice project. Supports single-service and batch modes with progressive adoption.
-argument-hint: ["[--batch] [--service=<name>] [--review] [--full] [--force] [--dry-run] [--continue-on-error] [--language <lang>]"]
+argument-hint: ["[--batch] [--service=<name>] [--review] [--full] [--force] [--dry-run] [--continue-on-error] [--language <lang>] [--repo-type <type>]"]
 ---
 
 # /understand-wiki
@@ -19,6 +19,7 @@ Generate a team knowledge base Wiki for microservice projects. Each service gets
   - `--dry-run` — Preview what would be generated without running any LLM calls (see [Dry-Run Mode](docs/wiki-quality-gate.md#dry-run-mode))
   - `--continue-on-error` — In batch mode, continue after per-service failures (default: `true`). Set `--continue-on-error=false` to stop at first failure and skip Phase 3 (see [Partial Failure Policy](docs/wiki-phase1-generation.md#partial-failure-policy))
   - `--language <lang>` — Generate content in specified language (ISO 639-1 or friendly name). Stores in config for future runs.
+  - `--repo-type <type>` — Repository type: `backend` (default), `mobile`, or `frontend`. Controls wiki-worker prompt focus, domain classification strategy, and Phase 3 aggregation output.
 
 ---
 
