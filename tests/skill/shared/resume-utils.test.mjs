@@ -9,6 +9,7 @@ import {
   getCompletedIds,
   hasBatchOutput,
   reportProgress,
+  isValidCheckpoint,
 } from '../../../understand-anything-plugin/skills/shared/resume-utils.mjs';
 
 let tmpDir;
@@ -172,5 +173,49 @@ describe('reportProgress', () => {
     const msg = reportProgress(items);
     expect(msg).toContain('0/1');
     expect(msg).toContain('1');
+  });
+});
+
+// ── isValidCheckpoint ─────────────────────────────────────────────────────
+
+describe('isValidCheckpoint', () => {
+  it('returns complete for file with _checkpoint.status = complete', () => {
+    const p = join(tmpDir, 'ok.json');
+    writeFileSync(p, JSON.stringify({ data: 1, _checkpoint: { status: 'complete' } }));
+    expect(isValidCheckpoint(p)).toEqual({ valid: true, status: 'complete' });
+  });
+
+  it('returns degraded for file with _checkpoint.status = degraded', () => {
+    const p = join(tmpDir, 'deg.json');
+    writeFileSync(p, JSON.stringify({ data: 1, _checkpoint: { status: 'degraded', reason: 'LLM failed' } }));
+    expect(isValidCheckpoint(p)).toEqual({ valid: false, status: 'degraded' });
+  });
+
+  it('returns failed for file with _checkpoint.status = failed', () => {
+    const p = join(tmpDir, 'fail.json');
+    writeFileSync(p, JSON.stringify({ _checkpoint: { status: 'failed', reason: 'timeout' } }));
+    expect(isValidCheckpoint(p)).toEqual({ valid: false, status: 'failed' });
+  });
+
+  it('treats legacy files without _checkpoint as complete (backward compat)', () => {
+    const p = join(tmpDir, 'legacy.json');
+    writeFileSync(p, JSON.stringify({ nodes: [], edges: [] }));
+    expect(isValidCheckpoint(p)).toEqual({ valid: true, status: 'complete' });
+  });
+
+  it('returns corrupted for truncated JSON', () => {
+    const p = join(tmpDir, 'truncated.json');
+    writeFileSync(p, '{"nodes": [{"id": "n1"');
+    expect(isValidCheckpoint(p)).toEqual({ valid: false, status: 'corrupted' });
+  });
+
+  it('returns empty for empty file', () => {
+    const p = join(tmpDir, 'empty.json');
+    writeFileSync(p, '');
+    expect(isValidCheckpoint(p)).toEqual({ valid: false, status: 'empty' });
+  });
+
+  it('returns corrupted for missing file', () => {
+    expect(isValidCheckpoint(join(tmpDir, 'missing.json'))).toEqual({ valid: false, status: 'corrupted' });
   });
 });

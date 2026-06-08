@@ -6,7 +6,7 @@
  * considered complete.
  */
 
-import { existsSync, statSync, readdirSync } from 'node:fs';
+import { existsSync, statSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -107,4 +107,24 @@ export function reportProgress(allItems) {
     return `All ${total}/${total} items already complete.`;
   }
   return `Resuming: ${completed}/${total} batches already complete. Dispatching remaining ${remaining}...`;
+}
+
+/**
+ * Check if a checkpoint file is valid and determine its status.
+ * @param {string} filePath
+ * @returns {{ valid: boolean, status: 'complete'|'degraded'|'failed'|'corrupted'|'empty' }}
+ */
+export function isValidCheckpoint(filePath) {
+  try {
+    const content = readFileSync(filePath, 'utf-8');
+    if (!content.trim()) return { valid: false, status: 'empty' };
+    const parsed = JSON.parse(content);
+    const checkpoint = parsed._checkpoint;
+    if (checkpoint?.status === 'complete') return { valid: true, status: 'complete' };
+    if (checkpoint?.status === 'degraded') return { valid: false, status: 'degraded' };
+    if (checkpoint?.status === 'failed') return { valid: false, status: 'failed' };
+    return { valid: true, status: 'complete' };
+  } catch {
+    return { valid: false, status: 'corrupted' };
+  }
 }
