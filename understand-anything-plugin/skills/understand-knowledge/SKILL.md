@@ -1,7 +1,7 @@
 ---
 name: understand-knowledge
-description: Analyze a Karpathy-pattern LLM wiki knowledge base and generate an interactive knowledge graph with entity extraction, implicit relationships, and topic clustering.
-argument-hint: [wiki-directory]
+description: Analyze a Karpathy-pattern LLM wiki knowledge base and generate an interactive knowledge graph with entity extraction, implicit relationships, and topic clustering. Supports --full to force regeneration and --clean to remove intermediate files after success.
+argument-hint: ["[wiki-directory] [--full] [--clean]"]
 ---
 
 # /understand-knowledge
@@ -18,6 +18,15 @@ The **Karpathy LLM wiki pattern** (see https://gist.github.com/karpathy/442a6bf5
 - **log.md** — chronological operation log
 
 Detection signals: has `index.md` + multiple `.md` files with wikilinks. May have `raw/` directory and schema file.
+
+## Options
+
+- `$ARGUMENTS` may contain:
+  - `--full` — Force full regeneration: delete `intermediate/` before processing and re-analyze all batches
+  - `--clean` — Remove `intermediate/` after successful completion (preserved by default for checkpoint/resume)
+  - A wiki directory path — analyze the given directory instead of the current working directory
+
+Intermediate files are preserved by default for checkpoint/resume. Use `--clean` to remove them after successful completion.
 
 ## Instructions
 
@@ -53,11 +62,18 @@ No additional scanning is needed. Proceed to Phase 3.
 
 Dispatch `article-analyzer` subagents to extract implicit knowledge:
 
+0. **If `--full` is in `$ARGUMENTS`**, delete the intermediate directory before processing:
+   ```
+   rm -rf <TARGET_DIR>/.understand-anything/intermediate
+   mkdir -p <TARGET_DIR>/.understand-anything/intermediate
+   ```
+   Then re-run Phase 1's parse script to regenerate `scan-manifest.json`. Skip this step when `--full` is not specified (default resume behavior applies).
+
 1. Read the scan-manifest.json to get the article list
 
 2. Prepare batches of 10-15 articles each, grouped by category when possible (articles in the same category are more likely to have implicit cross-references)
 
-3. **Before dispatching**, detect already-analyzed batches by checking if `analysis-batch-{N}.json` exists and is non-empty in the intermediate directory. Skip batches that already have output (this enables automatic resume when a previous run was interrupted). If an output file exists but contains invalid JSON (e.g. truncated from a crash), treat it as incomplete and re-process. If all batches are complete, skip directly to Phase 4.
+3. **Before dispatching**, detect already-analyzed batches by checking if `analysis-batch-{N}.json` exists and is non-empty in the intermediate directory. Skip batches that already have output (this enables automatic resume when a previous run was interrupted). If an output file exists but contains invalid JSON (e.g. truncated from a crash), treat it as incomplete and re-process. If all batches are complete, skip directly to Phase 4. When `--full` was specified, no prior batch outputs exist and all batches are processed.
 
 4. For each remaining batch, dispatch an `article-analyzer` subagent with:
    - The batch of articles (id, name, summary, wikilinks, category, content from knowledgeMeta)
@@ -98,6 +114,9 @@ Dispatch `article-analyzer` subagents to extract implicit knowledge:
    - Every edge source/target must reference an existing node
    - Every node must have: id, type, name, summary, tags, complexity
    - Remove any edges with dangling references
+   - **Content non-empty check:** verify every node `summary` is a non-empty string (not just present — must contain actual text after trimming whitespace)
+   - **Edge type validity check:** verify every edge `type` is in the allowed set from `understand-anything-plugin/packages/core/src/schema.ts` (`EdgeTypeSchema`): `imports`, `exports`, `contains`, `inherits`, `implements`, `calls`, `subscribes`, `publishes`, `middleware`, `provides_rpc`, `consumes_rpc`, `injects`, `reads_from`, `writes_to`, `transforms`, `validates`, `depends_on`, `tested_by`, `configures`, `related`, `similar_to`, `deploys`, `serves`, `provisions`, `triggers`, `migrates`, `documents`, `routes`, `defines_schema`, `contains_flow`, `flow_step`, `cross_domain`, `cites`, `contradicts`, `builds_on`, `exemplifies`, `categorized_under`, `authored_by`. Remove edges with invalid types.
+   - If any validation check fails: log warnings, continue saving, and record `"status": "degraded"` plus a `"degradedReason"` string in meta.json (see step 4)
 
 3. Copy the validated graph to `<TARGET_DIR>/.understand-anything/knowledge-graph.json`
 
@@ -107,11 +126,13 @@ Dispatch `article-analyzer` subagents to extract implicit knowledge:
      "lastAnalyzedAt": "<ISO timestamp>",
      "gitCommitHash": "<from git rev-parse HEAD or empty>",
      "version": "1.0.0",
-     "analyzedFiles": <number of wiki articles>
+     "analyzedFiles": <number of wiki articles>,
+     "status": "complete"
    }
    ```
+   When validation produced warnings, set `"status": "degraded"` and add `"degradedReason": "<summary of validation failures>"`.
 
-5. Clean up intermediate files:
+5. **Intermediate cleanup (default: preserve):** Keep `<TARGET_DIR>/.understand-anything/intermediate/` intact so future runs can resume from checkpoints. Only when `--clean` is in `$ARGUMENTS`:
    ```
    rm -rf <TARGET_DIR>/.understand-anything/intermediate
    ```
