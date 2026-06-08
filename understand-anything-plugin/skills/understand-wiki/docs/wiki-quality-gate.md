@@ -56,7 +56,7 @@ python3 "$SKILL_DIR/wiki_quality_gate.py" \
 
 Read the result:
 - If `passed: true` → proceed to Layer 2 (if `--review`) or Phase 3
-- If `passed: false` → report issues to user, recommend re-running with `--full`. Do NOT proceed to Phase 3 for this service.
+- If `passed: false` → report issues, recommend re-running with `--full`. **Do NOT proceed to Phase 3.** In single-service mode, stop with error. In batch mode, skip this service and continue with others.
 
 ### Layer 2 — wiki-reviewer Agent (When `--review` is specified)
 

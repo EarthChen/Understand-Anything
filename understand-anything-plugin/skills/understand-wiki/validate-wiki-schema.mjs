@@ -6,7 +6,7 @@
  * @understand-anything/core schemas. Auto-fixes recoverable issues.
  *
  * Usage:
- *   node validate-wiki-schema.mjs <intermediate_wiki_dir> [--parent] [--service-root=<path>]
+ *   node validate-wiki-schema.mjs <intermediate_wiki_dir> [--parent] [--service-root=<path>] [--verify-only]
  *
  * Output: <parent_of_wiki_dir>/wiki-validation-report.json
  */
@@ -29,6 +29,7 @@ const core = await import(pathToFileURL(coreDist).href);
 
 const args = process.argv.slice(2);
 const isParent = args.includes("--parent");
+const verifyOnly = args.includes("--verify-only");
 const serviceRootArg = args.find((a) => a.startsWith("--service-root="));
 const serviceRoot = serviceRootArg ? serviceRootArg.slice("--service-root=".length) : null;
 const wikiDirArg = args.find((a) => !a.startsWith("--"));
@@ -165,22 +166,30 @@ if (!existsSync(wikiDir)) {
       if (typeof core.autoFixDomainPage === "function") {
         const { data: fixed, fixes } = core.autoFixDomainPage(data, relPath);
         if (fixes.length > 0) {
-          writeJSON(filePath, fixed);
-          report.autoFixed += fixes.length;
-          for (const fix of fixes) report.warnings.push(fix);
+          if (verifyOnly) {
+            for (const fix of fixes) addIssue("error", `${relPath}: unfixed issue (verify-only): ${fix}`);
+          } else {
+            writeJSON(filePath, fixed);
+            report.autoFixed += fixes.length;
+            for (const fix of fixes) report.warnings.push(fix);
+          }
         }
         data = fixed;
       }
 
       const expectedId = `domain:${f.replace(/\.json$/, "")}`;
       if (data.id !== expectedId) {
-        const previousId = data.id ?? "(missing)";
-        data.id = expectedId;
-        writeJSON(filePath, data);
-        report.autoFixed++;
-        report.warnings.push(
-          `${relPath}: id corrected from '${previousId}' to '${expectedId}'`,
-        );
+        if (verifyOnly) {
+          addIssue("error", `${relPath}: id mismatch: '${data.id ?? "(missing)"}' should be '${expectedId}'`);
+        } else {
+          const previousId = data.id ?? "(missing)";
+          data.id = expectedId;
+          writeJSON(filePath, data);
+          report.autoFixed++;
+          report.warnings.push(
+            `${relPath}: id corrected from '${previousId}' to '${expectedId}'`,
+          );
+        }
       }
 
       applyValidationIssues(core.validateWikiDomainPage(data, relPath));

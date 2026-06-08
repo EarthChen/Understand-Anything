@@ -150,10 +150,16 @@ This phase uses different strategies depending on Path:
 
 #### Phase 4a: Domain Discovery
 
-1. Read the `domain-discoverer` agent prompt from `$PLUGIN_ROOT/agents/domain-discoverer.md`
-2. Dispatch a subagent with the `domain-discoverer` prompt + `kg-summary.json` content as context
-3. The agent writes to `$PROJECT_ROOT/.understand-anything/intermediate/domain-discovery.json`
-4. Read the discovery output. If 0 domains found, report error and stop.
+1. **Checkpoint detection:** Check if `$PROJECT_ROOT/.understand-anything/intermediate/domain-discovery-checkpoint.json` exists and contains valid JSON with `_checkpoint.status == "complete"`. If so, read `domain-discovery.json` and skip to Phase 4a-audit.
+2. Read the `domain-discoverer` agent prompt from `$PLUGIN_ROOT/agents/domain-discoverer.md`
+3. Dispatch a subagent with the `domain-discoverer` prompt + `kg-summary.json` content as context
+4. The agent writes to `$PROJECT_ROOT/.understand-anything/intermediate/domain-discovery.json`
+5. Read the discovery output. If 0 domains found, report error and stop.
+6. **Write checkpoint:**
+   ```bash
+   echo '{"_checkpoint":{"status":"complete","phase":"4a"}}' > \
+     "$PROJECT_ROOT/.understand-anything/intermediate/domain-discovery-checkpoint.json"
+   ```
 
 #### Phase 4a-audit: Domain Discovery Audit
 
@@ -183,9 +189,15 @@ This phase uses different strategies depending on Path:
    {JSON array of warnings from domain-audit.json}
    </audit-warnings>
    ```
-4. The agent overwrites `$PROJECT_ROOT/.understand-anything/intermediate/domain-discovery.json`
-5. Re-run the audit script to verify improvement (warnings may remain — that's acceptable)
-6. Proceed to Phase 4b
+4. **Backup current discovery before overwriting:**
+   ```bash
+   cp "$PROJECT_ROOT/.understand-anything/intermediate/domain-discovery.json" \
+      "$PROJECT_ROOT/.understand-anything/intermediate/domain-discovery.v1.json"
+   ```
+   If the refine agent produces worse results, the backup can be restored manually.
+5. The agent overwrites `$PROJECT_ROOT/.understand-anything/intermediate/domain-discovery.json`
+6. Re-run the audit script to verify improvement (warnings may remain — that's acceptable)
+7. Proceed to Phase 4b
 
 #### Phase 4b: KG Splitting
 
@@ -198,14 +210,16 @@ This phase uses different strategies depending on Path:
 #### Phase 4c: Flow Extraction (parallel, up to 3 concurrent)
 
 1. Read the `domain-flow-extractor` agent prompt from `$PLUGIN_ROOT/agents/domain-flow-extractor.md`
-2. **Before dispatching**, detect already-extracted domains by checking if `intermediate/flows-<name>.json` exists and is non-empty. Skip domains that already have output (this enables automatic resume when a previous run was interrupted). If an output file exists but contains invalid JSON (e.g. truncated from a crash), treat it as incomplete and re-process. If all domains are complete, skip directly to Phase 4d.
-3. For each remaining domain in `domain-discovery.json`:
+2. **Domain-level incremental detection:** For each domain in `domain-discovery.json`, compute a content fingerprint of the domain's KG subset (`intermediate/domain-<name>.json`). Store fingerprints in `$PROJECT_ROOT/.understand-anything/intermediate/domain-fingerprints.json`. Compare against the previous run's fingerprints (if file exists). Domains with unchanged fingerprints are eligible for skip.
+3. **Before dispatching**, detect already-extracted domains by checking if `intermediate/flows-<name>.json` exists, is non-empty, and contains **valid JSON with a non-empty `flows` array**. Skip domains that pass all three checks (this enables automatic resume when a previous run was interrupted). If an output file exists but contains invalid JSON (e.g. truncated from a crash), or the `flows` array is empty/missing, treat it as incomplete and re-process. If all domains are complete, skip directly to Phase 4d.
+4. For each remaining domain in `domain-discovery.json`:
    - Read `intermediate/domain-<name>.json` as context
    - Dispatch a subagent with the `domain-flow-extractor` prompt + domain KG subset
    - The agent writes to `intermediate/flows-<name>.json`
-4. Run up to **3 subagents concurrently** (same pattern as `/understand` Phase 2 batches)
-5. If a domain's flow extraction fails, retry once. If it fails again, skip that domain and continue with others.
-6. Wait for all to complete.
+5. Run up to **3 subagents concurrently** (same pattern as `/understand` Phase 2 batches)
+6. If a domain's flow extraction fails, retry once. If it fails again, skip that domain and continue with others.
+7. **Update fingerprints:** After all extractions complete, write the current fingerprints to `domain-fingerprints.json` for future incremental comparisons.
+8. Wait for all to complete.
 
 #### Phase 4d: Merge
 

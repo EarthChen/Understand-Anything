@@ -299,7 +299,7 @@ fi
 
 #### If KG is missing or degraded (`KG_STATUS != "complete"`)
 
-Dispatch an `/understand` subagent. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+Dispatch an `/understand` subagent with retry. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
 
 > Read the skill definition at `$PLUGIN_ROOT/skills/understand/SKILL.md` and follow its instructions.
 >
@@ -308,17 +308,26 @@ Dispatch an `/understand` subagent. See [Dispatch Protocol](../../../docs/DISPAT
 >
 > You are authorized to dispatch sub-agents as required by the parent task.
 
-Wait for completion, then verify:
+Wait for completion, then **re-validate completeness** (not just file existence):
 
 ```bash
-test -f "$SERVICE_UA/knowledge-graph.json"
+MAX_RETRIES=1
+for attempt in $(seq 0 $MAX_RETRIES); do
+  KG_POST=$(node "$VALIDATOR" "$SERVICE_UA/knowledge-graph.json" knowledge-graph:complete 2>/dev/null || echo '{"status":"missing"}')
+  KG_POST_STATUS=$(echo "$KG_POST" | node -e "d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.status)")
+  if [ "$KG_POST_STATUS" = "complete" ]; then break; fi
+  if [ $attempt -eq $MAX_RETRIES ]; then
+    echo "Error: /understand produced '$KG_POST_STATUS' KG for \"${SERVICE_NAME}\" after $((MAX_RETRIES+1)) attempts. Cannot generate Wiki."
+    echo "Detail: $(echo "$KG_POST" | node -e "d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.reason||'unknown')")"
+    exit 1
+  fi
+  echo "[understand-wiki] KG rebuild returned '$KG_POST_STATUS', retrying ($((attempt+1))/$MAX_RETRIES)..."
+done
 ```
-
-If the file is still missing, report: `Error: /understand failed for "${SERVICE_NAME}". Cannot generate Wiki without KG.` and stop.
 
 #### If DG is missing (`DG_MISSING=true`)
 
-Dispatch an `/understand-domain` subagent. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+Dispatch an `/understand-domain` subagent with retry. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
 
 > Read the skill definition at `$PLUGIN_ROOT/skills/understand-domain/SKILL.md` and follow its instructions.
 >
@@ -326,13 +335,22 @@ Dispatch an `/understand-domain` subagent. See [Dispatch Protocol](../../../docs
 >
 > You are authorized to dispatch sub-agents as required by the parent task.
 
-Wait for completion, then verify:
+Wait for completion, then **re-validate completeness** (not just file existence):
 
 ```bash
-test -f "$SERVICE_UA/domain-graph.json"
+MAX_RETRIES=1
+for attempt in $(seq 0 $MAX_RETRIES); do
+  DG_POST=$(node "$VALIDATOR" "$SERVICE_UA/domain-graph.json" domain-graph:complete 2>/dev/null || echo '{"status":"missing"}')
+  DG_POST_STATUS=$(echo "$DG_POST" | node -e "d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.status)")
+  if [ "$DG_POST_STATUS" = "complete" ]; then break; fi
+  if [ $attempt -eq $MAX_RETRIES ]; then
+    echo "Error: /understand-domain produced '$DG_POST_STATUS' DG for \"${SERVICE_NAME}\" after $((MAX_RETRIES+1)) attempts. Cannot generate Wiki."
+    echo "Detail: $(echo "$DG_POST" | node -e "d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.reason||'unknown')")"
+    exit 1
+  fi
+  echo "[understand-wiki] DG rebuild returned '$DG_POST_STATUS', retrying ($((attempt+1))/$MAX_RETRIES)..."
+done
 ```
-
-If the file is still missing, report: `Error: /understand-domain failed for "${SERVICE_NAME}". Cannot generate Wiki without DG.` and stop.
 
 **Sequential dependency:** If both KG and DG need updating, dispatch KG first, wait for completion, then dispatch DG. `/understand-domain` benefits from an up-to-date KG (Path 2: derive from graph).
 
@@ -373,7 +391,7 @@ The bash script above sets `$KG_STALE` and `$DG_STALE` to `"true"` when stalenes
 
 #### If KG is stale (`KG_STALE=true`)
 
-**Single mode:** Dispatch an `/understand` subagent (incremental — git diff based since KG + meta already exist). See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+**Single mode:** Dispatch an `/understand` subagent (incremental — git diff based since KG + meta already exist) with retry. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
 
 > Read the skill definition at `$PLUGIN_ROOT/skills/understand/SKILL.md` and follow its instructions.
 >
@@ -382,19 +400,28 @@ The bash script above sets `$KG_STALE` and `$DG_STALE` to `"true"` when stalenes
 >
 > You are authorized to dispatch sub-agents as required by the parent task.
 
-`/understand` will run incremental (git diff based) since KG + meta already exist. Wait for completion, then verify:
+`/understand` will run incremental (git diff based) since KG + meta already exist. Wait for completion, then **re-validate completeness**:
 
 ```bash
-if [ ! -f "$SERVICE_UA/knowledge-graph.json" ]; then
-  echo "[understand-wiki] WARNING: /understand update failed for \"${SERVICE_NAME}\". Proceeding with stale KG."
-else
-  echo "[understand-wiki] KG updated for \"${SERVICE_NAME}\"."
-fi
+MAX_RETRIES=1
+for attempt in $(seq 0 $MAX_RETRIES); do
+  KG_POST=$(node "$VALIDATOR" "$SERVICE_UA/knowledge-graph.json" knowledge-graph:complete 2>/dev/null || echo '{"status":"missing"}')
+  KG_POST_STATUS=$(echo "$KG_POST" | node -e "d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.status)")
+  if [ "$KG_POST_STATUS" = "complete" ]; then
+    echo "[understand-wiki] KG updated for \"${SERVICE_NAME}\"."
+    break
+  fi
+  if [ $attempt -eq $MAX_RETRIES ]; then
+    echo "Error: /understand stale-update produced '$KG_POST_STATUS' KG for \"${SERVICE_NAME}\" after $((MAX_RETRIES+1)) attempts. Cannot generate Wiki from degraded upstream."
+    exit 1
+  fi
+  echo "[understand-wiki] KG stale-update returned '$KG_POST_STATUS', retrying ($((attempt+1))/$MAX_RETRIES)..."
+done
 ```
 
 #### If DG is stale (`DG_STALE=true`)
 
-**Single mode:** Dispatch an `/understand-domain` subagent. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
+**Single mode:** Dispatch an `/understand-domain` subagent with retry. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
 
 > Read the skill definition at `$PLUGIN_ROOT/skills/understand-domain/SKILL.md` and follow its instructions.
 >
@@ -402,21 +429,30 @@ fi
 >
 > You are authorized to dispatch sub-agents as required by the parent task.
 
-`/understand-domain` has no incremental mode, but if KG was just updated, it will use Path 2 (derive from graph) which is cheaper than file scanning. Wait for completion, then verify:
+`/understand-domain` has no incremental mode, but if KG was just updated, it will use Path 2 (derive from graph) which is cheaper than file scanning. Wait for completion, then **re-validate completeness**:
 
 ```bash
-if [ ! -f "$SERVICE_UA/domain-graph.json" ]; then
-  echo "[understand-wiki] WARNING: /understand-domain update failed for \"${SERVICE_NAME}\". Proceeding with stale DG."
-else
-  echo "[understand-wiki] DG updated for \"${SERVICE_NAME}\"."
-fi
+MAX_RETRIES=1
+for attempt in $(seq 0 $MAX_RETRIES); do
+  DG_POST=$(node "$VALIDATOR" "$SERVICE_UA/domain-graph.json" domain-graph:complete 2>/dev/null || echo '{"status":"missing"}')
+  DG_POST_STATUS=$(echo "$DG_POST" | node -e "d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.status)")
+  if [ "$DG_POST_STATUS" = "complete" ]; then
+    echo "[understand-wiki] DG updated for \"${SERVICE_NAME}\"."
+    break
+  fi
+  if [ $attempt -eq $MAX_RETRIES ]; then
+    echo "Error: /understand-domain stale-update produced '$DG_POST_STATUS' DG for \"${SERVICE_NAME}\" after $((MAX_RETRIES+1)) attempts. Cannot generate Wiki from degraded upstream."
+    exit 1
+  fi
+  echo "[understand-wiki] DG stale-update returned '$DG_POST_STATUS', retrying ($((attempt+1))/$MAX_RETRIES)..."
+done
 ```
 
 **Key behaviors:**
 - **KG auto-update is incremental:** `/understand` detects existing graph + changed commit hash → only re-analyzes `git diff` changed files (fast, low token cost)
-- **DG auto-update is full but cheap:** `/understand-domain` always regenerates, but derives from the freshly updated KG (no file scanning needed)
+- **DG auto-update is full but cheap:** `/understand-domain` always regenerate, but derives from the freshly updated KG (no file scanning needed)
 - **Sequential dependency:** KG update completes before DG update starts (DG benefits from fresh KG)
-- **Graceful degradation:** If upstream update fails, proceed with stale data and log a warning (wiki generation can still produce useful output from slightly outdated graphs)
+- **Fail loud on degraded upstream:** If upstream update produces a degraded artifact after retry, stop and report the error. Do not generate Wiki from broken upstream — degraded input produces degraded output, and the user should investigate the root cause rather than receive a silently broken Wiki
 - **`--force` skips entirely:** Use when you intentionally want to generate wiki from current graphs regardless of staleness
 
 Commit hashes are read from `project.gitCommitHash` in each graph (or `meta.generatedFromCommit` / `.understand-anything/meta.json` as fallback). Compared with `git -C "$SERVICE_ROOT" rev-parse HEAD`.

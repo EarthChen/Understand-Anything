@@ -40,6 +40,28 @@ node "$SKILL_DIR/validate-wiki-schema.mjs" \
 - Writes `wiki-validation-report.json` alongside intermediate directory
 - Exit 0 = passed (may have auto-fixes), Exit 1 = errors found
 
+**After auto-fix, re-validate to confirm fixes resolved the issues:**
+
+```bash
+# First pass: validate + auto-fix
+node "$SKILL_DIR/validate-wiki-schema.mjs" \
+  "$PROJECT_ROOT/.understand-anything/intermediate/wiki" \
+  --service-root="$SERVICE_ROOT"
+FIX_EXIT=$?
+
+# Second pass: verify fixes (read-only — no further auto-fix)
+if [ $FIX_EXIT -eq 0 ]; then
+  node "$SKILL_DIR/validate-wiki-schema.mjs" \
+    "$PROJECT_ROOT/.understand-anything/intermediate/wiki" \
+    --service-root="$SERVICE_ROOT" \
+    --verify-only
+  VERIFY_EXIT=$?
+  if [ $VERIFY_EXIT -ne 0 ]; then
+    echo "[understand-wiki] WARNING: Post-fix verification failed. Auto-fix may have introduced new issues."
+  fi
+fi
+```
+
 **On failure:** Log errors. If `--continue-on-error`, proceed with warnings. Otherwise, halt and report.
 
 #### Script 2: Index Building (`build-wiki-index.py`)
@@ -57,6 +79,36 @@ python3 "$SKILL_DIR/build-wiki-index.py" \
 - Replaces any LLM-generated index
 
 #### Script 3: Assembly (`assemble-wiki.py`)
+
+**Pre-assembly domain coverage check** — verify all expected domain pages exist before assembling:
+
+```bash
+# Extract expected domains from domain-graph.json
+EXPECTED_DOMAINS=$(python3 -c "
+import json, sys
+with open('$SERVICE_ROOT/.understand-anything/domain-graph.json') as f:
+    dg = json.load(f)
+domains = set()
+for n in dg.get('nodes', []):
+    if n.get('type') == 'domain':
+        domains.add(n['id'].replace('domain:', ''))
+for d in sorted(domains):
+    print(d)
+")
+INTERMEDIATE_WIKI="$PROJECT_ROOT/.understand-anything/intermediate/wiki/domains"
+MISSING_DOMAINS=""
+for domain in $EXPECTED_DOMAINS; do
+  if [ ! -f "$INTERMEDIATE_WIKI/$domain.json" ]; then
+    MISSING_DOMAINS="$MISSING_DOMAINS $domain"
+  fi
+done
+if [ -n "$MISSING_DOMAINS" ]; then
+  echo "[understand-wiki] ERROR: Missing domain pages:$MISSING_DOMAINS"
+  echo "[understand-wiki] Wiki assembly blocked — domain coverage incomplete."
+  echo "[understand-wiki] Re-run with --full to regenerate all domains."
+  exit 1
+fi
+```
 
 ```bash
 CURRENT_COMMIT=$(git -C "$SERVICE_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown")
@@ -86,7 +138,8 @@ When running in incremental mode (only dirty domains regenerated):
 | Script | Error | Action |
 |--------|-------|--------|
 | extract-endpoints.py | Extraction dir missing or empty | Log warning, skip (endpoint data optional) |
-| validate-wiki-schema.mjs | Auto-fixable issues | Fix in-place, log as warnings |
-| validate-wiki-schema.mjs | Hard schema errors | Log, proceed with warnings (warn-then-continue) |
+| validate-wiki-schema.mjs | Auto-fixable issues | Fix in-place, re-validate with `--verify-only`, log as warnings |
+| validate-wiki-schema.mjs | Hard schema errors | **Halt** — log errors, do not proceed to assembly. Fix the root cause or use `--continue-on-error` to override |
 | build-wiki-index.py | No wiki files found | Write empty index, log warning |
-| assemble-wiki.py | Validation report has errors | Proceed with partial results, include errors in meta |
+| assemble-wiki.py | Missing expected domain pages | **Halt** — domain coverage gap means Wiki is incomplete. Report which domains are missing |
+| assemble-wiki.py | Validation report has non-domain errors | Proceed with partial results, include errors in meta |

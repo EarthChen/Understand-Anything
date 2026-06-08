@@ -6,6 +6,7 @@ Validates a service wiki directory against its domain-graph, checking:
 - service.json name and description
 - Domain coverage (domain-graph nodes vs wiki domain files)
 - Domain page content quality (flows, steps, descriptions)
+- Content depth scoring (summary length, sourceRef coverage, depth indicators)
 - Source reference file existence
 
 Usage:
@@ -153,15 +154,37 @@ def _check_domain_pages(
     for file in domain_files:
         page = _load_json(os.path.join(domain_dir, file))
         summary = page.get("summary", "")
-        if not summary or len(summary) < 10:
-            warnings.append(f"domains/{file}: summary is empty or too short")
+        summary_len = len(summary)
+        if not summary or summary_len < 10:
+            issues.append(f"domains/{file}: summary is empty or too short")
+        elif summary_len < 50:
+            issues.append(
+                f"domains/{file}: summary too shallow ({summary_len} chars, need >= 50)"
+            )
+        elif summary_len < 80:
+            warnings.append(
+                f"domains/{file}: summary could be deeper ({summary_len} chars, target >= 80)"
+            )
 
         flows = page.get("flows", [])
         if not isinstance(flows, list) or len(flows) == 0:
             issues.append(f"domains/{file}: no flows defined")
             continue
 
+        total_steps = 0
+        steps_with_source_ref = 0
+
         for i, flow in enumerate(flows):
+            flow_summary = str(flow.get("summary", ""))
+            if len(flow_summary) < 20:
+                issues.append(
+                    f"domains/{file}: flow '{flow.get('name', i)}' summary too shallow ({len(flow_summary)} chars)"
+                )
+            elif len(flow_summary) < 40:
+                warnings.append(
+                    f"domains/{file}: flow '{flow.get('name', i)}' summary could be deeper ({len(flow_summary)} chars)"
+                )
+
             steps = flow.get("steps", [])
             if not isinstance(steps, list) or len(steps) == 0:
                 warnings.append(
@@ -169,18 +192,42 @@ def _check_domain_pages(
                 )
             else:
                 for j, step in enumerate(steps):
+                    total_steps += 1
                     desc = step.get("description", "")
-                    if not desc or len(desc) < 5:
-                        warnings.append(
+                    desc_len = len(desc)
+                    if not desc or desc_len < 5:
+                        issues.append(
                             f"domains/{file}: flow[{i}].step[{j}] has empty description"
                         )
+                    elif desc_len < 10:
+                        issues.append(
+                            f"domains/{file}: flow[{i}].step[{j}] description too shallow ({desc_len} chars)"
+                        )
+                    elif desc_len < 30:
+                        warnings.append(
+                            f"domains/{file}: flow[{i}].step[{j}] description could be deeper ({desc_len} chars)"
+                        )
+
                     source_ref = step.get("sourceRef")
                     if source_ref and source_ref.get("file"):
+                        steps_with_source_ref += 1
                         ref_path = os.path.join(service_root, source_ref["file"])
                         if not os.path.exists(ref_path):
                             warnings.append(
                                 f"domains/{file}: sourceRef '{source_ref['file']}' does not exist"
                             )
+
+        # sourceRef coverage — blocking if below 30%
+        if total_steps > 0:
+            coverage = steps_with_source_ref / total_steps
+            if coverage < 0.3:
+                issues.append(
+                    f"domains/{file}: sourceRef coverage {coverage:.0%} (need >= 30%)"
+                )
+            elif coverage < 0.5:
+                warnings.append(
+                    f"domains/{file}: sourceRef coverage {coverage:.0%} (target >= 50%)"
+                )
 
 
 def run_parent_quality_gate(

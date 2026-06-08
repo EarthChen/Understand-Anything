@@ -52,16 +52,16 @@ class TestWikiQualityGate(unittest.TestCase):
         self._write_json(os.path.join(self.domains_dir, "order-mgmt.json"), {
             "id": "domain:order-mgmt",
             "name": "Order Management",
-            "summary": "Handles the complete order lifecycle",
+            "summary": "Handles the complete order lifecycle from creation through fulfillment, payment, and delivery",
             "entities": ["Order", "OrderItem"],
             "flows": [{
                 "id": "flow:create-order",
                 "name": "Create Order",
-                "summary": "Creates a new order in the system",
+                "summary": "Creates a new order in the system and validates all business rules",
                 "steps": [{
                     "order": 1,
                     "name": "Validate",
-                    "description": "Validates order request parameters and business rules",
+                    "description": "Validates order request parameters and business rules, checking inventory and pricing",
                     "sourceRef": {"file": "src/OrderService.java", "lineRange": [10, 20]},
                 }]
             }]
@@ -143,9 +143,8 @@ class TestWikiQualityGate(unittest.TestCase):
         os.remove(os.path.join(self.service_root, "src", "OrderService.java"))
         dg_path = self._write_domain_graph()
         result = run_quality_gate(self.wiki_dir, dg_path, self.service_root)
-        # Should still pass (source ref is warning, not error)
+        # Missing source file is a warning, not a blocking issue
         self.assertTrue(result["passed"])
-        self.assertGreater(len(result["warnings"]), 0)
         self.assertTrue(any("OrderService.java" in w for w in result["warnings"]))
 
     def test_step_with_short_description_is_warning(self):
@@ -153,19 +152,70 @@ class TestWikiQualityGate(unittest.TestCase):
         self._write_json(os.path.join(self.domains_dir, "order-mgmt.json"), {
             "id": "domain:order-mgmt",
             "name": "Order Management",
-            "summary": "Handles the complete order lifecycle",
+            "summary": "Handles the complete order lifecycle from creation through fulfillment, payment, and delivery",
             "entities": [],
             "flows": [{
                 "id": "flow:create",
                 "name": "Create",
-                "summary": "Creates order",
-                "steps": [{"order": 1, "name": "x", "description": "hi"}]
+                "summary": "Creates a new order in the system with validation",
+                "steps": [{"order": 1, "name": "x", "description": "Short"}]
             }]
         })
         dg_path = self._write_domain_graph()
         result = run_quality_gate(self.wiki_dir, dg_path, self.service_root)
-        self.assertTrue(result["passed"])
-        self.assertGreater(len(result["warnings"]), 0)
+        # Step description "Short" (5 chars) is >= 5 but < 10 → issue (too shallow)
+        self.assertFalse(result["passed"])
+        self.assertTrue(any("too shallow" in i for i in result["issues"]))
+
+    def test_shallow_summary_blocks(self):
+        """Domain summary < 50 chars should be a blocking issue."""
+        self._write_valid_wiki()
+        self._write_json(os.path.join(self.domains_dir, "order-mgmt.json"), {
+            "id": "domain:order-mgmt",
+            "name": "Order Management",
+            "summary": "Short summary",
+            "entities": [],
+            "flows": [{
+                "id": "flow:create",
+                "name": "Create",
+                "summary": "Creates a new order in the system with validation",
+                "steps": [{"order": 1, "name": "x", "description": "Validates order request parameters and business rules"}]
+            }]
+        })
+        dg_path = self._write_domain_graph()
+        result = run_quality_gate(self.wiki_dir, dg_path, self.service_root)
+        self.assertFalse(result["passed"])
+        self.assertTrue(any("too shallow" in i and "summary" in i for i in result["issues"]))
+
+    def test_low_source_ref_coverage_blocks(self):
+        """sourceRef coverage < 30% should be a blocking issue."""
+        self._write_valid_wiki()
+        self._write_json(os.path.join(self.domains_dir, "order-mgmt.json"), {
+            "id": "domain:order-mgmt",
+            "name": "Order Management",
+            "summary": "Handles the complete order lifecycle from creation through fulfillment, payment, and delivery",
+            "entities": [],
+            "flows": [{
+                "id": "flow:create",
+                "name": "Create",
+                "summary": "Creates a new order in the system and validates all business rules",
+                "steps": [
+                    {"order": 1, "name": "s1", "description": "Validates order request parameters", "sourceRef": {"file": "src/A.java"}},
+                    {"order": 2, "name": "s2", "description": "Checks inventory availability and stock levels"},
+                    {"order": 3, "name": "s3", "description": "Processes payment and handles transaction errors"},
+                    {"order": 4, "name": "s4", "description": "Sends confirmation notification to the customer"},
+                ]
+            }]
+        })
+        # Create referenced source file
+        os.makedirs(os.path.join(self.service_root, "src"), exist_ok=True)
+        with open(os.path.join(self.service_root, "src", "A.java"), "w") as f:
+            f.write("// dummy")
+        dg_path = self._write_domain_graph()
+        result = run_quality_gate(self.wiki_dir, dg_path, self.service_root)
+        # 1/4 = 25% sourceRef coverage < 30% → blocking issue
+        self.assertFalse(result["passed"])
+        self.assertTrue(any("sourceRef coverage" in i for i in result["issues"]))
 
     def test_output_written_to_file(self):
         self._write_valid_wiki()

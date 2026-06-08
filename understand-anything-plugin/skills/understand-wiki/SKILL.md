@@ -85,6 +85,8 @@ Resolve execution mode, plugin root, language/RPC config, and service list.
 
 After wiki-worker writes content to `intermediate/wiki/`, run the deterministic pipeline to validate, index, and assemble the final wiki.
 
+**Checkpoint:** After successful assembly, write `$PROJECT_ROOT/.understand-anything/tmp/ua-wiki-${WIKI_SESSION_ID}-checkpoint-phase2.json` with `{"_checkpoint": {"status": "complete", "phase": 2}}`. On re-run (non-`--full`), if this checkpoint exists and is valid, skip Phase 2 and proceed directly to the Quality Gate.
+
 **Detailed implementation:** See [Phase 2 — Assembly Pipeline](docs/wiki-phase2-assembly.md)
 
 ### Quality Gate (after Phase 2)
@@ -96,6 +98,10 @@ Structural validation (always) and optional `wiki-reviewer` when `--review` is s
 ### Phase 3 — Cross-Service + Parent Wiki
 
 Identify cross-service relationships, LLM review/organize flows, generate parent `overview.json`, `architecture.json`, and cross-domain pages.
+
+**Incremental mode:** Before running the cross-service LLM analysis, compute content hashes (SHA-256) of each service's `wiki/meta.json`. Compare against the previous run's hashes stored in `$PROJECT_ROOT/.understand-anything/wiki/service-hashes.json`. If all service hashes match, skip Phase 3 entirely. If only some changed, pass the unchanged service wikis as read-only context and focus the LLM analysis on changed services only. After completion, update `service-hashes.json`.
+
+**Checkpoint:** After successful cross-service analysis, write `$PROJECT_ROOT/.understand-anything/tmp/ua-wiki-${WIKI_SESSION_ID}-checkpoint-phase3.json` with `{"_checkpoint": {"status": "complete", "phase": 3}}`. On re-run, if checkpoint exists and all service hashes match, skip Phase 3.
 
 **Detailed implementation:** See [Phase 3 — Cross-Service](docs/wiki-phase3-crossservice.md)
 
@@ -140,10 +146,10 @@ Review: <pass|warn|fail> (<N issues, M warnings>)
 
 ## Error Handling
 
-- **Prerequisite missing or stale** (`/understand` or `/understand-domain`): single mode auto-dispatches `/understand` and/or `/understand-domain` sub-agents; batch mode per-service sub-agent handles this internally. On failure, log warning and proceed with stale data (single mode) or skip service (batch mode)
+- **Prerequisite missing or stale** (`/understand` or `/understand-domain`): single mode auto-dispatches `/understand` and/or `/understand-domain` sub-agents with retry; batch mode per-service sub-agent handles this internally. On failure after retry, stop with error (single mode) or skip service (batch mode) — do not generate Wiki from degraded upstream
 - **Per-service sub-agent fails (batch)**: retry once; on second failure skip service. Batch default continues and runs Phase 3 with successes; `--continue-on-error=false` stops batch and skips Phase 3
 - **wiki-worker dispatch fails (single)**: retry once; on second failure stop
-- **Quality Gate Layer 1 fails**: report issues; batch skips service; single mode asks user
+- **Quality Gate Layer 1 fails**: report issues; stop with error (single mode) or skip service (batch mode) — do not proceed to Phase 3 with invalid Wiki
 - **Quality Gate Layer 2 fails (reviewer)**: retry wiki-worker once with feedback; if still failing, save Wiki with warnings and proceed
 - **Cross-service matcher script fails**: fall back to LLM-only cross-service detection
 - **Parent Wiki generation fails**: service-level Wikis remain valid; report parent failure separately
