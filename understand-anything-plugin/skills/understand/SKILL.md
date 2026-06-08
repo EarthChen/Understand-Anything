@@ -396,12 +396,19 @@ Before running extraction, detect already-completed extractions. For each batch 
 
 If all extraction results already exist, skip directly to Step 0c.
 
-For remaining batches, run the extraction script. Process up to **5 batches in parallel** — do NOT run them sequentially.
+For remaining batches, run the extraction script with retry logic. Process up to **5 batches in parallel** — do NOT run them sequentially.
 
 ```bash
-node <SKILL_DIR>/extract-structure.mjs \
-  $PROJECT_ROOT/.understand-anything/tmp/ua-file-analyzer-input-<i>.json \
-  $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<i>.json
+MAX_RETRIES=2
+for attempt in $(seq 0 $MAX_RETRIES); do
+  node <SKILL_DIR>/extract-structure.mjs \
+    $PROJECT_ROOT/.understand-anything/tmp/ua-file-analyzer-input-<i>.json \
+    $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<i>.json && break
+  if [ $attempt -eq $MAX_RETRIES ]; then
+    echo "FATAL: extraction failed for batch <i> after $MAX_RETRIES retries" >&2; exit 1;
+  fi
+  echo "Extraction failed for batch <i>, retrying ($((attempt+1))/$MAX_RETRIES)..."
+done
 ```
 
 **Step 0c — Verify all outputs:**
@@ -411,10 +418,15 @@ for i in $(seq 0 $((TOTAL_BATCHES - 1))); do
   test -s $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-$i.json || {
     echo "FATAL: extraction results missing for batch $i" >&2; exit 1;
   }
+  # Verify scriptCompleted=true in output (exits non-zero if files were skipped)
+  node -e "
+    const d = JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));
+    if (!d.scriptCompleted) { console.error('FATAL: batch $i extraction degraded'); process.exit(1); }
+  " $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-$i.json || exit 1
 done
 ```
 
-If any extraction script exits non-zero or any output file is missing/empty, report the error and abort Phase 2. Do NOT proceed with agent dispatch without extraction results.
+If any extraction script exits non-zero or any output file is missing/empty or `scriptCompleted` is false, report the error and abort Phase 2. Do NOT proceed with agent dispatch without extraction results.
 
 Report: `[Phase 2/7] Structural extraction complete for <totalBatches> batches. Dispatching analyzers...`
 
@@ -810,6 +822,27 @@ Report to the user: `[Phase 7/7] Saving knowledge graph...`
 
 1. Write the final knowledge graph to `$PROJECT_ROOT/.understand-anything/knowledge-graph.json`.
 
+   **Include provenance in the `project` object:**
+   ```json
+   {
+     "project": {
+       "name": "...",
+       "provenance": {
+         "generationMode": "full",
+         "completedStages": ["scan", "batch", "extract", "analyze", "merge", "validate"],
+         "degraded": false,
+         "gitCommitHash": "<current commit hash>",
+         "toolVersion": "<plugin version from package.json>",
+         "analyzedAt": "<ISO 8601 timestamp>"
+       }
+     }
+   }
+   ```
+   - Use `generationMode: "incremental"` when running with `--changed-files` (incremental update).
+   - Use `generationMode: "standalone"` when the graph was built without full extraction.
+   - Set `degraded: true` only if Phase 6 checkpoint status was "degraded".
+   - `completedStages` must list every phase that actually ran and succeeded.
+
 2. **Generate structural fingerprints baseline.** This creates the basis for future automatic incremental updates and **must succeed before `meta.json` is written** — otherwise auto-update sees a fresh commit hash with no fingerprints to compare against, classifies every file as STRUCTURAL, and escalates to `FULL_UPDATE` on every subsequent commit (issue #152).
 
    Write the input file:
@@ -873,6 +906,23 @@ Report to the user: `[Phase 7/7] Saving knowledge graph...`
 
 ## Error Handling
 
+### Unified Failure Strategy
+
+| Artifact State | Action |
+|---|---|
+| missing | Build upstream |
+| stale (gitCommitHash mismatch) | Rebuild upstream |
+| degraded (provenance.degraded=true or no provenance) | Rebuild upstream |
+| build fails | Retry (max 2 retries) |
+| retry fails | Abort — do NOT continue with weak artifacts |
+
+**Extraction (deterministic scripts) — HARD ABORT:**
+- `extract-structure.mjs` and `extract-import-map.mjs` failures are non-recoverable.
+- Retry up to 2 times. If still failing, abort Phase 2 entirely.
+- Do NOT proceed with agent dispatch without extraction results.
+- A graph without structural extraction data is worse than no graph.
+
+**Subagent dispatches (LLM agents) — RETRY-THEN-SKIP:**
 - If any subagent dispatch fails, retry **once** with the same prompt plus additional context about the failure.
 - Track all warnings and errors from each phase in a `$PHASE_WARNINGS` list. When using `--review`, pass this list to the graph-reviewer in Phase 6. On the default path, include accumulated warnings in the Phase 7 final report.
 - If it fails a second time, skip that phase and continue with partial results.

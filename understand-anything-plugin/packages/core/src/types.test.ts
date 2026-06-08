@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { KnowledgeGraph, GraphNode, GraphEdge, EdgeType, NodeType, StructuralAnalysis, AnalyzerPlugin, ReferenceResolution } from "./types.js";
+import type { KnowledgeGraph, GraphNode, GraphEdge, EdgeType, NodeType, StructuralAnalysis, AnalyzerPlugin, ReferenceResolution, ArtifactProvenance } from "./types.js";
 
 describe("KnowledgeGraph types", () => {
   it("should create a valid empty KnowledgeGraph", () => {
@@ -200,5 +200,110 @@ describe("Extended types", () => {
       extractReferences: () => refs,
     };
     expect(plugin.extractReferences!("README.md", "")).toEqual(refs);
+  });
+});
+
+describe("ArtifactProvenance", () => {
+  it("should create a valid ArtifactProvenance with all required fields", () => {
+    const provenance: ArtifactProvenance = {
+      generationMode: "full",
+      completedStages: ["scan", "batch", "extract", "analyze", "merge", "validate"],
+      degraded: false,
+      gitCommitHash: "abc123def",
+      toolVersion: "1.0.0",
+      analyzedAt: "2026-06-08T12:00:00Z",
+    };
+
+    expect(provenance.generationMode).toBe("full");
+    expect(provenance.completedStages).toContain("extract");
+    expect(provenance.degraded).toBe(false);
+    expect(provenance.gitCommitHash).toBe("abc123def");
+    expect(provenance.toolVersion).toBe("1.0.0");
+    expect(provenance.analyzedAt).toBeDefined();
+  });
+
+  it("should allow incremental generation mode", () => {
+    const provenance: ArtifactProvenance = {
+      generationMode: "incremental",
+      completedStages: ["extract", "analyze", "merge", "validate"],
+      degraded: false,
+      gitCommitHash: "abc123def",
+      toolVersion: "1.0.0",
+      analyzedAt: "2026-06-08T12:00:00Z",
+    };
+    expect(provenance.generationMode).toBe("incremental");
+  });
+
+  it("should allow standalone generation mode", () => {
+    const provenance: ArtifactProvenance = {
+      generationMode: "standalone",
+      completedStages: ["scan", "analyze"],
+      degraded: false,
+      gitCommitHash: "abc123def",
+      toolVersion: "1.0.0",
+      analyzedAt: "2026-06-08T12:00:00Z",
+    };
+    expect(provenance.generationMode).toBe("standalone");
+  });
+
+  it("should allow degraded=true with qualityGates", () => {
+    const provenance: ArtifactProvenance = {
+      generationMode: "full",
+      completedStages: ["scan", "batch", "extract"],
+      degraded: true,
+      qualityGates: { semanticCompleteness: false },
+      gitCommitHash: "abc123def",
+      toolVersion: "1.0.0",
+      analyzedAt: "2026-06-08T12:00:00Z",
+    };
+    expect(provenance.degraded).toBe(true);
+    expect(provenance.qualityGates?.semanticCompleteness).toBe(false);
+  });
+
+  it("ProjectMeta should accept optional provenance field", () => {
+    const graph: KnowledgeGraph = {
+      version: "1.0.0",
+      project: {
+        name: "test-project",
+        languages: ["java"],
+        frameworks: ["spring"],
+        description: "Test",
+        analyzedAt: "2026-06-08T12:00:00Z",
+        gitCommitHash: "abc123def",
+        provenance: {
+          generationMode: "full",
+          completedStages: ["scan", "batch", "extract", "analyze", "merge", "validate"],
+          degraded: false,
+          gitCommitHash: "abc123def",
+          toolVersion: "1.0.0",
+          analyzedAt: "2026-06-08T12:00:00Z",
+        },
+      },
+      nodes: [],
+      edges: [],
+      layers: [],
+      tour: [],
+    };
+    expect(graph.project.provenance?.generationMode).toBe("full");
+    expect(graph.project.provenance?.degraded).toBe(false);
+  });
+
+  it("ProjectMeta should work without provenance (backward compat)", () => {
+    const graph: KnowledgeGraph = {
+      version: "1.0.0",
+      project: {
+        name: "test-project",
+        languages: [],
+        frameworks: [],
+        description: "Test",
+        analyzedAt: "2026-06-08T12:00:00Z",
+        gitCommitHash: "abc123def",
+      },
+      nodes: [],
+      edges: [],
+      layers: [],
+      tour: [],
+    };
+    expect(graph.project.provenance).toBeUndefined();
   });
 });

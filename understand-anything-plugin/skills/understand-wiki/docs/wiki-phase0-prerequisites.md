@@ -271,25 +271,33 @@ fi
 
 **Batch mode: SKIP this step.** In batch mode, each per-service sub-agent handles its own prerequisite verification internally when it runs the single-service flow. The main agent only needs the service list (Step 7) and proceeds directly to Phase 1.
 
-For single-service mode, check whether the knowledge graph and domain graph exist:
+For single-service mode, check whether the knowledge graph and domain graph exist and are complete:
 
 ```bash
 SERVICE_UA="$SERVICE_ROOT/.understand-anything"
+SKILL_DIR="<path to understand-wiki skill>"
+VALIDATOR="$SKILL_DIR/../understand/validate-artifact.mjs"
 KG_MISSING=false
 DG_MISSING=false
 
-if [ ! -f "$SERVICE_UA/knowledge-graph.json" ]; then
-  echo "[understand-wiki] Service \"${SERVICE_NAME}\" has no knowledge graph."
+# Check KG completeness
+KG_RESULT=$(node "$VALIDATOR" "$SERVICE_UA/knowledge-graph.json" knowledge-graph:complete 2>/dev/null || echo '{"status":"missing"}')
+KG_STATUS=$(echo "$KG_RESULT" | node -e "d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.status)")
+if [ "$KG_STATUS" != "complete" ]; then
+  echo "[understand-wiki] Service \"${SERVICE_NAME}\" knowledge graph: $KG_STATUS"
   KG_MISSING=true
 fi
 
-if [ ! -f "$SERVICE_UA/domain-graph.json" ]; then
-  echo "[understand-wiki] Service \"${SERVICE_NAME}\" has no domain graph."
+# Check DG completeness
+DG_RESULT=$(node "$VALIDATOR" "$SERVICE_UA/domain-graph.json" domain-graph:complete 2>/dev/null || echo '{"status":"missing"}')
+DG_STATUS=$(echo "$DG_RESULT" | node -e "d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.status)")
+if [ "$DG_STATUS" != "complete" ]; then
+  echo "[understand-wiki] Service \"${SERVICE_NAME}\" domain graph: $DG_STATUS"
   DG_MISSING=true
 fi
 ```
 
-#### If KG is missing (`KG_MISSING=true`)
+#### If KG is missing or degraded (`KG_STATUS != "complete"`)
 
 Dispatch an `/understand` subagent. See [Dispatch Protocol](../../../docs/DISPATCH-PROTOCOL.md).
 

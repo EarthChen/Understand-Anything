@@ -31,7 +31,13 @@ The knowledge graph JSON has this structure:
 
 ## Instructions
 
-1. Check that `.understand-anything/knowledge-graph.json` exists in the current project root. If not, tell the user to run `/understand` first.
+1. Validate the knowledge graph using the artifact validator:
+   ```bash
+   node <SKILL_DIR>/../understand/validate-artifact.mjs \
+     .understand-anything/knowledge-graph.json \
+     knowledge-graph:complete
+   ```
+   If the result is not `status: complete`, tell the user to run `/understand` first (or rebuild if degraded/stale).
 
 2. **Read project metadata only** — use Grep or Read with a line limit to extract just the `"project"` section from the top of the file for context (name, description, languages, frameworks).
 

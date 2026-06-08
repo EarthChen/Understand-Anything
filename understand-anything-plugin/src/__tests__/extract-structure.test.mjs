@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildResult } from "../../skills/understand/extract-structure.mjs";
+import { buildResult, buildOutput } from "../../skills/understand/extract-structure.mjs";
 
 const file = (overrides = {}) => ({
   path: "src/foo.py",
@@ -108,5 +108,28 @@ describe("extract-structure buildResult", () => {
       expect(totalLines).toBe(3);
     });
 
+  });
+
+  describe("buildOutput", () => {
+    it("sets scriptCompleted=true when no files are skipped", () => {
+      const output = buildOutput([{ path: "a.py" }], []);
+      expect(output.scriptCompleted).toBe(true);
+      expect(output.filesAnalyzed).toBe(1);
+      expect(output.filesSkipped).toEqual([]);
+    });
+
+    it("sets scriptCompleted=false when files are skipped", () => {
+      const output = buildOutput([{ path: "a.py" }], ["missing.py"]);
+      expect(output.scriptCompleted).toBe(false);
+      expect(output.filesAnalyzed).toBe(1);
+      expect(output.filesSkipped).toEqual(["missing.py"]);
+    });
+
+    it("sets scriptCompleted=false when multiple files are skipped", () => {
+      const output = buildOutput([], ["a.py", "b.py", "c.py"]);
+      expect(output.scriptCompleted).toBe(false);
+      expect(output.filesAnalyzed).toBe(0);
+      expect(output.filesSkipped).toHaveLength(3);
+    });
   });
 });

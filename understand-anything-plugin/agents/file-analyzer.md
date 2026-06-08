@@ -232,7 +232,9 @@ For each function/class node, provide a `summary` and `tags` using the same guid
 
 ### Step 3 -- Create Edges
 
-Using the script's structural data and file categories, create edges:
+Using the script's structural data and file categories, create edges.
+
+**CRITICAL: Only use edge types from the tables below.** The downstream schema validates against a fixed enum of 39 edge types (defined in `packages/core/src/schema.ts` EdgeTypeSchema). Any edge with a type NOT in the enum will be silently dropped during validation, causing data loss. If you need a relationship not covered by the tables, use `related` (generic semantic link) rather than inventing a new type.
 
 #### Edges for code files:
 

@@ -94,9 +94,20 @@ Use `$PLUGIN_ROOT` for every reference to agent definitions in subsequent phases
 
 ### Phase 1: Detect Existing Graph
 
-1. Check if `$PROJECT_ROOT/.understand-anything/knowledge-graph.json` exists
-2. If it exists AND `--full` was NOT passed → proceed to Phase 3 (derive from graph)
-3. If it does NOT exist:
+1. Check knowledge graph completeness using the artifact validator:
+   ```bash
+   VALIDATOR="<SKILL_DIR>/../understand/validate-artifact.mjs"
+   KG_RESULT=$(node "$VALIDATOR" \
+     $PROJECT_ROOT/.understand-anything/knowledge-graph.json \
+     knowledge-graph:complete 2>/dev/null || echo '{"status":"missing"}')
+   KG_STATUS=$(echo "$KG_RESULT" | node -e "d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.status)")
+   ```
+2. If `KG_STATUS` is `complete` AND `--full` was NOT passed → proceed to Phase 3 (derive from graph)
+3. If `KG_STATUS` is `degraded` or `stale`:
+   - Report: `Knowledge graph is ${KG_STATUS}: $(echo "$KG_RESULT" | node -e "d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.reason)"). Rebuilding upstream...`
+   - Dispatch an `/understand` subagent to rebuild the KG, then re-verify
+   - If still degraded after rebuild → **report error and stop**
+4. If `KG_STATUS` is `missing`:
    - If `--standalone` OR `--full` was passed → proceed to Phase 2 (lightweight scan; `--full` without KG implies standalone re-scan)
    - Otherwise → **report error and stop**:
      > `Error: Knowledge graph not found at .understand-anything/knowledge-graph.json. Run /understand first, or use --standalone for lightweight scan without a knowledge graph.`

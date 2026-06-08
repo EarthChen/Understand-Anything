@@ -323,6 +323,17 @@ export interface TourStep {
   languageLesson?: string;
 }
 
+// ArtifactProvenance — tracks how an artifact was generated and its completeness
+export interface ArtifactProvenance {
+  generationMode: "full" | "incremental" | "standalone";
+  completedStages: string[];
+  degraded: boolean;
+  qualityGates?: Record<string, boolean>;
+  gitCommitHash: string;
+  toolVersion: string;
+  analyzedAt: string;
+}
+
 // ProjectMeta
 export interface ProjectMeta {
   name: string;
@@ -331,6 +342,7 @@ export interface ProjectMeta {
   description: string;
   analyzedAt: string;
   gitCommitHash: string;
+  provenance?: ArtifactProvenance;
 }
 
 // Root KnowledgeGraph

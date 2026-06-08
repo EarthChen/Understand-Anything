@@ -5,6 +5,7 @@ import {
   autoFixGraph,
   NODE_TYPE_ALIASES,
   EDGE_TYPE_ALIASES,
+  ArtifactProvenanceSchema,
 } from "../schema.js";
 import type { KnowledgeGraph } from "../types.js";
 
@@ -85,9 +86,22 @@ describe("schema validation", () => {
     );
   });
 
-  it("drops edge with invalid EdgeType but loads graph", () => {
+  it("drops edge with non-standard EdgeType and reports non-standard-edge-type", () => {
     const graph = structuredClone(validGraph);
     (graph.edges[0] as any).type = "not_a_real_edge_type";
+
+    const result = validateGraph(graph);
+    expect(result.success).toBe(true);
+    expect(result.data!.edges.length).toBe(0);
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ level: "dropped", category: "non-standard-edge-type" })
+    );
+    expect(result.droppedNonStandardEdges).toBe(1);
+  });
+
+  it("drops edge with valid type but missing source/target as invalid-edge", () => {
+    const graph = structuredClone(validGraph);
+    (graph.edges[0] as any).source = undefined;
 
     const result = validateGraph(graph);
     expect(result.success).toBe(true);
@@ -780,6 +794,77 @@ describe("Extended node/edge types", () => {
     graph.nodes[0].id = "src/foo.ts";
 
     const result = validateGraph(graph);
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("ArtifactProvenanceSchema", () => {
+  it("validates a complete provenance object", () => {
+    const provenance = {
+      generationMode: "full",
+      completedStages: ["scan", "batch", "extract", "analyze", "merge", "validate"],
+      degraded: false,
+      gitCommitHash: "abc123def",
+      toolVersion: "1.0.0",
+      analyzedAt: "2026-06-08T12:00:00Z",
+    };
+    const result = ArtifactProvenanceSchema.safeParse(provenance);
+    expect(result.success).toBe(true);
+  });
+
+  it("validates provenance with qualityGates", () => {
+    const provenance = {
+      generationMode: "full",
+      completedStages: ["scan", "extract"],
+      degraded: true,
+      qualityGates: { semanticCompleteness: false },
+      gitCommitHash: "abc123def",
+      toolVersion: "1.0.0",
+      analyzedAt: "2026-06-08T12:00:00Z",
+    };
+    const result = ArtifactProvenanceSchema.safeParse(provenance);
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects provenance with invalid generationMode", () => {
+    const provenance = {
+      generationMode: "invalid",
+      completedStages: [],
+      degraded: false,
+      gitCommitHash: "abc123def",
+      toolVersion: "1.0.0",
+      analyzedAt: "2026-06-08T12:00:00Z",
+    };
+    const result = ArtifactProvenanceSchema.safeParse(provenance);
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects provenance missing required fields", () => {
+    const provenance = {
+      generationMode: "full",
+      completedStages: [],
+      degraded: false,
+    };
+    const result = ArtifactProvenanceSchema.safeParse(provenance);
+    expect(result.success).toBe(false);
+  });
+
+  it("validateGraph accepts graph with provenance in project", () => {
+    const graph = structuredClone(validGraph);
+    (graph.project as any).provenance = {
+      generationMode: "full",
+      completedStages: ["scan", "batch", "extract", "analyze", "merge", "validate"],
+      degraded: false,
+      gitCommitHash: "abc123",
+      toolVersion: "1.0.0",
+      analyzedAt: "2026-06-08T12:00:00Z",
+    };
+    const result = validateGraph(graph);
+    expect(result.success).toBe(true);
+  });
+
+  it("validateGraph accepts graph without provenance (backward compat)", () => {
+    const result = validateGraph(validGraph);
     expect(result.success).toBe(true);
   });
 });

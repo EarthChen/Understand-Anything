@@ -6,7 +6,15 @@
     "frameworks": ["spring"],
     "description": "Sample microservice fixture for wiki integration tests",
     "analyzedAt": "2026-06-03T12:00:00Z",
-    "gitCommitHash": "fixture001"
+    "gitCommitHash": "fixture001",
+    "provenance": {
+      "generationMode": "full",
+      "completedStages": ["scan", "batch", "extract", "analyze", "merge", "validate"],
+      "degraded": false,
+      "gitCommitHash": "fixture001",
+      "toolVersion": "1.0.0",
+      "analyzedAt": "2026-06-03T12:00:00Z"
+    }
   },
   "nodes": [
     {

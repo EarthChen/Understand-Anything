@@ -14,12 +14,20 @@ Start the Understand Anything dashboard to visualize the knowledge graph for the
    - If `$ARGUMENTS` contains a path, use that as the project directory
    - Otherwise, use the current working directory
 
-2. Check that the project directory has analyzable data. Accept ANY of these:
-   - `.understand-anything/knowledge-graph.json` — single-service mode (individual project)
-   - `.understand-anything/system-graph.json` — multi-service mode (parent directory with child services)
-   - `.understand-anything/wiki/meta.json` — wiki-only mode (parent or single service)
+2. Check that the project directory has analyzable data. Use the artifact validator for knowledge-graph.json, and fall back to existence checks for other artifacts:
+   ```bash
+   VALIDATOR="<SKILL_DIR>/../understand/validate-artifact.mjs"
+   KG_VALID=false
+   if node "$VALIDATOR" .understand-anything/knowledge-graph.json knowledge-graph:complete >/dev/null 2>&1; then
+     KG_VALID=true
+   fi
+   ```
+   Accept ANY of these:
+   - `KG_VALID=true` — single-service mode (knowledge graph is complete)
+   - `.understand-anything/system-graph.json` exists — multi-service mode (parent directory with child services)
+   - `.understand-anything/wiki/meta.json` exists — wiki-only mode (parent or single service)
 
-   If none exist, tell the user:
+   If none are available, tell the user:
    ```
    No knowledge graph or system graph found. Run /understand (single service) or /understand-wiki --batch (multi-service) first.
    ```

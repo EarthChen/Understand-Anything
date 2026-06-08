@@ -125,18 +125,32 @@ async function main() {
   }
 
   // Write output
-  const output = {
-    scriptCompleted: true,
-    filesAnalyzed: results.length,
-    filesSkipped,
-    results,
-  };
+  const output = buildOutput(results, filesSkipped);
 
   writeFileSync(outputPath, JSON.stringify(output, null, 2), 'utf-8');
 
   if (!existsSync(outputPath)) {
     throw new Error(`output file missing after write: ${outputPath}`);
   }
+
+  // Hard abort when any file was skipped — weak output is not acceptable
+  if (filesSkipped.length > 0) {
+    process.stderr.write(`extract-structure.mjs: ${filesSkipped.length} file(s) skipped, aborting\n`);
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Output builder: assembles the final output object.
+// Exported for unit tests; pure function, no I/O.
+// ---------------------------------------------------------------------------
+export function buildOutput(results, filesSkipped) {
+  return {
+    scriptCompleted: filesSkipped.length === 0,
+    filesAnalyzed: results.length,
+    filesSkipped,
+    results,
+  };
 }
 
 // ---------------------------------------------------------------------------

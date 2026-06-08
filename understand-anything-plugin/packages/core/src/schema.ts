@@ -414,6 +414,16 @@ export const TourStepSchema = z.object({
   languageLesson: z.string().optional(),
 });
 
+export const ArtifactProvenanceSchema = z.object({
+  generationMode: z.enum(["full", "incremental", "standalone"]),
+  completedStages: z.array(z.string()),
+  degraded: z.boolean(),
+  qualityGates: z.record(z.string(), z.boolean()).optional(),
+  gitCommitHash: z.string(),
+  toolVersion: z.string(),
+  analyzedAt: z.string(),
+});
+
 export const ProjectMetaSchema = z.object({
   name: z.string(),
   languages: z.array(z.string()),
@@ -421,6 +431,7 @@ export const ProjectMetaSchema = z.object({
   description: z.string(),
   analyzedAt: z.string(),
   gitCommitHash: z.string(),
+  provenance: ArtifactProvenanceSchema.optional(),
 });
 
 export const KnowledgeGraphSchema = z.object({
@@ -447,6 +458,7 @@ export interface ValidationResult {
   errors?: string[];
   issues: GraphIssue[];
   fatal?: string;
+  droppedNonStandardEdges?: number;
 }
 
 function buildInvalidCollectionIssue(name: string): GraphIssue {
@@ -623,9 +635,21 @@ export function validateGraph(data: unknown): ValidationResult {
   // Tier 3: Validate edges + referential integrity
   const nodeIds = new Set(validNodes.map((n) => n.id));
   const validEdges: z.infer<typeof GraphEdgeSchema>[] = [];
+  let droppedNonStandardEdges = 0;
   if (Array.isArray(fixed.edges)) {
     for (let i = 0; i < fixed.edges.length; i++) {
       const edge = fixed.edges[i] as Record<string, unknown>;
+      // Explicit check for non-standard edge types before Zod validation
+      if (typeof edge.type === "string" && !EdgeTypeSchema.safeParse(edge.type).success && !(edge.type in EDGE_TYPE_ALIASES)) {
+        droppedNonStandardEdges++;
+        issues.push({
+          level: "dropped",
+          category: "non-standard-edge-type",
+          message: `edges[${i}]: non-standard type "${edge.type}" — not in schema (${EdgeTypeSchema.options.join(", ")}) — removed`,
+          path: `edges[${i}].type`,
+        });
+        continue;
+      }
       const result = GraphEdgeSchema.safeParse(edge);
       if (!result.success) {
         issues.push({
@@ -709,5 +733,5 @@ export function validateGraph(data: unknown): ValidationResult {
     tour: validTour,
   };
 
-  return { success: true, data: graph, issues, errors: buildErrors(issues) };
+  return { success: true, data: graph, issues, errors: buildErrors(issues), droppedNonStandardEdges };
 }
