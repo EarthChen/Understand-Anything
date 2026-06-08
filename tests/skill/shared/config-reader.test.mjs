@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readConfig, CONFIG_DEFAULTS } from '../../../understand-anything-plugin/skills/shared/config-reader.mjs';
+import { readConfig, readSystemConfig, CONFIG_DEFAULTS } from '../../../understand-anything-plugin/skills/shared/config-reader.mjs';
 
 let tmpDir;
 
@@ -105,5 +105,42 @@ describe('readConfig', () => {
       servicePath: svcDir,
     });
     expect(config.excludeServices).toEqual([]);
+  });
+});
+
+describe('readSystemConfig', () => {
+  it('returns null when system.json does not exist', () => {
+    expect(readSystemConfig(tmpDir)).toBeNull();
+  });
+
+  it('reads system.json with facets', () => {
+    mkdirSync(join(tmpDir, '.understand-anything'), { recursive: true });
+    writeFileSync(
+      join(tmpDir, '.understand-anything', 'system.json'),
+      JSON.stringify({
+        name: 'test-project',
+        facets: [
+          { id: 'server', path: 'server/', type: 'backend' },
+          { id: 'client', path: 'client/', type: 'mobile', subPaths: ['android/', 'ios/'] },
+        ],
+      })
+    );
+    const sys = readSystemConfig(tmpDir);
+    expect(sys.name).toBe('test-project');
+    expect(sys.facets).toHaveLength(2);
+    expect(sys.facets[0]).toEqual({ id: 'server', path: 'server/', type: 'backend' });
+    expect(sys.facets[1].subPaths).toEqual(['android/', 'ios/']);
+  });
+
+  it('backward compat: existing system.json without facets returns empty facets', () => {
+    mkdirSync(join(tmpDir, '.understand-anything'), { recursive: true });
+    writeFileSync(
+      join(tmpDir, '.understand-anything', 'system.json'),
+      JSON.stringify({ name: 'old-project', discovery: { mode: 'auto' } })
+    );
+    const sys = readSystemConfig(tmpDir);
+    expect(sys.name).toBe('old-project');
+    expect(sys.facets).toEqual([]);
+    expect(sys.discovery).toEqual({ mode: 'auto' });
   });
 });

@@ -44,3 +44,23 @@ export function readConfig({ projectRoot, facetPath, servicePath }) {
 
   return merged;
 }
+
+/**
+ * Read system.json from project root. Returns null if not found.
+ * Adds default empty facets[] if field is missing (backward compat).
+ *
+ * @param {string} projectRoot
+ * @returns {object|null}
+ */
+export function readSystemConfig(projectRoot) {
+  const systemPath = join(projectRoot, '.understand-anything', 'system.json');
+  if (!existsSync(systemPath)) return null;
+  try {
+    const raw = readFileSync(systemPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!parsed.facets) parsed.facets = [];
+    return parsed;
+  } catch {
+    return null;
+  }
+}
