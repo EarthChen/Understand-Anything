@@ -472,3 +472,52 @@ export interface AnalyzerPlugin {
   extractCallGraph?(filePath: string, content: string): CallGraphEntry[];
   extractReferences?(filePath: string, content: string): ReferenceResolution[];
 }
+
+// Business-landscape domain matching result
+export interface BusinessDomain {
+  id: string;
+  name: string;
+  summary: string;
+  facets: string[];
+  implType?: "cross-platform" | "platform-specific" | "mixed";
+  matchType: "manual" | "auto-api" | "auto-name" | "auto-llm";
+  matchConfidence: number;
+  detailRef: string;
+}
+
+// Cross-facet API endpoint link
+export interface CrossFacetLink {
+  domain: string;
+  serverEndpoints: string[];
+  clientApiCalls: Array<{ platform: string; path: string; file: string }>;
+  matchDetails: Array<{ serverEndpoint?: string; clientApiCall?: string; matchLayer: number; matchType: string }>;
+}
+
+// Business interaction step (DAG node)
+export interface InteractionStep {
+  id: string;
+  facet: string;
+  description: string;
+  after?: string[];
+  branches?: Array<{ condition: string; next: string[]; relatedRules?: string[] }>;
+  parallel?: string[];
+  terminal?: boolean;
+  relatedRules?: string[];
+}
+
+// Business interaction flow
+export interface BusinessInteraction {
+  id: string;
+  name: string;
+  triggerRules?: string[];
+  steps: InteractionStep[];
+}
+
+// Business rule
+export interface BusinessRule {
+  id: string;
+  rule: string;
+  enforcedBy: string[];
+  observedBy?: string[];
+  relatedFlows?: string[];
+}
