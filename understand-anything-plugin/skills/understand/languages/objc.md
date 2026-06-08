@@ -40,6 +40,16 @@
 - **Masonry / SnapKit** — Auto Layout DSL for programmatic constraints
 - **ReactiveCocoa** — Reactive programming framework for Cocoa/Cocoa Touch
 
+## API Call Detection
+
+When analyzing mobile/client code, identify HTTP API calls and create `consumes_api` edges with `{ method, path }` metadata:
+
+- **NSURLSession**: `[[NSURLSession sharedSession] dataTaskWithRequest:request]` — extract URL from `NSURLRequest`, method from `HTTPMethod` property
+- **AFNetworking**: `[manager GET:@"/api/orders" parameters:nil ...]`, `[manager POST:@"/api/orders" ...]` → Extract path from first argument, method from selector name
+- **NSURLConnection (legacy)**: `[NSURLConnection sendAsynchronousRequest:...]` → Extract URL and method from NSURLRequest
+
+For each unique API path discovered, create an `endpoint` node and a `consumes_api` edge from the calling function/class to that endpoint.
+
 ## Example Language Notes
 
 > Uses `@protocol` and delegate pattern for loose coupling between view controller

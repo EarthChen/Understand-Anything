@@ -37,6 +37,17 @@
 - **Exposed** — Lightweight SQL framework with type-safe DSL and DAO patterns
 - **Koin** — Pragmatic dependency injection framework using Kotlin DSL
 
+## API Call Detection
+
+When analyzing mobile/client code, identify HTTP API calls and create `consumes_api` edges with `{ method, path }` metadata:
+
+- **Retrofit interfaces**: `@GET("/api/orders")`, `@POST("/api/orders/{id}")` → Create `endpoint` node for the API path, `consumes_api` edge from the interface method to the endpoint. Metadata: `{ "method": "GET", "path": "/api/orders" }`
+- **OkHttp direct calls**: `Request.Builder().url("https://...").post(body).build()` → Extract URL path and HTTP method
+- **Ktor client**: `client.get("https://...") {}`, `client.post("https://...") {}` → Extract path and method from function name
+- **Dynamic URL construction**: If URL is built from variables/constants, extract the static path template; use `{param}` for path parameters (e.g., `/api/orders/{orderId}`)
+
+For each unique API path discovered, create an `endpoint` node and a `consumes_api` edge from the calling function/class to that endpoint.
+
 ## Example Language Notes
 
 > Uses sealed class hierarchy with `when` exhaustive matching to handle all possible

@@ -36,6 +36,17 @@
 - **Combine** — Reactive framework for processing values over time
 - **Core Data** — Object graph and persistence framework
 
+## API Call Detection
+
+When analyzing mobile/client code, identify HTTP API calls and create `consumes_api` edges with `{ method, path }` metadata:
+
+- **URLSession**: `URLSession.shared.dataTask(with: url)` — extract URL path; method from `URLRequest.httpMethod` (default: "GET")
+- **Alamofire**: `AF.request("https://.../api/orders", method: .post)` → Extract path and method
+- **Moya**: Target enum cases with `path` and `method` properties → Extract from enum definition
+- **Async/await**: `let (data, _) = try await URLSession.shared.data(from: url)` → Extract URL path
+
+For each unique API path discovered, create an `endpoint` node and a `consumes_api` edge from the calling function/class to that endpoint.
+
 ## Example Language Notes
 
 > Uses `@Published` property wrapper to automatically notify SwiftUI views of state
