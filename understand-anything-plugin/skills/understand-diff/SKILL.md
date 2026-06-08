@@ -58,7 +58,13 @@ The knowledge graph JSON has this structure:
    - **Risk Assessment**: Based on node `complexity` values, number of cross-layer edges, and blast radius (number of affected components)
    - Suggest what to review carefully and any potential issues
 
-8. **Write diff overlay for dashboard** — after producing the analysis, write the diff data to `.understand-anything/diff-overlay.json` so the dashboard can visualize changed and affected components. The file contains:
+8. **Validate analysis output** — before writing the diff overlay, validate that the structured analysis conforms to the expected schema:
+   - Verify the analysis has `changes` (array), `summary` (string), `risk` (string)
+   - Verify each change has `file` (string), `type` (one of `"added"`, `"modified"`, `"deleted"`), `impact` (string)
+   - If any field is missing or has an unexpected type, re-prompt the LLM with the specific validation errors (max 2 retries)
+   - If validation still fails after retries, save the best-effort result with a warning to the user
+
+9. **Write diff overlay for dashboard** — after producing the analysis, write the diff data to `.understand-anything/diff-overlay.json` so the dashboard can visualize changed and affected components. The file contains:
    ```json
    {
      "version": "1.0.0",
@@ -70,3 +76,7 @@ The knowledge graph JSON has this structure:
    }
    ```
    After writing, tell the user they can run `/understand-anything:understand-dashboard` to see the diff overlay visually.
+
+10. **Write checkpoint metadata** — write `_checkpoint` status to the diff overlay for resume support:
+    - If analysis and validation succeeded: `{ "_checkpoint": { "status": "complete" } }`
+    - If validation failed but best-effort was saved: `{ "_checkpoint": { "status": "degraded", "reason": "validation failed after retries" } }`
