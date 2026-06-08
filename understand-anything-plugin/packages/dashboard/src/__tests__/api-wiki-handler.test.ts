@@ -5,8 +5,6 @@ import os from "os"
 import { WikiDataService } from "../../wiki-api"
 import { handleWikiRequest } from "../api/handlers/wiki"
 import { handleSourceRequest } from "../api/handlers/source"
-import { isProtectedPath, validateToken } from "../api/handlers/auth"
-
 function tmpDir(): string {
   return fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "api-wiki-")))
 }
@@ -16,29 +14,11 @@ function writeJson(p: string, d: unknown): void {
   fs.writeFileSync(p, JSON.stringify(d))
 }
 
-describe("auth handler", () => {
-  it("marks /api/wiki and /knowledge-graph.json as protected", () => {
-    expect(isProtectedPath("/api/wiki/search")).toBe(true)
-    expect(isProtectedPath("/knowledge-graph.json")).toBe(true)
-    expect(isProtectedPath("/assets/logo.svg")).toBe(false)
-  })
-
-  it("validateToken returns 403 on mismatch", () => {
-    const res = validateToken(new URLSearchParams("token=bad"), "good")
-    expect(res?.statusCode).toBe(403)
-  })
-
-  it("validateToken returns null on match", () => {
-    expect(validateToken(new URLSearchParams("token=good"), "good")).toBeNull()
-  })
-})
-
 describe("wiki handler", () => {
   let dir: string
   let origCwd: string
   let svc: WikiDataService
   const ctx = {
-    accessToken: "t",
     getWikiService: () => svc,
   }
 
@@ -70,12 +50,36 @@ describe("wiki handler", () => {
     expect(res?.statusCode).toBe(200)
     expect((res?.body as { name: string }).name).toBe("Parent")
   })
+
+  it("blocks null byte injection in /wiki/ path", async () => {
+    const res = await handleWikiRequest(
+      { pathname: "/wiki/foo\0../../etc/passwd", searchParams: new URLSearchParams() },
+      ctx,
+    )
+    expect(res?.statusCode).toBe(400)
+  })
+
+  it("blocks tilde expansion in /wiki/ path", async () => {
+    const res = await handleWikiRequest(
+      { pathname: "/wiki/~/etc/passwd", searchParams: new URLSearchParams() },
+      ctx,
+    )
+    expect(res?.statusCode).toBe(400)
+  })
+
+  it("blocks path traversal escaping wiki directory", async () => {
+    const res = await handleWikiRequest(
+      { pathname: "/wiki/../../etc/passwd", searchParams: new URLSearchParams() },
+      ctx,
+    )
+    expect(res?.statusCode).toBe(400)
+  })
 })
 
 describe("source handler", () => {
   let dir: string
   let origCwd: string
-  const ctx = { accessToken: "t", getWikiService: () => new WikiDataService(dir) }
+  const ctx = { getWikiService: () => new WikiDataService(dir) }
 
   beforeEach(() => {
     dir = tmpDir()

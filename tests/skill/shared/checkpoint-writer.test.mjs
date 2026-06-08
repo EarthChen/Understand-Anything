@@ -58,4 +58,11 @@ describe('writeCheckpoint', () => {
     expect(parsed.v).toBe(2);
     expect(parsed._checkpoint.status).toBe('complete');
   });
+
+  it('throws on invalid status value', () => {
+    const p = join(tmpDir, 'bad.json');
+    expect(() => writeCheckpoint(p, {}, 'complet')).toThrow('Invalid checkpoint status');
+    expect(() => writeCheckpoint(p, {}, '')).toThrow('Invalid checkpoint status');
+    expect(() => writeCheckpoint(p, {}, 'unknown')).toThrow('Invalid checkpoint status');
+  });
 });

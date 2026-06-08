@@ -7,7 +7,7 @@ import sys
 from typing import Any
 import urllib.request
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 DEFAULT_SERVER = "http://localhost:3001"
 DEFAULT_TIMEOUT = 30
@@ -22,12 +22,6 @@ def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT) -> Any:
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except URLError as e:
-        raise ServerUnavailableError(
-            f"API Server unavailable at {url.split('?')[0]}. "
-            f"Start it with: cd understand-anything-plugin/packages/dashboard && pnpm run serve\n"
-            f"Detail: {e}"
-        ) from e
     except HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         try:
@@ -35,6 +29,12 @@ def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT) -> Any:
         except json.JSONDecodeError:
             err = {"error": body}
         raise RuntimeError(f"HTTP {e.code}: {err.get('error', body)}") from e
+    except URLError as e:
+        raise ServerUnavailableError(
+            f"API Server unavailable at {url.split('?')[0]}. "
+            f"Start it with: cd understand-anything-plugin/packages/dashboard && pnpm run serve\n"
+            f"Detail: {e}"
+        ) from e
 
 
 def build_url(server: str, path: str, params: dict[str, str], token: str) -> str:
@@ -142,18 +142,13 @@ def cmd_wiki(args: argparse.Namespace) -> Any:
         raise SystemExit("wiki requires --service")
     if args.search:
         return fetch_json(build_url(args.server, "/api/wiki/search", {"q": args.search, "limit": "20"}, args.token))
+    svc = quote(args.service, safe="")
     if args.domain:
-        path = f"/api/wiki/service/{args.service}/domain/{args.domain}"
+        path = f"/api/wiki/service/{svc}/domain/{quote(args.domain, safe='')}"
         return fetch_json(build_url(args.server, path, {}, args.token))
-    if args.type == "domain":
-        return fetch_json(build_url(args.server, f"/api/wiki/service/{args.service}", {}, args.token))
     if args.type == "endpoint":
-        return fetch_json(build_url(args.server, f"/api/wiki/endpoints/{args.service}", {}, args.token))
-    if args.type == "structure":
-        return fetch_json(build_url(args.server, f"/api/wiki/service/{args.service}", {}, args.token))
-    if args.type == "flow":
-        return fetch_json(build_url(args.server, f"/api/wiki/service/{args.service}", {}, args.token))
-    return fetch_json(build_url(args.server, f"/api/wiki/service/{args.service}", {}, args.token))
+        return fetch_json(build_url(args.server, f"/api/wiki/endpoints/{svc}", {}, args.token))
+    return fetch_json(build_url(args.server, f"/api/wiki/service/{svc}", {}, args.token))
 
 
 def cmd_business(args: argparse.Namespace) -> Any:

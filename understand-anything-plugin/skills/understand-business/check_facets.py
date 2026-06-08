@@ -23,7 +23,7 @@ GRAPH_FILE_MAP = {
 }
 
 
-def check_facets(project_root_str):
+def check_facets(project_root_str: str) -> dict:
     project_root = Path(project_root_str)
     system_path = project_root / '.understand-anything' / 'system.json'
 
@@ -41,7 +41,9 @@ def check_facets(project_root_str):
         facet_path = facet.get('path', '')
         facet_type = facet.get('type', '')
 
-        facet_dir = project_root / facet_path
+        facet_dir = (project_root / facet_path).resolve()
+        if not facet_dir.is_relative_to(project_root.resolve()):
+            raise ValueError(f"Path escapes project root: {facet_path}")
         ua_dir = facet_dir / '.understand-anything'
         graph_file = GRAPH_FILE_MAP.get(facet_type)
 

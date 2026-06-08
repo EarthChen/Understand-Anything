@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 
-def assemble_landscape(project_root_str):
+def assemble_landscape(project_root_str: str) -> dict | None:
     project_root = Path(project_root_str)
     intermediate = project_root / '.understand-anything' / 'intermediate'
 

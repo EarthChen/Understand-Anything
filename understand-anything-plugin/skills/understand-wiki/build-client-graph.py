@@ -99,17 +99,15 @@ def _classify_impl_type(domain_name, platform_domains_map, cross_platform_framew
         return 'platform-specific', implementations
 
 
-def build_client_graph(project_root_str):
+def build_client_graph(project_root_str: str) -> None:
     project_root = Path(project_root_str)
     system_config = _load_system_config(project_root)
     if not system_config:
-        print('[build-client-graph] ERROR: system.json not found', file=sys.stderr)
-        sys.exit(1)
+        raise FileNotFoundError('[build-client-graph] system.json not found')
 
     client_facet = _find_client_facet(system_config)
     if not client_facet:
-        print('[build-client-graph] ERROR: No mobile facet found in system.json', file=sys.stderr)
-        sys.exit(1)
+        raise ValueError('[build-client-graph] No mobile facet found in system.json')
 
     facet_path = project_root / client_facet['path']
     sub_paths = client_facet.get('subPaths', [])
@@ -130,8 +128,7 @@ def build_client_graph(project_root_str):
         platform_domains_map[platform_name] = domains
 
     if not platforms:
-        print('[build-client-graph] WARNING: No integrated platforms found', file=sys.stderr)
-        sys.exit(1)
+        raise FileNotFoundError('[build-client-graph] No integrated platforms found')
 
     cross_platform_frameworks = _detect_cross_platform_frameworks(platform_domains_map)
 
@@ -162,15 +159,20 @@ def build_client_graph(project_root_str):
         'featureMap': feature_map,
     }
 
+    # Hash is of canonical content (without contentHash), so integrity can be
+    # verified by stripping the field, re-hashing, and comparing.
+    content = json.dumps(client_graph, indent=2, ensure_ascii=False)
+    content_hash = hashlib.sha256(content.encode()).hexdigest()
+    client_graph['contentHash'] = content_hash
+    content = json.dumps(client_graph, indent=2, ensure_ascii=False)
+
     output_path = facet_path / '.understand-anything' / 'client-graph.json'
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    content = json.dumps(client_graph, indent=2, ensure_ascii=False)
     tmp_path = str(output_path) + '.tmp'
     with open(tmp_path, 'w') as f:
         f.write(content)
     Path(tmp_path).rename(output_path)
 
-    content_hash = hashlib.sha256(content.encode()).hexdigest()
     print(f'[build-client-graph] Generated client-graph.json: {len(platforms)} platforms, {len(feature_map)} features, hash={content_hash[:12]}')
 
 
@@ -178,4 +180,8 @@ if __name__ == '__main__':
     if len(sys.argv) < 2:
         print('Usage: python3 build-client-graph.py <project-root>', file=sys.stderr)
         sys.exit(1)
-    build_client_graph(sys.argv[1])
+    try:
+        build_client_graph(sys.argv[1])
+    except (FileNotFoundError, ValueError) as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        sys.exit(1)

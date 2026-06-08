@@ -18,11 +18,10 @@ import PersonaSelector from "./components/PersonaSelector";
 import ProjectOverview from "./components/ProjectOverview";
 import FileExplorer from "./components/FileExplorer";
 import WarningBanner from "./components/WarningBanner";
-import TokenGate from "./components/TokenGate";
 import MobileLayout from "./components/MobileLayout";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
-import type { KeyboardShortcut } from "./hooks/useKeyboardShortcuts";
+import { useDashboardShortcuts } from "./hooks/useDashboardShortcuts";
 import { ThemeProvider } from "./themes/index.ts";
 import { ThemePicker } from "./components/ThemePicker.tsx";
 import type { ThemeConfig } from "./themes/index.ts";
@@ -41,7 +40,6 @@ const KeyboardShortcutsHelp = lazy(
 const OnboardingOverlay = lazy(() => import("./components/OnboardingOverlay"));
 
 const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
-const SESSION_TOKEN_KEY = "understand-anything-token";
 const ONBOARDING_DISMISSED_KEY = "ua-onboarding-dismissed-v1";
 type SidebarTab = "info" | "files";
 
@@ -52,8 +50,8 @@ function shouldShowOnboarding(): boolean {
   return window.localStorage.getItem(ONBOARDING_DISMISSED_KEY) !== "1";
 }
 
-/** Resolve data file URL — in demo mode, use env var URLs; otherwise use local paths with token. */
-function dataUrl(fileName: string, token: string | null): string {
+/** Resolve data file URL — in demo mode, use env var URLs; otherwise use local paths. */
+function dataUrl(fileName: string): string {
   if (DEMO_MODE) {
     const envMap: Record<string, string | undefined> = {
       "knowledge-graph.json": import.meta.env.VITE_GRAPH_URL,
@@ -65,74 +63,30 @@ function dataUrl(fileName: string, token: string | null): string {
     const url = envMap[fileName];
     if (url) return url;
   }
-  const path = `/${fileName}`;
-  return token ? `${path}?token=${encodeURIComponent(token)}` : path;
-}
-
-/**
- * Resolve the access token from the URL query string or sessionStorage.
- * If found in the URL, persist to sessionStorage and strip the param from the address bar.
- */
-function resolveInitialToken(): string | null {
-  if (DEMO_MODE) return "__demo__";
-  const params = new URLSearchParams(window.location.search);
-  const urlToken = params.get("token");
-  if (urlToken) {
-    sessionStorage.setItem(SESSION_TOKEN_KEY, urlToken);
-    // Clean the URL
-    params.delete("token");
-    const cleanSearch = params.toString();
-    const newUrl =
-      window.location.pathname + (cleanSearch ? `?${cleanSearch}` : "") + window.location.hash;
-    window.history.replaceState(null, "", newUrl);
-    return urlToken;
-  }
-  return sessionStorage.getItem(SESSION_TOKEN_KEY);
+  return `/${fileName}`;
 }
 
 function App() {
-  const [accessToken, setAccessToken] = useState<string | null>(resolveInitialToken);
-
-  const handleTokenValid = useCallback((token: string) => {
-    sessionStorage.setItem(SESSION_TOKEN_KEY, token);
-    setAccessToken(token);
-  }, []);
-
-  // In demo mode, skip token gate entirely
-  if (DEMO_MODE) {
-    return <Dashboard accessToken="__demo__" />;
-  }
-
-  // Show the token gate when no token is available
-  if (accessToken === null) {
-    return <TokenGate onTokenValid={handleTokenValid} />;
-  }
-
-  return <Dashboard accessToken={accessToken} />;
+  return <Dashboard />;
 }
 
-function Dashboard({ accessToken }: { accessToken: string }) {
+function Dashboard() {
   const setGraph = useDashboardStore((s) => s.setGraph);
   const setDomainGraph = useDashboardStore((s) => s.setDomainGraph);
   const setDiffOverlay = useDashboardStore((s) => s.setDiffOverlay);
-  const setAccessToken = useDashboardStore((s) => s.setAccessToken);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [graphIssues, setGraphIssues] = useState<GraphIssue[]>([]);
   const [metaTheme, setMetaTheme] = useState<ThemeConfig | null>(null);
   const [outputLanguage, setOutputLanguage] = useState<string | undefined>();
 
   useEffect(() => {
-    setAccessToken(accessToken);
-  }, [accessToken, setAccessToken]);
-
-  useEffect(() => {
-    fetch(dataUrl("meta.json", accessToken))
+    fetch(dataUrl("meta.json"))
       .then((r) => (r.ok ? r.json() : null))
       .then((meta) => {
         if (meta?.theme) setMetaTheme(meta.theme);
       })
       .catch(() => {});
-    fetch(dataUrl("config.json", accessToken))
+    fetch(dataUrl("config.json"))
       .then((r) => (r.ok ? r.json() : null))
       .then((config) => {
         if (config?.outputLanguage) setOutputLanguage(config.outputLanguage);
@@ -141,7 +95,7 @@ function Dashboard({ accessToken }: { accessToken: string }) {
   }, []);
 
   useEffect(() => {
-    fetch(dataUrl("knowledge-graph.json", accessToken))
+    fetch(dataUrl("knowledge-graph.json"))
       .then((res) => {
         if (!res.ok) return null;
         return res.json();
@@ -172,7 +126,7 @@ function Dashboard({ accessToken }: { accessToken: string }) {
   }, [setGraph]);
 
   useEffect(() => {
-    fetch(dataUrl("diff-overlay.json", accessToken))
+    fetch(dataUrl("diff-overlay.json"))
       .then((res) => {
         if (!res.ok) return null;
         return res.json();
@@ -196,7 +150,7 @@ function Dashboard({ accessToken }: { accessToken: string }) {
   }, [setDiffOverlay]);
 
   useEffect(() => {
-    fetch(dataUrl("domain-graph.json", accessToken))
+    fetch(dataUrl("domain-graph.json"))
       .then((res) => {
         if (!res.ok) return null;
         return res.json();
@@ -214,7 +168,7 @@ function Dashboard({ accessToken }: { accessToken: string }) {
   }, [setDomainGraph]);
 
   useEffect(() => {
-    fetch(dataUrl("system-graph.json", accessToken))
+    fetch(dataUrl("system-graph.json"))
       .then((r) => (r.ok ? r.json() : null))
       .then((data: unknown) => {
         if (!data) return;
@@ -228,29 +182,26 @@ function Dashboard({ accessToken }: { accessToken: string }) {
         }
       })
       .catch(() => {});
-  }, [accessToken]);
+  }, []);
 
   // Detect wiki availability
   const setWikiAvailable = useDashboardStore((s) => s.setWikiAvailable);
   useEffect(() => {
-    const wikiMetaUrl = DEMO_MODE
-      ? null
-      : `/wiki/meta.json?token=${encodeURIComponent(accessToken)}`;
-    if (!wikiMetaUrl) return;
-    fetch(wikiMetaUrl)
+    if (DEMO_MODE) return;
+    fetch("/wiki/meta.json")
       .then((res) => {
         if (res.ok) setWikiAvailable(true);
       })
       .catch(() => {});
-  }, [accessToken, setWikiAvailable]);
+  }, [setWikiAvailable]);
 
   const fetchBusinessDomains = useBusinessStore((s) => s.fetchDomains);
 
   useEffect(() => {
-    void detectBusinessAvailability(accessToken).then((ok) => {
+    void detectBusinessAvailability().then((ok) => {
       if (ok) void fetchBusinessDomains();
     });
-  }, [accessToken, fetchBusinessDomains]);
+  }, [fetchBusinessDomains]);
 
   const activeService = useDashboardStore((s) => s.activeService);
 
@@ -271,8 +222,7 @@ function Dashboard({ accessToken }: { accessToken: string }) {
 
   const loadServiceGraph = useCallback(
     async (serviceName: string) => {
-      const token = accessToken || "";
-      const url = `/api/graph?service=${encodeURIComponent(serviceName)}&file=knowledge-graph.json${token ? `&token=${encodeURIComponent(token)}` : ""}`;
+      const url = `/api/graph?service=${encodeURIComponent(serviceName)}&file=knowledge-graph.json`;
       try {
         const res = await fetch(url);
         if (!res.ok) return;
@@ -286,7 +236,7 @@ function Dashboard({ accessToken }: { accessToken: string }) {
         // Service KG load failed — stay on current view
       }
     },
-    [accessToken],
+    [],
   );
 
   useEffect(() => {
@@ -299,7 +249,6 @@ function Dashboard({ accessToken }: { accessToken: string }) {
     <I18nProvider language={outputLanguage ?? "en"}>
       <ThemeProvider metaTheme={metaTheme}>
         <DashboardContent
-          accessToken={accessToken}
           loadError={loadError}
           graphIssues={graphIssues}
         />
@@ -309,11 +258,9 @@ function Dashboard({ accessToken }: { accessToken: string }) {
 }
 
 function DashboardContent({
-  accessToken,
   loadError,
   graphIssues,
 }: {
-  accessToken: string;
   loadError: string | null;
   graphIssues: GraphIssue[];
 }) {
@@ -333,7 +280,7 @@ function DashboardContent({
   const setDetailLevel = useDashboardStore((s) => s.setDetailLevel);
   const showFunctionsInClassView = useDashboardStore((s) => s.showFunctionsInClassView);
   const toggleShowFunctionsInClassView = useDashboardStore((s) => s.toggleShowFunctionsInClassView);
-  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
+  const { shortcuts, showKeyboardHelp, setShowKeyboardHelp } = useDashboardShortcuts();
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("info");
   const [showOnboarding, setShowOnboarding] = useState(shouldShowOnboarding);
   const dismissOnboarding = useCallback((remember: boolean) => {
@@ -361,121 +308,6 @@ function DashboardContent({
   useEffect(() => {
     if (selectedNodeId) setSidebarTab("info");
   }, [selectedNodeId]);
-
-  // Define keyboard shortcuts
-  const shortcuts = useMemo<KeyboardShortcut[]>(
-    () => [
-      // Help
-      {
-        key: "?",
-        shiftKey: true,
-        description: t.keyboardShortcuts.showHelp,
-        action: () => setShowKeyboardHelp((prev) => !prev),
-        category: "General",
-      },
-      // Navigation
-      {
-        key: "Escape",
-        description: t.keyboardShortcuts.escapeDesc,
-        action: () => {
-          // Read from store at invocation time to avoid stale closures
-          const state = useDashboardStore.getState();
-          if (state.pathFinderOpen) {
-            state.togglePathFinder();
-          } else if (state.filterPanelOpen) {
-            state.toggleFilterPanel();
-          } else if (state.exportMenuOpen) {
-            state.toggleExportMenu();
-          } else if (state.codeViewerExpanded) {
-            state.collapseCodeViewer();
-          } else if (state.codeViewerOpen) {
-            state.closeCodeViewer();
-          } else if (state.selectedNodeId) {
-            state.selectNode(null);
-          } else if (state.navigationLevel === "layer-detail") {
-            state.navigateToOverview();
-          } else if (state.tourActive) {
-            state.stopTour();
-          } else {
-            setShowKeyboardHelp(false);
-          }
-        },
-        category: "Navigation",
-      },
-      {
-        key: "/",
-        description: t.keyboardShortcuts.focusSearch,
-        action: () => {
-          const searchInput = document.querySelector<HTMLInputElement>(
-            '[data-testid="search-input"]'
-          );
-          searchInput?.focus();
-        },
-        category: "Navigation",
-      },
-      // Tour controls
-      {
-        key: "ArrowRight",
-        description: t.keyboardShortcuts.nextStep,
-        action: () => {
-          const state = useDashboardStore.getState();
-          if (state.tourActive) {
-            state.nextTourStep();
-          }
-        },
-        category: "Tour",
-      },
-      {
-        key: "ArrowLeft",
-        description: t.keyboardShortcuts.prevStep,
-        action: () => {
-          const state = useDashboardStore.getState();
-          if (state.tourActive) {
-            state.prevTourStep();
-          }
-        },
-        category: "Tour",
-      },
-      // View toggles
-      {
-        key: "d",
-        description: t.keyboardShortcuts.toggleDiff,
-        action: () => {
-          const state = useDashboardStore.getState();
-          state.toggleDiffMode();
-        },
-        category: "View",
-      },
-      {
-        key: "f",
-        description: t.keyboardShortcuts.toggleFilter,
-        action: () => {
-          const state = useDashboardStore.getState();
-          state.toggleFilterPanel();
-        },
-        category: "View",
-      },
-      {
-        key: "e",
-        description: t.keyboardShortcuts.toggleExport,
-        action: () => {
-          const state = useDashboardStore.getState();
-          state.toggleExportMenu();
-        },
-        category: "View",
-      },
-      {
-        key: "p",
-        description: t.keyboardShortcuts.openPathFinder,
-        action: () => {
-          const state = useDashboardStore.getState();
-          state.togglePathFinder();
-        },
-        category: "View",
-      },
-    ],
-    [t]
-  );
 
   // Register keyboard shortcuts
   useKeyboardShortcuts(shortcuts);
@@ -523,7 +355,6 @@ function DashboardContent({
   if (isMobile) {
     return (
       <MobileLayout
-        accessToken={accessToken}
         showKeyboardHelp={showKeyboardHelp}
         setShowKeyboardHelp={setShowKeyboardHelp}
         loadError={loadError}
@@ -920,11 +751,11 @@ function DashboardContent({
         {/* Graph area */}
         <div className="flex-1 min-w-0 min-h-0 relative">
           {viewMode === "business" && businessAvailable ? (
-            <BusinessGraphView accessToken={accessToken} />
+            <BusinessGraphView />
           ) : viewMode === "system" && systemGraph ? (
             <SystemOverview />
           ) : viewMode === "wiki" ? (
-            <WikiView accessToken={accessToken} />
+            <WikiView />
           ) : viewMode === "knowledge" ? (
             <KnowledgeGraphView />
           ) : viewMode === "domain" && domainGraph ? (
@@ -948,7 +779,7 @@ function DashboardContent({
         {codeViewerOpen && !codeViewerExpanded && (
           <div className="absolute bottom-0 left-0 right-0 h-[40vh] bg-surface border-t border-border-subtle animate-slide-up z-20 overflow-hidden">
             <Suspense fallback={null}>
-              <CodeViewer accessToken={accessToken} onExpand={expandCodeViewer} />
+              <CodeViewer onExpand={expandCodeViewer} />
             </Suspense>
           </div>
         )}
@@ -966,7 +797,6 @@ function DashboardContent({
           >
             <Suspense fallback={null}>
               <CodeViewer
-                accessToken={accessToken}
                 presentation="modal"
                 onClose={collapseCodeViewer}
               />

@@ -147,10 +147,6 @@ function toOverview(data: Record<string, unknown>): BusinessOverview {
 
 function businessApiUrl(pathname: string, extraParams?: Record<string, string>): string {
   const url = new URL(pathname, window.location.origin);
-  const token = new URLSearchParams(window.location.search).get("token");
-  if (token) {
-    url.searchParams.set("token", token);
-  }
   if (extraParams) {
     for (const [key, value] of Object.entries(extraParams)) {
       url.searchParams.set(key, value);

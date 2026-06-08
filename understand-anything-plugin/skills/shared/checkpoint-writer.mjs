@@ -1,6 +1,8 @@
 import { writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
+const VALID_STATUSES = new Set(['complete', 'degraded', 'failed']);
+
 /**
  * Write data to a checkpoint file with status metadata.
  * Uses atomic write: write to temp → rename to final path.
@@ -11,6 +13,9 @@ import { dirname } from 'node:path';
  * @param {string} [reason] - Reason for degraded/failed status
  */
 export function writeCheckpoint(filePath, data, status, reason) {
+  if (!VALID_STATUSES.has(status)) {
+    throw new Error(`Invalid checkpoint status: "${status}". Must be one of: complete, degraded, failed`);
+  }
   const output = {
     ...data,
     _checkpoint: { status, ...(reason ? { reason } : {}) },
@@ -19,6 +24,5 @@ export function writeCheckpoint(filePath, data, status, reason) {
   const tmpPath = filePath + '.tmp';
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(tmpPath, jsonStr, 'utf-8');
-  JSON.parse(jsonStr);
   renameSync(tmpPath, filePath);
 }

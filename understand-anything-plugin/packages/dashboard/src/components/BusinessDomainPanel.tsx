@@ -2,7 +2,7 @@ import InteractionDagView from "./InteractionDagView"
 import { useBusinessStore } from "../stores/businessStore"
 import { useDashboardStore } from "../store"
 
-export default function BusinessDomainPanel({ domainId }: { domainId: string; accessToken?: string }) {
+export default function BusinessDomainPanel({ domainId }: { domainId: string }) {
   const detail = useBusinessStore((s) => s.domainDetail[domainId])
   const setViewMode = useDashboardStore((s) => s.setViewMode)
   const setActiveService = useDashboardStore((s) => s.setActiveService)

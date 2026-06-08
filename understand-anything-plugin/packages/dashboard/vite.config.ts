@@ -3,16 +3,10 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
-import crypto from "crypto";
 import { createApiRouter } from "./src/api/index";
 import { writeApiResponse } from "./src/api/vite-adapter";
 import { WikiDataService } from "./wiki-api";
 import { findGraphFile, projectRootFromGraphFile } from "./src/api/utils";
-
-// Generate a one-time token when the server process starts.
-// This token is printed to the terminal and must be in the URL
-// to fetch knowledge-graph.json or diff-overlay.json.
-const ACCESS_TOKEN = process.env.UNDERSTAND_ACCESS_TOKEN || crypto.randomBytes(16).toString("hex");
 
 export default defineConfig({
   test: {
@@ -34,7 +28,7 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
-    open: `/?token=${ACCESS_TOKEN}`,
+    open: "/",
   },
 
   resolve: {
@@ -88,8 +82,8 @@ export default defineConfig({
           const address = server.httpServer?.address();
           const port = typeof address === "object" && address ? address.port : 5173;
           console.log(
-            `\n  🔑  Dashboard URL (local):   http://127.0.0.1:${port}/?token=${ACCESS_TOKEN}` +
-            `\n  🔑  Dashboard URL (network): http://0.0.0.0:${port}/?token=${ACCESS_TOKEN}\n`
+            `\n  Dashboard URL (local):   http://127.0.0.1:${port}/` +
+            `\n  Dashboard URL (network): http://0.0.0.0:${port}/\n`
           );
         });
 
@@ -110,7 +104,7 @@ export default defineConfig({
           const url = new URL(req.url ?? "/", "http://127.0.0.1:5173");
           const apiRes = await router.handle(
             { pathname: url.pathname, searchParams: url.searchParams },
-            { accessToken: ACCESS_TOKEN, getWikiService },
+            { getWikiService },
           );
           if (apiRes === null) {
             next();

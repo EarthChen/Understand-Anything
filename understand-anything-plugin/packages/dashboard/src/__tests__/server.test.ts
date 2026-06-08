@@ -13,7 +13,6 @@ function writeJson(p: string, d: unknown) {
 
 describe("standalone Express server", () => {
   let dir: string
-  const TOKEN = "test-token-abc"
 
   beforeEach(() => {
     dir = tmpDir()
@@ -30,21 +29,15 @@ describe("standalone Express server", () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it("returns 403 without token", async () => {
-    const app = createApp({ accessToken: TOKEN, projectRoot: dir })
+  it("serves knowledge-graph.json without token", async () => {
+    const app = createApp({ projectRoot: dir })
     const res = await request(app).get("/knowledge-graph.json")
-    expect(res.status).toBe(403)
-  })
-
-  it("serves knowledge-graph.json with token", async () => {
-    const app = createApp({ accessToken: TOKEN, projectRoot: dir })
-    const res = await request(app).get(`/knowledge-graph.json?token=${TOKEN}`)
     expect(res.status).toBe(200)
     expect(res.body.project.name).toBe("Test")
   })
 
   it("enables CORS for CLI access", async () => {
-    const app = createApp({ accessToken: TOKEN, projectRoot: dir })
+    const app = createApp({ projectRoot: dir })
     const res = await request(app).options("/api/wiki").set("Origin", "http://localhost")
     expect(res.headers["access-control-allow-origin"]).toBeDefined()
   })

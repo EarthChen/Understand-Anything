@@ -9,13 +9,15 @@ Usage:
 Exit code 0 = valid, 1 = errors
 """
 import json
+import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(__file__))
 from validate_domain import validate_domain_doc
 
 
-def validate_landscape(project_root_str):
+def validate_landscape(project_root_str: str) -> list[str]:
     project_root = Path(project_root_str)
     bl_dir = project_root / '.understand-anything' / 'business-landscape'
     errors = []

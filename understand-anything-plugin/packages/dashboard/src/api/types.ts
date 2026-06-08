@@ -12,7 +12,6 @@ export interface ApiResponse {
 }
 
 export interface ApiContext {
-  accessToken: string
   getWikiService: () => WikiDataService
 }
 

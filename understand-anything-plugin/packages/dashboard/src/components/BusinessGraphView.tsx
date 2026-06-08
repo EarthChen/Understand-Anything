@@ -14,7 +14,7 @@ function slugFromId(id: string): string {
   return id.replace(/^domain:/, "")
 }
 
-function BusinessGraphViewInner({ accessToken }: { accessToken: string }) {
+function BusinessGraphViewInner() {
   const domains = useBusinessStore((s) => s.domains)
   const links = useBusinessStore((s) => s.crossFacetLinks)
   const selectedDomainId = useBusinessStore((s) => s.selectedDomainId)
@@ -78,7 +78,7 @@ function BusinessGraphViewInner({ accessToken }: { accessToken: string }) {
   return (
     <div className="flex h-full w-full" data-testid="business-graph-view">
       <div className="flex-1 flex flex-col min-w-0">
-        <BusinessModeHeader accessToken={accessToken} />
+        <BusinessModeHeader />
         <div className="flex-1">
           <ReactFlow
             nodes={nodes}
@@ -94,15 +94,15 @@ function BusinessGraphViewInner({ accessToken }: { accessToken: string }) {
           </ReactFlow>
         </div>
       </div>
-      {selectedDomainId && <BusinessDomainPanel domainId={selectedDomainId} accessToken={accessToken} />}
+      {selectedDomainId && <BusinessDomainPanel domainId={selectedDomainId} />}
     </div>
   )
 }
 
-export default function BusinessGraphView({ accessToken }: { accessToken: string }) {
+export default function BusinessGraphView() {
   return (
     <ReactFlowProvider>
-      <BusinessGraphViewInner accessToken={accessToken} />
+      <BusinessGraphViewInner />
     </ReactFlowProvider>
   )
 }

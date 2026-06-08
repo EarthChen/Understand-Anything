@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 import json
 import pytest
-from pathlib import Path
 
-import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'understand-anything-plugin' / 'skills' / 'understand-business'))
 from domain_matcher import match_domains, _normalize_name, _match_by_api, _match_by_name
 
 
@@ -79,6 +76,39 @@ class TestMatchByName:
         client = {'order-management': {}}
         matches = _match_by_name(server, client, already_matched_server={'order-management'}, already_matched_client=set())
         assert len(matches) == 0
+
+
+class TestPathTraversal:
+    """Bug H5: domain_matcher must reject facet paths that escape project root."""
+
+    def test_server_path_traversal_raises(self, tmp_path):
+        """A server facet path like '../../etc' must be rejected."""
+        system = {
+            'facets': [
+                {'id': 'server', 'path': '../../etc', 'type': 'backend'},
+                {'id': 'client', 'path': 'client/', 'type': 'mobile', 'subPaths': ['android/']},
+            ]
+        }
+        with pytest.raises(ValueError, match='escapes project root'):
+            match_domains(str(tmp_path), system)
+
+    def test_client_path_traversal_raises(self, tmp_path):
+        """A client facet path like '../../etc' must be rejected."""
+        system = {
+            'facets': [
+                {'id': 'server', 'path': 'server/', 'type': 'backend'},
+                {'id': 'client', 'path': '../../etc', 'type': 'mobile', 'subPaths': ['android/']},
+            ]
+        }
+        # Server path is valid but client path escapes; _load_client_domains
+        # should raise. Need server wiki dir to exist so we reach client loading.
+        server_wiki = tmp_path / 'server' / '.understand-anything' / 'wiki' / 'domains'
+        server_wiki.mkdir(parents=True)
+        (server_wiki / 'order.json').write_text(json.dumps({
+            'name': 'order', 'integrationPoints': {'inbound': []}
+        }))
+        with pytest.raises(ValueError, match='escapes project root'):
+            match_domains(str(tmp_path), system)
 
 
 class TestMatchDomains:

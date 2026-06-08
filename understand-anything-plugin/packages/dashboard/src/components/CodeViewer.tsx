@@ -4,7 +4,6 @@ import { useDashboardStore } from "../store";
 import { useI18n } from "../contexts/I18nContext";
 
 interface CodeViewerProps {
-  accessToken: string;
   presentation?: "sidebar" | "modal";
   onClose?: () => void;
   onExpand?: () => void;
@@ -26,8 +25,8 @@ type SourceState =
   | { status: "loaded"; source: SourceFile; error: null }
   | { status: "error"; source: null; error: string };
 
-function sourceFileUrl(filePath: string, token: string, service?: string | null): string {
-  const params = new URLSearchParams({ token, file: filePath, mode: "graph" });
+function sourceFileUrl(filePath: string, service?: string | null): string {
+  const params = new URLSearchParams({ file: filePath, mode: "graph" });
   if (service) params.set("service", service);
   return `/api/source?${params.toString()}`;
 }
@@ -61,7 +60,6 @@ function formatBytes(bytes: number): string {
 }
 
 export default function CodeViewer({
-  accessToken,
   presentation = "sidebar",
   onClose,
   onExpand,
@@ -92,19 +90,10 @@ export default function CodeViewer({
       return;
     }
 
-    if (accessToken === "__demo__") {
-      setState({
-        status: "error",
-        source: null,
-        error: "Source preview is available only when the local dashboard server is running.",
-      });
-      return;
-    }
-
     const controller = new AbortController();
     setState({ status: "loading", source: null, error: null });
 
-    fetch(sourceFileUrl(node.filePath, accessToken, activeService), { signal: controller.signal })
+    fetch(sourceFileUrl(node.filePath, activeService), { signal: controller.signal })
       .then(async (res) => {
         const data = (await res.json()) as SourceFile | { error?: string };
         if (!res.ok) {
@@ -122,7 +111,7 @@ export default function CodeViewer({
       });
 
     return () => controller.abort();
-  }, [accessToken, node?.filePath, activeService]);
+  }, [node?.filePath, activeService]);
 
   const highlightedRange = useMemo(() => {
     if (!node?.lineRange) return null;

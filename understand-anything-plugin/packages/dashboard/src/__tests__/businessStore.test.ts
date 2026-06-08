@@ -3,7 +3,7 @@ import { useBusinessStore } from "../stores/businessStore";
 
 const mockLocation = {
   origin: "http://localhost:5173",
-  search: "?token=test-token",
+  search: "",
 };
 
 const mockDomainIndex = {
@@ -82,7 +82,7 @@ describe("useBusinessStore", () => {
     expect(useBusinessStore.getState().viewMode).toBe("knowledge");
   });
 
-  it("fetchDomains loads domains from API", async () => {
+  it("fetchDomains loads domains from API without token", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => mockDomainIndex,
@@ -92,7 +92,7 @@ describe("useBusinessStore", () => {
     await useBusinessStore.getState().fetchDomains();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:5173/api/business/domains?token=test-token",
+      "http://localhost:5173/api/business/domains",
     );
     const state = useBusinessStore.getState();
     expect(state.domains).toHaveLength(1);
@@ -103,7 +103,7 @@ describe("useBusinessStore", () => {
     expect(state.error).toBeNull();
   });
 
-  it("selectDomain fetches detail and updates selection", async () => {
+  it("selectDomain fetches detail and updates selection without token", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => mockDomainDetail,
@@ -113,7 +113,7 @@ describe("useBusinessStore", () => {
     await useBusinessStore.getState().selectDomain("order");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:5173/api/business/domains/order?token=test-token",
+      "http://localhost:5173/api/business/domains/order",
     );
     const state = useBusinessStore.getState();
     expect(state.selectedDomainSlug).toBe("order");
@@ -139,7 +139,7 @@ describe("useBusinessStore", () => {
     expect(state.domains).toEqual([]);
   });
 
-  it("search updates searchQuery and searchResults", async () => {
+  it("search updates searchQuery and searchResults without token", async () => {
     const searchResults = [{ id: "domain:order", name: "Order Management", match: "下单流程" }];
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -150,7 +150,7 @@ describe("useBusinessStore", () => {
     await useBusinessStore.getState().search("下单");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:5173/api/business/search?token=test-token&q=%E4%B8%8B%E5%8D%95",
+      "http://localhost:5173/api/business/search?q=%E4%B8%8B%E5%8D%95",
     );
     const state = useBusinessStore.getState();
     expect(state.searchQuery).toBe("下单");

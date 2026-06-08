@@ -5,7 +5,6 @@ import WikiView from "../components/WikiView";
 import { useDashboardStore } from "../store";
 import { I18nProvider } from "../contexts/I18nContext";
 
-const ACCESS_TOKEN = "test-token";
 
 const mockGlobalIndex = {
   entries: [
@@ -179,7 +178,7 @@ async function renderWikiView() {
   const user = userEvent.setup();
   render(
     <I18nProvider language="en">
-      <WikiView accessToken={ACCESS_TOKEN} />
+      <WikiView />
     </I18nProvider>,
   );
   await waitFor(() => {

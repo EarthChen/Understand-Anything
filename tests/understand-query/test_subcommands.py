@@ -41,3 +41,28 @@ class TestBusinessSubcommand:
         mock_fetch.return_value = {"results": [{"id": "domain:order", "name": "Order", "match": "下单"}]}
         ua_query.main(["--token", TOKEN, "business", "--search", "下单"])
         assert "results" in json.loads(capsys.readouterr().out)
+
+
+class TestWikiSubcommand:
+    """Bug 3: 'structure', 'flow', and default branches were dead/duplicate code.
+    After fix: all three should hit the same /api/wiki/service/ endpoint,
+    and cmd_wiki should have no redundant branches."""
+
+    def test_wiki_type_structure_fetches_service_endpoint(self, mock_fetch):
+        mock_fetch.return_value = {"sections": []}
+        ua_query.main(["--token", TOKEN, "wiki", "--service", "svc", "--type", "structure"])
+        url = mock_fetch.call_args[0][0]
+        assert "/api/wiki/service/" in url
+
+    def test_wiki_type_flow_fetches_service_endpoint(self, mock_fetch):
+        mock_fetch.return_value = {"flows": []}
+        ua_query.main(["--token", TOKEN, "wiki", "--service", "svc", "--type", "flow"])
+        url = mock_fetch.call_args[0][0]
+        assert "/api/wiki/service/" in url
+
+    def test_wiki_default_fetches_service_endpoint(self, mock_fetch):
+        mock_fetch.return_value = {"content": "ok"}
+        ua_query.main(["--token", TOKEN, "wiki", "--service", "svc"])
+        url = mock_fetch.call_args[0][0]
+        assert "/api/wiki/service/" in url
+

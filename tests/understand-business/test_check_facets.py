@@ -5,8 +5,6 @@ import tempfile
 import pytest
 from pathlib import Path
 
-import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'understand-anything-plugin' / 'skills' / 'understand-business'))
 from check_facets import check_facets
 
 
@@ -52,6 +50,13 @@ class TestCheckFacets:
         (wiki_dir / 'meta.json').write_text('{}')
         result = check_facets(str(tmp_project))
         assert result['facets'][0]['status'] == 'degraded'
+
+    def test_path_traversal_raises(self, tmp_project):
+        """Bug H5: A facet path like '../../etc' must be rejected."""
+        system = {'facets': [{'id': 'server', 'path': '../../etc', 'type': 'backend'}]}
+        (tmp_project / '.understand-anything' / 'system.json').write_text(json.dumps(system))
+        with pytest.raises(ValueError, match='escapes project root'):
+            check_facets(str(tmp_project))
 
     def test_writes_facet_status_json(self, tmp_project):
         system = {'facets': [{'id': 'server', 'path': 'server/', 'type': 'backend'}]}

@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 
-def validate_domain_doc(doc):
+def validate_domain_doc(doc: dict) -> list[str]:
     errors = []
 
     if 'id' not in doc:

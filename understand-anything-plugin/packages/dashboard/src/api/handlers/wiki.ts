@@ -1,6 +1,8 @@
 import fs from "fs"
+import path from "path"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
 import { graphFileCandidates } from "../utils"
+import { resolvePathWithinRoot } from "../../utils/sanitize"
 
 export async function handleWikiRequest(
   req: ApiRequest,
@@ -112,7 +114,8 @@ export async function handleWikiRequest(
 
   if (pathname.startsWith("/wiki/")) {
     const wikiPath = pathname.slice("/wiki/".length)
-    if (wikiPath.includes("..") || wikiPath.includes("~")) {
+    const wikiRoot = path.resolve(".understand-anything", "wiki")
+    if (!resolvePathWithinRoot(wikiRoot, wikiPath)) {
       return { statusCode: 400, body: { error: "Invalid wiki path" } }
     }
     const candidates = graphFileCandidates(`wiki/${wikiPath}`)

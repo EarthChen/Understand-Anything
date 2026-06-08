@@ -8,11 +8,6 @@ interface DomainsIndex {
   stats: Record<string, number>
 }
 
-function slugFromPathname(pathname: string): string | null {
-  const m = pathname.match(/^\/api\/business\/domains\/([^/]+)$/)
-  return m ? decodeURIComponent(m[1]) : null
-}
-
 function searchDomains(blDir: string, query: string): Array<{ id: string; name: string; match: string }> {
   const q = query.toLowerCase()
   const results: Array<{ id: string; name: string; match: string }> = []
@@ -71,8 +66,13 @@ export async function handleBusinessRequest(req: ApiRequest, _ctx: ApiContext): 
     return { statusCode: 200, body: { results: searchDomains(blDir, q) } }
   }
 
-  const slug = slugFromPathname(pathname)
-  if (slug) {
+  const slugMatch = pathname.match(/^\/api\/business\/domains\/([^/]+)$/)
+  if (slugMatch) {
+    const slug = decodeURIComponent(slugMatch[1])
+    // Reject path traversal: decoded slug must not contain ".." segments
+    if (slug.includes("..")) {
+      return { statusCode: 400, body: { error: "Invalid slug: path traversal detected" } }
+    }
     const detailPath = path.join(blDir, "domains", `${slug}.json`)
     const detail = readJsonFile(detailPath)
     if (!detail) return { statusCode: 404, body: { error: `Domain not found: ${slug}` } }

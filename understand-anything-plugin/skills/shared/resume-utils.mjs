@@ -119,6 +119,12 @@ export function isValidCheckpoint(filePath) {
     if (checkpoint?.status === 'complete') return { valid: true, status: 'complete' };
     if (checkpoint?.status === 'degraded') return { valid: false, status: 'degraded' };
     if (checkpoint?.status === 'failed') return { valid: false, status: 'failed' };
+    // _checkpoint exists but status is unrecognized — not a legacy file
+    if (checkpoint && typeof checkpoint.status === 'string') {
+      console.warn(`[resume-utils] Unrecognized checkpoint status: "${checkpoint.status}" in ${filePath}`);
+      return { valid: false, status: 'unknown' };
+    }
+    // Legacy file without _checkpoint metadata — backward compat
     return { valid: true, status: 'complete' };
   } catch {
     return { valid: false, status: 'corrupted' };

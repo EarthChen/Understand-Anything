@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -28,6 +28,21 @@ class TestHttpClient:
                 ua_query.fetch_json("http://localhost:3001/test", timeout=1)
         assert "server" in str(exc.value).lower() or "unavailable" in str(exc.value).lower()
 
+    def test_fetch_json_http_error_preserves_status_code(self):
+        """Bug 2: HTTPError must be caught BEFORE URLError so the HTTP status is not lost."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"error":"not found"}'
+        http_err = HTTPError(
+            url="http://localhost:3001/test",
+            code=404,
+            msg="Not Found",
+            hdrs=None,
+            fp=mock_resp,
+        )
+        with patch("urllib.request.urlopen", side_effect=http_err):
+            with pytest.raises(RuntimeError, match=r"HTTP 404"):
+                ua_query.fetch_json("http://localhost:3001/test", timeout=1)
+
 
 class TestOutputFormatting:
     def test_format_json(self):
@@ -46,3 +61,25 @@ class TestArgParsing:
         assert args.server == "http://x:9"
         assert args.token == "tok"
         assert args.command == "kg"
+
+
+class TestUrlEncoding:
+    """Bug 1: User-supplied path segments must be URL-encoded."""
+
+    @patch.object(ua_query, "fetch_json")
+    def test_wiki_service_with_slash_is_encoded(self, mock_fetch):
+        mock_fetch.return_value = {}
+        ua_query.main(["--token", "t", "wiki", "--service", "a/b", "--type", "domain"])
+        url = mock_fetch.call_args[0][0]
+        # "a/b" must be encoded as "a%2Fb" in the path, not left as raw "a/b"
+        assert "a%2Fb" in url
+        # The encoded path segment must NOT contain a raw slash in the service part
+        path_part = url.split("?")[0]
+        assert "/service/a%2Fb" in path_part
+
+    @patch.object(ua_query, "fetch_json")
+    def test_wiki_domain_with_question_mark_is_encoded(self, mock_fetch):
+        mock_fetch.return_value = {}
+        ua_query.main(["--token", "t", "wiki", "--service", "svc", "--domain", "what?"])
+        url = mock_fetch.call_args[0][0]
+        assert "what%3F" in url

@@ -30,24 +30,24 @@ describe("createApiRouter", () => {
 
   it("returns null for unhandled paths", async () => {
     const res = await router.handle(
-      { pathname: "/index.html", searchParams: new URLSearchParams("token=t") },
-      { accessToken: "t", getWikiService: () => new WikiDataService(dir) },
+      { pathname: "/index.html", searchParams: new URLSearchParams() },
+      { getWikiService: () => new WikiDataService(dir) },
     )
     expect(res).toBeNull()
   })
 
-  it("returns 403 without token on protected path", async () => {
+  it("serves protected paths without requiring a token", async () => {
     const res = await router.handle(
       { pathname: "/knowledge-graph.json", searchParams: new URLSearchParams() },
-      { accessToken: "secret", getWikiService: () => new WikiDataService(dir) },
+      { getWikiService: () => new WikiDataService(dir) },
     )
-    expect(res?.statusCode).toBe(403)
+    expect(res?.statusCode).toBe(200)
   })
 
-  it("dispatches to graph handler with valid token", async () => {
+  it("dispatches to graph handler", async () => {
     const res = await router.handle(
-      { pathname: "/knowledge-graph.json", searchParams: new URLSearchParams("token=secret") },
-      { accessToken: "secret", getWikiService: () => new WikiDataService(dir) },
+      { pathname: "/knowledge-graph.json", searchParams: new URLSearchParams() },
+      { getWikiService: () => new WikiDataService(dir) },
     )
     expect(res?.statusCode).toBe(200)
   })

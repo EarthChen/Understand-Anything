@@ -21,10 +21,9 @@ type PanelState =
 function wikiSourceUrl(
   file: string,
   lineRange: [number, number] | undefined,
-  token: string,
   service?: string | null,
 ): string {
-  const params = new URLSearchParams({ token, file, mode: "wiki" });
+  const params = new URLSearchParams({ file, mode: "wiki" });
   if (service) params.set("service", service);
   if (lineRange) {
     params.set("start", String(lineRange[0]));
@@ -36,12 +35,10 @@ function wikiSourceUrl(
 export function WikiSourcePanel({
   path,
   lineRange,
-  accessToken,
   onClose,
 }: {
   path: string;
   lineRange?: [number, number];
-  accessToken: string;
   onClose: () => void;
 }) {
   const activeService = useDashboardStore((s) => s.activeService);
@@ -52,19 +49,10 @@ export function WikiSourcePanel({
   });
 
   useEffect(() => {
-    if (accessToken === "__demo__") {
-      setState({
-        status: "error",
-        data: null,
-        error: "Source preview requires the local dashboard server.",
-      });
-      return;
-    }
-
     const controller = new AbortController();
     setState({ status: "loading", data: null, error: null });
 
-    fetch(wikiSourceUrl(path, lineRange, accessToken, activeService), { signal: controller.signal })
+    fetch(wikiSourceUrl(path, lineRange, activeService), { signal: controller.signal })
       .then(async (res) => {
         const data = (await res.json()) as WikiSourceResponse | { error?: string };
         if (!res.ok) {
@@ -82,7 +70,7 @@ export function WikiSourcePanel({
       });
 
     return () => controller.abort();
-  }, [path, lineRange, accessToken, activeService]);
+  }, [path, lineRange, activeService]);
 
   const highlightRange = useMemo(() => {
     if (state.status !== "loaded") return null;

@@ -1,6 +1,6 @@
 import { useBusinessStore } from "../stores/businessStore"
 
-export default function BusinessModeHeader(_props: { accessToken?: string }) {
+export default function BusinessModeHeader() {
   const domains = useBusinessStore((s) => s.domains)
   const facetFilter = useBusinessStore((s) => s.facetFilter)
   const setFacetFilter = useBusinessStore((s) => s.setFacetFilter)

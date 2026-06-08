@@ -57,18 +57,18 @@ describe("BusinessGraphView", () => {
   })
 
   it("renders domain nodes", () => {
-    render(<BusinessGraphView accessToken="tok" />)
+    render(<BusinessGraphView />)
     expect(screen.getByText("Order Management")).toBeInTheDocument()
   })
 
   it("shows facet filter buttons", () => {
-    render(<BusinessGraphView accessToken="tok" />)
+    render(<BusinessGraphView />)
     expect(screen.getByText("server")).toBeInTheDocument()
     expect(screen.getByText("client")).toBeInTheDocument()
   })
 
   it("renders business-graph-view testid", () => {
-    render(<BusinessGraphView accessToken="tok" />)
+    render(<BusinessGraphView />)
     expect(screen.getByTestId("business-graph-view")).toBeInTheDocument()
   })
 })

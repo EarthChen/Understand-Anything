@@ -294,4 +294,33 @@ describe('isValidCheckpoint', () => {
   it('returns corrupted for missing file', () => {
     expect(isValidCheckpoint(join(tmpDir, 'missing.json'))).toEqual({ valid: false, status: 'corrupted' });
   });
+
+  it('returns unknown for unrecognized checkpoint status and logs warning', () => {
+    const p = join(tmpDir, 'unknown.json');
+    writeFileSync(p, JSON.stringify({ _checkpoint: { status: 'complet' } }));
+    const warnSpy = [];
+    const origWarn = console.warn;
+    console.warn = (...args) => warnSpy.push(args);
+    try {
+      const result = isValidCheckpoint(p);
+      expect(result).toEqual({ valid: false, status: 'unknown' });
+      expect(warnSpy.length).toBe(1);
+      expect(warnSpy[0][0]).toContain('Unrecognized checkpoint status');
+      expect(warnSpy[0][0]).toContain('complet');
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+
+  it('returns unknown for arbitrary unrecognized status string', () => {
+    const p = join(tmpDir, 'typo.json');
+    writeFileSync(p, JSON.stringify({ _checkpoint: { status: 'in_progress' } }));
+    const origWarn = console.warn;
+    console.warn = () => {};
+    try {
+      expect(isValidCheckpoint(p)).toEqual({ valid: false, status: 'unknown' });
+    } finally {
+      console.warn = origWarn;
+    }
+  });
 });

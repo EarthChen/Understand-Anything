@@ -32,25 +32,25 @@ describe("BusinessDomainPanel", () => {
   })
 
   it("renders interactions and rules", () => {
-    render(<BusinessDomainPanel domainId="domain:order" accessToken="tok" />)
+    render(<BusinessDomainPanel domainId="domain:order" />)
     expect(screen.getByText("Create Order")).toBeInTheDocument()
     expect(screen.getByText(/Cart must not be empty/)).toBeInTheDocument()
   })
 
   it("shows interaction steps", () => {
-    render(<BusinessDomainPanel domainId="domain:order" accessToken="tok" />)
+    render(<BusinessDomainPanel domainId="domain:order" />)
     expect(screen.getByText("Validate cart")).toBeInTheDocument()
     expect(screen.getByText("Show confirmation")).toBeInTheDocument()
   })
 
   it("shows cross-mode navigation buttons", () => {
-    render(<BusinessDomainPanel domainId="domain:order" accessToken="tok" />)
+    render(<BusinessDomainPanel domainId="domain:order" />)
     expect(screen.getByTestId("nav-system-order-service")).toBeInTheDocument()
   })
 
   it("returns null when detail is missing", () => {
     useBusinessStore.setState({ domainDetail: {} } as any)
-    const { container } = render(<BusinessDomainPanel domainId="domain:missing" accessToken="tok" />)
+    const { container } = render(<BusinessDomainPanel domainId="domain:missing" />)
     expect(container.innerHTML).toBe("")
   })
 })

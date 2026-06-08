@@ -507,7 +507,7 @@ function WikiContent({
   );
 }
 
-export default function WikiView({ accessToken }: { accessToken: string }) {
+export default function WikiView() {
   const { t } = useI18n();
   const wikiIndex = useDashboardStore((s) => s.wikiIndex);
   const wikiActivePage = useDashboardStore((s) => s.wikiActivePage);
@@ -532,8 +532,8 @@ export default function WikiView({ accessToken }: { accessToken: string }) {
   );
 
   const apiUrl = useCallback(
-    (endpoint: string) => `/api/wiki${endpoint}?token=${encodeURIComponent(accessToken)}`,
-    [accessToken],
+    (endpoint: string) => `/api/wiki${endpoint}`,
+    [],
   );
 
   // Load global index and topology on mount
@@ -722,7 +722,7 @@ export default function WikiView({ accessToken }: { accessToken: string }) {
       return;
     }
     const controller = new AbortController();
-    fetch(`${apiUrl("/search")}&q=${encodeURIComponent(searchQuery.trim())}`, {
+    fetch(`${apiUrl("/search")}?q=${encodeURIComponent(searchQuery.trim())}`, {
       signal: controller.signal,
     })
       .then((r) => (r.ok ? r.json() : []))
@@ -806,7 +806,6 @@ export default function WikiView({ accessToken }: { accessToken: string }) {
               <WikiSourcePanel
                 path={sourcePanel.path}
                 lineRange={sourcePanel.lineRange}
-                accessToken={accessToken}
                 onClose={() => setSourcePanel(null)}
               />
             </div>

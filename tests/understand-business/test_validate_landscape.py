@@ -3,8 +3,6 @@ import json
 import pytest
 from pathlib import Path
 
-import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'understand-anything-plugin' / 'skills' / 'understand-business'))
 from validate_landscape import validate_landscape
 
 
@@ -15,6 +13,26 @@ def tmp_landscape(tmp_path):
     domains_dir = bl / 'domains'
     domains_dir.mkdir()
     return tmp_path, bl
+
+
+class TestImportFromDifferentCwd:
+    """Bug H4: validate_landscape.py must resolve validate_domain via __file__, not cwd."""
+
+    def test_source_has_file_based_path_setup(self):
+        """validate_landscape.py must insert its own directory into sys.path
+        before importing validate_domain, so the import works regardless of cwd.
+
+        This is a source-level check because Python's import caching makes it
+        impractical to test the import failure in-process after the test runner
+        has already loaded the module.
+        """
+        import textwrap
+        script = Path(__file__).resolve().parent.parent.parent / 'understand-anything-plugin' / 'skills' / 'understand-business' / 'validate_landscape.py'
+        source = script.read_text()
+        assert 'os.path.dirname(__file__)' in source or 'Path(__file__).parent' in source, (
+            "validate_landscape.py must resolve validate_domain relative to __file__, "
+            "not rely on cwd or caller-provided sys.path"
+        )
 
 
 class TestValidateLandscape:

@@ -1,4 +1,3 @@
-import crypto from "crypto"
 import express from "express"
 import cors from "cors"
 import { WikiDataService } from "./wiki-api"
@@ -6,13 +5,11 @@ import { createApiRouter } from "./src/api/index"
 import { resolveProjectRoot } from "./src/api/utils"
 
 export interface ServerOptions {
-  accessToken?: string
   projectRoot?: string
   port?: number
 }
 
 export function createApp(opts: ServerOptions = {}) {
-  const accessToken = opts.accessToken ?? process.env.UNDERSTAND_ACCESS_TOKEN ?? crypto.randomBytes(16).toString("hex")
   const projectRoot = opts.projectRoot ?? resolveProjectRoot()
   let wikiService: WikiDataService | null = null
   const getWikiService = () => {
@@ -21,12 +18,28 @@ export function createApp(opts: ServerOptions = {}) {
   }
   const router = createApiRouter()
   const app = express()
-  app.use(cors())
+  app.use(cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. curl, same-origin, server-to-server)
+      if (!origin) { callback(null, true); return }
+      // Only allow localhost / 127.0.0.1 origins
+      try {
+        const { hostname } = new URL(origin)
+        if (hostname === "localhost" || hostname === "127.0.0.1") {
+          callback(null, true)
+        } else {
+          callback(null, false)
+        }
+      } catch {
+        callback(null, false)
+      }
+    },
+  }))
   app.use(async (req, res, next) => {
     const url = new URL(req.url, `http://127.0.0.1`)
     const apiRes = await router.handle(
       { pathname: url.pathname, searchParams: url.searchParams },
-      { accessToken, getWikiService },
+      { getWikiService },
     )
     if (apiRes === null) { next(); return }
     res.status(apiRes.statusCode)
@@ -40,9 +53,8 @@ export function createApp(opts: ServerOptions = {}) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = Number(process.env.PORT ?? 3001)
-  const accessToken = process.env.UNDERSTAND_ACCESS_TOKEN ?? crypto.randomBytes(16).toString("hex")
-  const app = createApp({ accessToken })
+  const app = createApp()
   app.listen(port, () => {
-    console.log(`\n  API Server: http://127.0.0.1:${port}/?token=${accessToken}\n`)
+    console.log(`\n  API Server: http://127.0.0.1:${port}/\n`)
   })
 }

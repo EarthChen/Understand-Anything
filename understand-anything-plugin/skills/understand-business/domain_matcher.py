@@ -24,7 +24,10 @@ def _normalize_name(name):
 
 
 def _load_server_domains(project_root, server_path):
-    wiki_dir = Path(project_root) / server_path / '.understand-anything' / 'wiki' / 'domains'
+    facet_dir = (Path(project_root) / server_path).resolve()
+    if not facet_dir.is_relative_to(Path(project_root).resolve()):
+        raise ValueError(f"Path escapes project root: {server_path}")
+    wiki_dir = facet_dir / '.understand-anything' / 'wiki' / 'domains'
     domains = {}
     if not wiki_dir.exists():
         return domains
@@ -46,7 +49,10 @@ def _load_server_domains(project_root, server_path):
 
 def _load_client_domains(project_root, client_path, sub_paths):
     domains = {}
-    root = Path(project_root) / client_path
+    facet_dir = (Path(project_root) / client_path).resolve()
+    if not facet_dir.is_relative_to(Path(project_root).resolve()):
+        raise ValueError(f"Path escapes project root: {client_path}")
+    root = facet_dir
     for sp in sub_paths:
         platform = sp.rstrip('/')
         wiki_dir = root / platform / '.understand-anything' / 'wiki' / 'domains'
@@ -135,7 +141,7 @@ def _load_manual_mappings(project_root):
         return []
 
 
-def match_domains(project_root_str, system_config=None):
+def match_domains(project_root_str: str, system_config: dict | None = None) -> dict:
     project_root = Path(project_root_str)
 
     if system_config is None:

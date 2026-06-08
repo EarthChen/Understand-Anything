@@ -562,10 +562,10 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
     set({ searchQuery: query, searchResults });
 
     // Fire async wiki search if wiki is available
-    const { wikiAvailable, accessToken } = get();
-    if (wikiAvailable && accessToken) {
+    const { wikiAvailable } = get();
+    if (wikiAvailable) {
       const q = encodeURIComponent(query.trim());
-      fetch(`/api/wiki/search?q=${q}&limit=10&token=${encodeURIComponent(accessToken)}`)
+      fetch(`/api/wiki/search?q=${q}&limit=10`)
         .then((r) => (r.ok ? r.json() : []))
         .then((results: WikiSearchResult[]) => {
           // Only apply if query hasn't changed since the request was fired
