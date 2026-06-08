@@ -246,6 +246,7 @@ export const ja = {
     middleware: { forward: "ミドルウェア", backward: "ミドルウェアを使用" },
     provides_rpc: { forward: "RPCを提供", backward: "RPCの提供元" },
     consumes_rpc: { forward: "RPCを消費", backward: "RPCの消費元" },
+    consumes_api: { forward: "APIを消費", backward: "APIの消費元" },
     injects: { forward: "注入", backward: "注入される" },
     reads_from: { forward: "読み取り", backward: "読み取られる" },
     writes_to: { forward: "書き込み", backward: "書き込まれる" },

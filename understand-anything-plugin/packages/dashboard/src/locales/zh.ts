@@ -246,6 +246,7 @@ export const zh = {
     middleware: { forward: "中间件", backward: "使用中间件" },
     provides_rpc: { forward: "提供 RPC", backward: "RPC 由其提供" },
     consumes_rpc: { forward: "消费 RPC", backward: "RPC 由其消费" },
+    consumes_api: { forward: "消费 API", backward: "API 由其消费" },
     injects: { forward: "注入", backward: "被注入" },
     reads_from: { forward: "读取", backward: "被读取" },
     writes_to: { forward: "写入", backward: "被写入" },

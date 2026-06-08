@@ -27,6 +27,9 @@ import { ThemeProvider } from "./themes/index.ts";
 import { ThemePicker } from "./components/ThemePicker.tsx";
 import type { ThemeConfig } from "./themes/index.ts";
 import { I18nProvider, useI18n } from "./contexts/I18nContext.tsx";
+import { useBusinessStore } from "./stores/businessStore";
+import { detectBusinessAvailability } from "./utils/businessMode";
+import BusinessGraphView from "./components/BusinessGraphView";
 
 // Lazy-load heavy / optional components so they ship in separate chunks.
 const CodeViewer = lazy(() => import("./components/CodeViewer"));
@@ -241,6 +244,14 @@ function Dashboard({ accessToken }: { accessToken: string }) {
       .catch(() => {});
   }, [accessToken, setWikiAvailable]);
 
+  const fetchBusinessDomains = useBusinessStore((s) => s.fetchDomains);
+
+  useEffect(() => {
+    void detectBusinessAvailability(accessToken).then((ok) => {
+      if (ok) void fetchBusinessDomains();
+    });
+  }, [accessToken, fetchBusinessDomains]);
+
   const activeService = useDashboardStore((s) => s.activeService);
 
   // Auto-select initial view when KG is absent but system-graph or wiki is available
@@ -336,6 +347,7 @@ function DashboardContent({
   const isKnowledgeGraph = useDashboardStore((s) => s.isKnowledgeGraph);
   const domainGraph = useDashboardStore((s) => s.domainGraph);
   const wikiAvailable = useDashboardStore((s) => s.wikiAvailable);
+  const businessAvailable = useBusinessStore((s) => s.available);
   const systemGraph = useDashboardStore((s) => s.systemGraph);
   const activeService = useDashboardStore((s) => s.activeService);
   const layoutIssues = useDashboardStore((s) => s.layoutIssues);
@@ -600,6 +612,19 @@ function DashboardContent({
                     Wiki
                   </button>
                 )}
+                {businessAvailable && (
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("business")}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                      viewMode === "business"
+                        ? "bg-accent/20 text-accent"
+                        : "text-text-muted hover:text-text-secondary"
+                    }`}
+                  >
+                    Business
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -675,10 +700,23 @@ function DashboardContent({
                 >
                   Wiki
                 </button>
+                {businessAvailable && (
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("business")}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                      viewMode === "business"
+                        ? "bg-accent/20 text-accent"
+                        : "text-text-muted hover:text-text-secondary"
+                    }`}
+                  >
+                    Business
+                  </button>
+                )}
               </div>
             </>
           )}
-          {!graph && (systemGraph || wikiAvailable) && (
+          {!graph && (systemGraph || wikiAvailable || businessAvailable) && (
             <>
               <div className="w-px h-5 bg-border-subtle" />
               <div className="flex items-center bg-elevated rounded-lg p-0.5">
@@ -708,6 +746,19 @@ function DashboardContent({
                     }`}
                   >
                     Wiki
+                  </button>
+                )}
+                {businessAvailable && (
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("business")}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                      viewMode === "business"
+                        ? "bg-accent/20 text-accent"
+                        : "text-text-muted hover:text-text-secondary"
+                    }`}
+                  >
+                    Business
                   </button>
                 )}
               </div>
@@ -868,7 +919,9 @@ function DashboardContent({
       <div className="flex-1 flex min-h-0 relative">
         {/* Graph area */}
         <div className="flex-1 min-w-0 min-h-0 relative">
-          {viewMode === "system" && systemGraph ? (
+          {viewMode === "business" && businessAvailable ? (
+            <BusinessGraphView accessToken={accessToken} />
+          ) : viewMode === "system" && systemGraph ? (
             <SystemOverview />
           ) : viewMode === "wiki" ? (
             <WikiView accessToken={accessToken} />

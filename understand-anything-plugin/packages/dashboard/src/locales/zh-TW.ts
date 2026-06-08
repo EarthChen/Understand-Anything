@@ -246,6 +246,7 @@ export const zhTW = {
     middleware: { forward: "中介軟體", backward: "使用中介軟體" },
     provides_rpc: { forward: "提供 RPC", backward: "RPC 由其提供" },
     consumes_rpc: { forward: "消費 RPC", backward: "RPC 由其消費" },
+    consumes_api: { forward: "消費 API", backward: "API 由其消費" },
     injects: { forward: "注入", backward: "被注入" },
     reads_from: { forward: "讀取", backward: "被讀取" },
     writes_to: { forward: "寫入", backward: "被寫入" },
