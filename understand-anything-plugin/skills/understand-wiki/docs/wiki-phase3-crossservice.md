@@ -152,6 +152,31 @@ This validates:
 
 If `passed: false`, report issues but continue to Phase 4 (index construction) — parent wiki issues are non-blocking since service wikis remain valid independently.
 
+### Mobile Mode — Client Graph Generation (REPO_TYPE=mobile)
+
+When `REPO_TYPE=mobile` and at least 2 platforms have wiki (`meta.json` exists):
+
+```bash
+python3 "$SKILL_DIR/build-client-graph.py" "$PROJECT_ROOT"
+```
+
+This produces `client-graph.json` at `<client-facet-path>/.understand-anything/client-graph.json` with:
+- `platforms[]` — list of integrated platforms (e.g., ["android", "ios"])
+- `crossPlatformFrameworks[]` — detected cross-platform frameworks (e.g., ["flutter"])
+- `featureMap[]` — per-domain implementation classification (`cross-platform` | `platform-specific` | `mixed`)
+
+If the script fails, log a warning and continue — the client graph is needed for M2 but not a prerequisite for wiki completion.
+
+**Trigger logic:**
+```
+IF REPO_TYPE == "mobile" AND integrated_platforms >= 2:
+  python3 "$SKILL_DIR/build-client-graph.py" "$PROJECT_ROOT"
+ELIF REPO_TYPE == "backend":
+  python3 "$SKILL_DIR/build-system-graph.py" "$PROJECT_ROOT"  (existing behavior)
+ELIF REPO_TYPE == "frontend":
+  Skip Phase 3 (single repo, no aggregation needed)
+```
+
 ### Step 5 — Update System Graph
 
 After parent wiki generation, update the system-level graph for Dashboard's SystemOverview tab:
