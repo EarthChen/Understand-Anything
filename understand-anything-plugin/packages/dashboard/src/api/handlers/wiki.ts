@@ -1,0 +1,131 @@
+import fs from "fs"
+import type { ApiRequest, ApiContext, ApiResponse } from "../types"
+import { graphFileCandidates } from "../utils"
+
+export async function handleWikiRequest(
+  req: ApiRequest,
+  ctx: ApiContext,
+): Promise<ApiResponse | null> {
+  const { pathname, searchParams } = req
+
+  if (pathname.startsWith("/api/wiki")) {
+    const ws = ctx.getWikiService()
+    const apiPath = pathname.slice("/api/wiki".length) || "/"
+
+    if (apiPath === "/" || apiPath === "") {
+      return { statusCode: 200, body: ws.getGlobalIndex() }
+    }
+    if (apiPath === "/overview") {
+      const data = ws.getOverview()
+      if (!data) return { statusCode: 404, body: { error: "No parent wiki overview found" } }
+      return { statusCode: 200, body: data }
+    }
+    if (apiPath === "/architecture") {
+      const data = ws.getArchitecture()
+      if (!data) return { statusCode: 404, body: { error: "No parent wiki architecture found" } }
+      return { statusCode: 200, body: data }
+    }
+    if (apiPath === "/services") {
+      return { statusCode: 200, body: ws.getServices() }
+    }
+    if (apiPath === "/search") {
+      const q = searchParams.get("q") ?? ""
+      const rawLimit = parseInt(searchParams.get("limit") ?? "20", 10)
+      const limit = Math.min(100, Math.max(1, Number.isNaN(rawLimit) ? 20 : rawLimit))
+      try {
+        const results = await ws.search(q, limit)
+        return { statusCode: 200, body: results }
+      } catch (err: unknown) {
+        return {
+          statusCode: 500,
+          body: { error: err instanceof Error ? err.message : String(err) },
+        }
+      }
+    }
+
+    const svcDomainMatch = apiPath.match(/^\/service\/([^/]+)\/domain\/([^/]+)$/)
+    if (svcDomainMatch) {
+      try {
+        const svcName = decodeURIComponent(svcDomainMatch[1])
+        const domainId = decodeURIComponent(svcDomainMatch[2])
+        const data = ws.getServiceDomain(svcName, domainId)
+        if (!data) return { statusCode: 404, body: { error: "Service domain not found" } }
+        return { statusCode: 200, body: data }
+      } catch {
+        return { statusCode: 400, body: { error: "Invalid URL encoding" } }
+      }
+    }
+
+    const svcMatch = apiPath.match(/^\/service\/([^/]+)$/)
+    if (svcMatch) {
+      try {
+        const svcName = decodeURIComponent(svcMatch[1])
+        const data = ws.getServiceWiki(svcName)
+        if (!data) return { statusCode: 404, body: { error: "Service wiki not found" } }
+        return { statusCode: 200, body: data }
+      } catch {
+        return { statusCode: 400, body: { error: "Invalid URL encoding" } }
+      }
+    }
+
+    const domainMatch = apiPath.match(/^\/domain\/([^/]+)$/)
+    if (domainMatch) {
+      try {
+        const domainName = decodeURIComponent(domainMatch[1])
+        const data = ws.getDomain(domainName)
+        if (!data) return { statusCode: 404, body: { error: "Cross-service domain not found" } }
+        return { statusCode: 200, body: data }
+      } catch {
+        return { statusCode: 400, body: { error: "Invalid URL encoding" } }
+      }
+    }
+
+    const relatedMatch = apiPath.match(/^\/([^/]+)\/related$/)
+    if (relatedMatch) {
+      try {
+        return { statusCode: 200, body: ws.getRelated(decodeURIComponent(relatedMatch[1])) }
+      } catch {
+        return { statusCode: 400, body: { error: "Invalid URL encoding" } }
+      }
+    }
+
+    if (apiPath === "/endpoints/index") {
+      const data = ws.getEndpointIndex()
+      if (!data) return { statusCode: 404, body: { error: "Endpoint index not found" } }
+      return { statusCode: 200, body: data }
+    }
+
+    const endpointMatch = apiPath.match(/^\/endpoints\/([^/]+)$/)
+    if (endpointMatch) {
+      try {
+        const svcName = decodeURIComponent(endpointMatch[1])
+        const data = ws.getEndpointDoc(svcName)
+        if (!data) return { statusCode: 404, body: { error: "Endpoint doc not found" } }
+        return { statusCode: 200, body: data }
+      } catch {
+        return { statusCode: 400, body: { error: "Invalid URL encoding" } }
+      }
+    }
+
+    return { statusCode: 404, body: { error: `Unknown wiki API endpoint: ${apiPath}` } }
+  }
+
+  if (pathname.startsWith("/wiki/")) {
+    const wikiPath = pathname.slice("/wiki/".length)
+    if (wikiPath.includes("..") || wikiPath.includes("~")) {
+      return { statusCode: 400, body: { error: "Invalid wiki path" } }
+    }
+    const candidates = graphFileCandidates(`wiki/${wikiPath}`)
+    for (const candidate of candidates) {
+      if (!fs.existsSync(candidate)) continue
+      try {
+        return { statusCode: 200, body: JSON.parse(fs.readFileSync(candidate, "utf-8")) }
+      } catch {
+        return { statusCode: 500, body: { error: "Failed to read wiki file" } }
+      }
+    }
+    return { statusCode: 404, body: { error: `Wiki file not found: ${wikiPath}` } }
+  }
+
+  return null
+}
