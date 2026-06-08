@@ -163,7 +163,7 @@ Determine whether to run a full analysis or incremental update.
 
    | Condition | Action |
    |---|---|
-   | `--full` flag in `$ARGUMENTS` | Full analysis (all phases) |
+   | `--full` flag in `$ARGUMENTS` | Full analysis (all phases). Also clear all phase checkpoints: `rm -f $PROJECT_ROOT/.understand-anything/intermediate/phase-*.json` |
    | No existing graph or meta | Full analysis (all phases) |
    | `--review` flag + existing graph + unchanged commit hash | Skip to Phase 6 (review-only — reuse existing assembled graph) |
    | Existing graph + unchanged commit hash | Ask the user: "The graph is up to date at this commit. Would you like to: **(a)** run a full rebuild (`--full`), **(b)** run the LLM graph reviewer (`--review`), or **(c)** do nothing?" Then follow their choice. If they pick (c), STOP. |
@@ -543,6 +543,8 @@ Pass these parameters in the dispatch prompt:
 
 After the subagent completes, read `$PROJECT_ROOT/.understand-anything/intermediate/assemble-review.json` and add any notes to `$PHASE_WARNINGS`.
 
+**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-3-assemble-review.json` with the review result and `_checkpoint: { status: "complete" }`. On resume (non-`--full` runs), if this checkpoint exists and is valid, skip Phase 3.
+
 ---
 
 ## Phase 4 — ARCHITECTURE
@@ -626,6 +628,8 @@ All four fields (`id`, `name`, `description`, `nodeIds`) are required.
 >
 > Maintain the same layer names and IDs where possible. Only add/remove layers if the file structure has materially changed.
 
+**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-4-layers.json` with the normalized layers array and `_checkpoint: { status: "complete" }`. On resume (non-`--full` runs), if this checkpoint exists and is valid, skip Phase 4 and load layers from the checkpoint.
+
 ---
 
 ## Phase 5 — TOUR
@@ -698,6 +702,8 @@ Each element of the final `tour` array MUST have this shape:
 ```
 
 Required fields: `order`, `title`, `description`, `nodeIds`. Preserve optional `languageLesson` when present.
+
+**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-5-tour.json` with the normalized tour array and `_checkpoint: { status: "complete" }`. On resume (non-`--full` runs), if this checkpoint exists and is valid, skip Phase 5 and load the tour from the checkpoint.
 
 ---
 
@@ -793,6 +799,8 @@ Pass these parameters in the dispatch prompt:
    - If critical issues remain after one fix attempt, save the graph anyway but include the warnings in the final report and mark dashboard auto-launch as skipped
 
 6. **If `issues` array is empty:** Proceed to Phase 7.
+
+**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-6-review.json` with the review result and `_checkpoint: { status: "complete" }` (or `"degraded"` if issues remain). On resume (non-`--full` runs), if this checkpoint exists and is valid/complete, skip Phase 6.
 
 ---
 
