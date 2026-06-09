@@ -1,5 +1,6 @@
 import type { ApiRequest, ApiContext, ApiResponse, ApiRouter } from "./types"
 import { handleServicesRequest } from "./handlers/services"
+import { handleGraphQueryRequest } from "./handlers/graph-query"
 import { handleGraphRequest } from "./handlers/graph"
 import { handleWikiRequest } from "./handlers/wiki"
 import { handleSourceRequest } from "./handlers/source"
@@ -7,6 +8,7 @@ import { handleBusinessRequest } from "./handlers/business"
 
 const HANDLERS = [
   handleServicesRequest,
+  handleGraphQueryRequest,
   handleBusinessRequest,
   handleWikiRequest,
   handleSourceRequest,
