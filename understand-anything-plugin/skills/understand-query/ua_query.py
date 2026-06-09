@@ -79,17 +79,38 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     kg.add_argument("--node")
     kg.add_argument("--search")
     kg.add_argument("--file")
+    kg.add_argument("--neighbors")
+    kg.add_argument("--edge-type")
+    kg.add_argument("--direction", choices=["inbound", "outbound", "both"], default="both")
+    kg.add_argument("--depth", type=int, default=1)
+    kg.add_argument("--edges", action="store_true")
+    kg.add_argument("--source")
+    kg.add_argument("--target")
+    kg.add_argument("--layers", action="store_true")
+    kg.add_argument("--tour", action="store_true")
 
     domain = sub.add_parser("domain", help="Domain graph queries")
     domain.add_argument("--service")
     domain.add_argument("--domain")
     domain.add_argument("--search")
+    domain.add_argument("--neighbors")
+    domain.add_argument("--edge-type")
+    domain.add_argument("--flows", action="store_true")
+    domain.add_argument("--flow")
+    domain.add_argument("--steps", action="store_true")
 
     wiki = sub.add_parser("wiki", help="Wiki queries")
     wiki.add_argument("--service")
     wiki.add_argument("--type")
     wiki.add_argument("--domain")
     wiki.add_argument("--search")
+    wiki.add_argument("--overview", action="store_true")
+    wiki.add_argument("--architecture", action="store_true")
+    wiki.add_argument("--cross-domain")
+    wiki.add_argument("--endpoint-index", action="store_true")
+    wiki.add_argument("--protocol")
+    wiki.add_argument("--flow")
+    wiki.add_argument("--related", action="store_true")
 
     biz = sub.add_parser("business", help="Business landscape queries")
     biz.add_argument("--domain")
@@ -97,6 +118,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     biz.add_argument("--facet")
     biz.add_argument("--list", action="store_true")
     biz.add_argument("--search")
+    biz.add_argument("--links", action="store_true")
+    biz.add_argument("--panorama", action="store_true")
+    biz.add_argument("--meta", action="store_true")
+
+    svc = sub.add_parser("services", help="Service discovery and readiness")
+    svc.add_argument("--list", action="store_true")
+    svc.add_argument("--name")
+    svc.add_argument("--has")
+
+    meta_cmd = sub.add_parser("meta", help="Cross-layer freshness check")
+    meta_cmd.add_argument("--stale", action="store_true")
 
     return parser.parse_args(argv)
 
@@ -106,9 +138,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def cmd_kg(args: argparse.Namespace) -> Any:
     if not args.service:
         raise SystemExit("kg requires --service")
+    if args.neighbors:
+        params: dict[str, str] = {"service": args.service, "graph": "kg", "node": args.neighbors, "direction": args.direction, "depth": str(args.depth)}
+        if args.edge_type:
+            params["edgeType"] = args.edge_type
+        return fetch_json(build_url(args.server, "/api/graph-query/neighbors", params, args.token))
+    if args.edges:
+        params = {"service": args.service, "graph": "kg"}
+        if args.type:
+            params["type"] = args.type
+        if args.source:
+            params["source"] = args.source
+        if args.target:
+            params["target"] = args.target
+        return fetch_json(build_url(args.server, "/api/graph-query/edges", params, args.token))
+    if args.layers:
+        return fetch_json(build_url(args.server, "/api/graph-query/layers", {"service": args.service}, args.token))
+    if args.tour:
+        return fetch_json(build_url(args.server, "/api/graph-query/tour", {"service": args.service}, args.token))
     if args.file:
-        path = f"/api/source?file={args.file}&service={args.service}&mode=graph"
-        return fetch_json(build_url(args.server, path, {}, args.token))
+        url_path = f"/api/source?file={quote(args.file, safe='')}&service={quote(args.service, safe='')}&mode=graph"
+        return fetch_json(build_url(args.server, url_path, {}, args.token))
     params = {"service": args.service, "file": "knowledge-graph.json"}
     data = fetch_json(build_url(args.server, "/api/graph", params, args.token))
     nodes = data.get("nodes", [])
@@ -125,8 +175,32 @@ def cmd_kg(args: argparse.Namespace) -> Any:
 def cmd_domain(args: argparse.Namespace) -> Any:
     if not args.service:
         raise SystemExit("domain requires --service")
+    if args.neighbors:
+        params: dict[str, str] = {"service": args.service, "graph": "domain", "node": args.neighbors, "direction": "both"}
+        if args.edge_type:
+            params["edgeType"] = args.edge_type
+        return fetch_json(build_url(args.server, "/api/graph-query/neighbors", params, args.token))
     params = {"service": args.service, "file": "domain-graph.json"}
     data = fetch_json(build_url(args.server, "/api/graph", params, args.token))
+    if args.flows:
+        nodes = [n for n in data.get("nodes", []) if n.get("type") == "flow"]
+        return {"flows": nodes}
+    if args.flow:
+        flow_id = args.flow
+        nodes = data.get("nodes", [])
+        flow_node = next((n for n in nodes if n.get("id") == flow_id or n.get("name") == flow_id), None)
+        if not flow_node:
+            raise SystemExit(f"Flow '{flow_id}' not found")
+        if args.steps:
+            edges = data.get("edges", [])
+            step_edges = sorted(
+                [e for e in edges if e.get("source") == flow_node["id"] and e.get("type") == "flow_step"],
+                key=lambda e: e.get("weight", 0),
+            )
+            step_ids = [e["target"] for e in step_edges]
+            steps = [n for n in nodes if n["id"] in step_ids]
+            return {"flow": flow_node, "steps": steps}
+        return {"flow": flow_node}
     if args.domain:
         nodes = [n for n in data.get("nodes", []) if args.domain in n.get("id", "") or args.domain in n.get("name", "")]
         return {"nodes": nodes}
@@ -138,20 +212,49 @@ def cmd_domain(args: argparse.Namespace) -> Any:
 
 
 def cmd_wiki(args: argparse.Namespace) -> Any:
+    if args.overview:
+        return fetch_json(build_url(args.server, "/api/wiki/overview", {}, args.token))
+    if args.architecture:
+        return fetch_json(build_url(args.server, "/api/wiki/architecture", {}, args.token))
+    if args.cross_domain:
+        slug = quote(args.cross_domain, safe="")
+        return fetch_json(build_url(args.server, f"/api/wiki/domain/{slug}", {}, args.token))
+    if args.endpoint_index:
+        data = fetch_json(build_url(args.server, "/api/wiki/endpoints/index", {}, args.token))
+        if args.protocol:
+            by_proto = data.get("byProtocol", {})
+            return {"protocol": args.protocol, "entries": by_proto.get(args.protocol, [])}
+        return data
     if not args.service:
-        raise SystemExit("wiki requires --service")
+        raise SystemExit("wiki requires --service (or use --overview/--architecture/--cross-domain/--endpoint-index)")
+    svc = quote(args.service, safe="")
+    if args.flow:
+        flow_id = quote(args.flow, safe="")
+        return fetch_json(build_url(args.server, f"/api/wiki/service/{svc}/flow/{flow_id}", {}, args.token))
+    if args.related:
+        if not args.domain:
+            raise SystemExit("--related requires --domain")
+        domain_id = quote(args.domain, safe="")
+        return fetch_json(build_url(args.server, f"/api/wiki/{domain_id}/related", {}, args.token))
     if args.search:
         return fetch_json(build_url(args.server, "/api/wiki/search", {"q": args.search, "limit": "20"}, args.token))
-    svc = quote(args.service, safe="")
     if args.domain:
-        path = f"/api/wiki/service/{svc}/domain/{quote(args.domain, safe='')}"
-        return fetch_json(build_url(args.server, path, {}, args.token))
+        return fetch_json(build_url(args.server, f"/api/wiki/service/{svc}/domain/{quote(args.domain, safe='')}", {}, args.token))
     if args.type == "endpoint":
         return fetch_json(build_url(args.server, f"/api/wiki/endpoints/{svc}", {}, args.token))
     return fetch_json(build_url(args.server, f"/api/wiki/service/{svc}", {}, args.token))
 
 
 def cmd_business(args: argparse.Namespace) -> Any:
+    if args.meta:
+        return fetch_json(build_url(args.server, "/api/business/meta", {}, args.token))
+    if args.panorama:
+        return fetch_json(build_url(args.server, "/api/business/panorama", {}, args.token))
+    if args.links:
+        params: dict[str, str] = {}
+        if args.domain:
+            params["domain"] = args.domain
+        return fetch_json(build_url(args.server, "/api/business/cross-facet-links", params, args.token))
     if args.list:
         return fetch_json(build_url(args.server, "/api/business/domains", {}, args.token))
     if args.search:
@@ -169,13 +272,29 @@ def cmd_business(args: argparse.Namespace) -> Any:
     return fetch_json(build_url(args.server, "/api/business/overview", {}, args.token))
 
 
+def cmd_services(args: argparse.Namespace) -> Any:
+    params: dict[str, str] = {}
+    if args.name:
+        params["name"] = args.name
+    if args.has:
+        params["has"] = args.has
+    return fetch_json(build_url(args.server, "/api/services", params, args.token))
+
+
+def cmd_meta(args: argparse.Namespace) -> Any:
+    data = fetch_json(build_url(args.server, "/api/meta", {}, args.token))
+    if args.stale:
+        return {"stale": data.get("freshness", {}).get("stale", [])}
+    return data
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if not args.token:
         print("Error: --token required (or set UNDERSTAND_TOKEN env var)", file=sys.stderr)
         return 1
     try:
-        handlers = {"kg": cmd_kg, "domain": cmd_domain, "wiki": cmd_wiki, "business": cmd_business}
+        handlers = {"kg": cmd_kg, "domain": cmd_domain, "wiki": cmd_wiki, "business": cmd_business, "services": cmd_services, "meta": cmd_meta}
         data = handlers[args.command](args)
         print(format_output(data, args.format))
         return 0
