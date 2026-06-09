@@ -2,7 +2,7 @@ import fs from "fs"
 import path from "path"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
 import { graphFileCandidates } from "../utils"
-import { resolvePathWithinRoot } from "../../utils/sanitize"
+import { resolvePathWithinRoot, sanitizeSlug } from "../../utils/sanitize"
 
 export async function handleWikiRequest(
   req: ApiRequest,
@@ -42,6 +42,40 @@ export async function handleWikiRequest(
           statusCode: 500,
           body: { error: err instanceof Error ? err.message : String(err) },
         }
+      }
+    }
+
+    const svcFlowMatch = apiPath.match(/^\/service\/([^/]+)\/flow\/(.+)$/)
+    if (svcFlowMatch) {
+      try {
+        const svcName = decodeURIComponent(svcFlowMatch[1])
+        const flowId = decodeURIComponent(svcFlowMatch[2])
+        const serviceWiki = ws.getServiceWiki(svcName)
+        if (!serviceWiki) {
+          return { statusCode: 404, body: { error: "Service wiki not found" } }
+        }
+
+        const domainEntries = serviceWiki.index.entries.filter((e) => e.type === "domain")
+        for (const entry of domainEntries) {
+          const domainSlug = sanitizeSlug(entry.id)
+          if (!domainSlug) continue
+          const page = ws.getServiceDomain(svcName, domainSlug)
+          if (!page?.flows) continue
+          const flow = page.flows.find((f) => f.id === flowId)
+          if (flow) {
+            return {
+              statusCode: 200,
+              body: {
+                flow: { id: flow.id, name: flow.name, summary: flow.summary, steps: flow.steps },
+                domain: { id: page.id, name: page.name },
+                service: svcName,
+              },
+            }
+          }
+        }
+        return { statusCode: 404, body: { error: `Flow '${flowId}' not found` } }
+      } catch {
+        return { statusCode: 400, body: { error: "Invalid URL encoding" } }
       }
     }
 

@@ -76,6 +76,120 @@ describe("wiki handler", () => {
   })
 })
 
+describe("wiki flow direct access", () => {
+  let dir: string
+  let origCwd: string
+  let svc: WikiDataService
+  const ctx = {
+    getWikiService: () => svc,
+  }
+
+  beforeEach(() => {
+    dir = tmpDir()
+    origCwd = process.cwd()
+    process.chdir(dir)
+    svc = new WikiDataService(dir)
+    ctx.getWikiService = () => svc
+  })
+
+  afterEach(() => {
+    process.chdir(origCwd)
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("returns 404 when service wiki not available", async () => {
+    const res = await handleWikiRequest(
+      { pathname: "/api/wiki/service/test-svc/flow/flow:create-order", searchParams: new URLSearchParams() },
+      ctx,
+    )
+    expect(res).not.toBeNull()
+    expect(res!.statusCode).toBe(404)
+    expect((res!.body as { error: string }).error).toBe("Service wiki not found")
+  })
+
+  it("returns flow with parent domain for matching route", async () => {
+    writeJson(path.join(dir, "test-svc/.understand-anything/wiki/meta.json"), {
+      gitCommitHash: "a", generatedAt: "t", version: "1", outputLanguage: "en",
+    })
+    writeJson(path.join(dir, "test-svc/.understand-anything/wiki/index.json"), {
+      entries: [{ id: "wiki:order-mgmt", name: "Order Management", type: "domain", summary: "Orders" }],
+    })
+    writeJson(path.join(dir, "test-svc/.understand-anything/wiki/service.json"), {
+      name: "test-svc",
+      description: "Test service",
+      techStack: [],
+      modules: [],
+      entryPoints: [],
+    })
+    writeJson(path.join(dir, "test-svc/.understand-anything/wiki/domains/order-mgmt.json"), {
+      id: "domain:order-mgmt",
+      name: "Order Management",
+      summary: "Handles order lifecycle",
+      flows: [{
+        id: "flow:create-order",
+        name: "Create Order",
+        summary: "Creates a new order",
+        steps: [{ order: 1, name: "Validate", description: "Validate input" }],
+      }],
+    })
+
+    const res = await handleWikiRequest(
+      { pathname: "/api/wiki/service/test-svc/flow/flow:create-order", searchParams: new URLSearchParams() },
+      ctx,
+    )
+    expect(res).not.toBeNull()
+    expect(res!.statusCode).toBe(200)
+    const body = res!.body as {
+      flow: { id: string; name: string; summary: string; steps: unknown[] }
+      domain: { id: string; name: string }
+      service: string
+    }
+    expect(body.service).toBe("test-svc")
+    expect(body.domain).toEqual({ id: "domain:order-mgmt", name: "Order Management" })
+    expect(body.flow.id).toBe("flow:create-order")
+    expect(body.flow.name).toBe("Create Order")
+    expect(body.flow.steps).toHaveLength(1)
+  })
+
+  it("returns 404 when flow id not found in any domain", async () => {
+    writeJson(path.join(dir, "test-svc/.understand-anything/wiki/meta.json"), {
+      gitCommitHash: "a", generatedAt: "t", version: "1", outputLanguage: "en",
+    })
+    writeJson(path.join(dir, "test-svc/.understand-anything/wiki/index.json"), {
+      entries: [{ id: "wiki:order-mgmt", name: "Order Management", type: "domain", summary: "Orders" }],
+    })
+    writeJson(path.join(dir, "test-svc/.understand-anything/wiki/service.json"), {
+      name: "test-svc",
+      description: "Test service",
+      techStack: [],
+      modules: [],
+      entryPoints: [],
+    })
+    writeJson(path.join(dir, "test-svc/.understand-anything/wiki/domains/order-mgmt.json"), {
+      id: "domain:order-mgmt",
+      name: "Order Management",
+      summary: "Handles order lifecycle",
+      flows: [{ id: "flow:create-order", name: "Create Order", summary: "Creates a new order", steps: [] }],
+    })
+
+    const res = await handleWikiRequest(
+      { pathname: "/api/wiki/service/test-svc/flow/flow:missing", searchParams: new URLSearchParams() },
+      ctx,
+    )
+    expect(res).not.toBeNull()
+    expect(res!.statusCode).toBe(404)
+    expect((res!.body as { error: string }).error).toBe("Flow 'flow:missing' not found")
+  })
+
+  it("returns null for non-matching routes", async () => {
+    const res = await handleWikiRequest(
+      { pathname: "/api/other/path", searchParams: new URLSearchParams() },
+      ctx,
+    )
+    expect(res).toBeNull()
+  })
+})
+
 describe("source handler", () => {
   let dir: string
   let origCwd: string
