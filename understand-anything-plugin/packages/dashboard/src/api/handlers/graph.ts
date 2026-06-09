@@ -1,7 +1,8 @@
 import path from "path"
 import fs from "fs"
+import { execSync } from "child_process"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
-import { graphFileCandidates, projectRootFromGraphFile } from "../utils"
+import { graphFileCandidates, projectRootFromGraphFile, readJsonFile, resolveProjectRoot } from "../utils"
 import type { SystemGraph } from "@understand-anything/core"
 
 const STATIC_GRAPH_PATHS = new Set([
@@ -74,6 +75,10 @@ export async function handleGraphRequest(
     return { statusCode: 404, body: { error: `${fileName} not found for service ${serviceName}` } }
   }
 
+  if (pathname === "/api/meta") {
+    return buildMetaResponse()
+  }
+
   if (!STATIC_GRAPH_PATHS.has(pathname)) return null
 
   if (pathname === "/config.json") {
@@ -112,6 +117,88 @@ export async function handleGraphRequest(
     return { statusCode: 404, body: { error: "No knowledge graph found. Run /understand first." } }
   }
   return { statusCode: 404, body: { error: `${fileName} not found` } }
+}
+
+function buildMetaResponse(): ApiResponse {
+  const projectRoot = resolveProjectRoot()
+  const uaDir = path.join(projectRoot, ".understand-anything")
+
+  const systemGraph = readJsonFile<{ project?: { name?: string; description?: string } }>(
+    path.join(uaDir, "system-graph.json"),
+  )
+  const config = readJsonFile<{ name?: string }>(path.join(uaDir, "config.json"))
+  const project: { name: string; description?: string } = {
+    name: systemGraph?.project?.name ?? config?.name ?? path.basename(projectRoot),
+  }
+  if (systemGraph?.project?.description) {
+    project.description = systemGraph.project.description
+  }
+
+  const kgMeta = readJsonFile<{ lastAnalyzedAt?: string; gitCommitHash?: string }>(
+    path.join(uaDir, "meta.json"),
+  )
+  const kgGraph = readJsonFile<{ nodes?: unknown[]; edges?: unknown[] }>(
+    path.join(uaDir, "knowledge-graph.json"),
+  )
+  const domainGraph = readJsonFile<{ nodes?: unknown[]; edges?: unknown[] }>(
+    path.join(uaDir, "domain-graph.json"),
+  )
+  const wikiMeta = readJsonFile<{
+    generatedAt?: string
+    serviceCount?: number
+    qualityScore?: { overallGrade?: string }
+  }>(path.join(uaDir, "wiki", "meta.json"))
+  const blMeta = readJsonFile<{ generatedAt?: string; status?: string }>(
+    path.join(uaDir, "business-landscape", "meta.json"),
+  )
+  const blDomains = readJsonFile<{ domains?: unknown[] }>(
+    path.join(uaDir, "business-landscape", "domains.json"),
+  )
+
+  let currentCommit = ""
+  const stale: string[] = []
+  try {
+    currentCommit = execSync("git rev-parse HEAD", { cwd: projectRoot, encoding: "utf-8" }).trim()
+    if (kgMeta?.gitCommitHash && kgMeta.gitCommitHash !== currentCommit) {
+      stale.push("kg", "domain")
+    }
+  } catch {
+    // not in a git repo
+  }
+
+  return {
+    statusCode: 200,
+    body: {
+      project,
+      layers: {
+        kg: {
+          available: kgGraph != null || kgMeta != null,
+          commit: kgMeta?.gitCommitHash,
+          analyzedAt: kgMeta?.lastAnalyzedAt,
+          nodeCount: kgGraph?.nodes?.length,
+          edgeCount: kgGraph?.edges?.length,
+        },
+        domain: {
+          available: domainGraph != null,
+          nodeCount: domainGraph?.nodes?.length,
+          edgeCount: domainGraph?.edges?.length,
+        },
+        wiki: {
+          available: wikiMeta != null,
+          qualityGrade: wikiMeta?.qualityScore?.overallGrade,
+          generatedAt: wikiMeta?.generatedAt,
+          serviceCount: wikiMeta?.serviceCount,
+        },
+        business: {
+          available: blMeta != null || blDomains != null,
+          status: blMeta?.status,
+          domainCount: blDomains?.domains?.length,
+          generatedAt: blMeta?.generatedAt,
+        },
+      },
+      freshness: { currentCommit, stale },
+    },
+  }
 }
 
 let cachedSystemGraph: SystemGraph | null = null
