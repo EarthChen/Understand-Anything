@@ -247,8 +247,10 @@ Using the script's structural data and file categories, create edges.
 | `implements` | A class implements an interface in the project. Use `classes[].interfaces` from structural data when available. | `0.9` | `forward` |
 | `exports` | File exports a function or class node you created (only for exported items — use IN ADDITION to `contains`, not instead of it) | `0.8` | `forward` |
 | `depends_on` | File has runtime dependency on another project file (broader than imports -- includes dynamic requires, lazy loads) | `0.6` | `forward` |
-| `provides_rpc` | Class/method exposes an RPC service via provider annotation (see RPC section below). Source: provider class. Target: interface node (`class:<path>:<InterfaceName>`). | `0.9` | `forward` |
-| `consumes_rpc` | Class/method consumes a remote RPC via consumer annotation (see RPC section below). Source: consumer class. Target: interface node. | `0.8` | `forward` |
+| `provides_rpc` | Class/method exposes a **network** RPC service via provider annotation (Dubbo/gRPC/MOA — see RPC section below). Source: provider class. Target: interface node (`class:<path>:<InterfaceName>`). | `0.9` | `forward` |
+| `consumes_rpc` | Class/method consumes a **network** RPC via consumer annotation (Dubbo/Feign/gRPC — see RPC section below). Source: consumer class. Target: interface node. | `0.8` | `forward` |
+| `provides_route` | Class registers a module-local service via a **routing framework** (ARouter/TheRouter/WMRouter). Source: implementation class. Target: interface node. NOT for network RPC — use `provides_rpc` for Dubbo/gRPC. | `0.8` | `forward` |
+| `consumes_route` | Class discovers and invokes a module-local service via routing framework. Source: consumer class. Target: interface node or route path. | `0.7` | `forward` |
 | `publishes` | Class/method produces messages to a topic (e.g., `@KafkaTemplate`, event publisher). Source: producer class/method. Target: topic node or `class:<path>:<TopicConstant>`. | `0.8` | `forward` |
 | `subscribes` | Class/method consumes messages from a topic (e.g., `@KafkaListener`). Source: consumer class/method. Target: topic node. | `0.8` | `forward` |
 | `tested_by` | Production file is exercised by a test file. Emit when you see the test importing/using the production file. Use direction `production → test` if you can; the merge script will flip inverted edges and dedupe. | `0.5` | `forward` |
@@ -327,6 +329,12 @@ When `annotations` data is present in the structural extraction output, you MUST
 | `@Resource` | Spring/Jakarta | `injects` | Dependency injection (field) |
 | `@Inject` | CDI/Jakarta | `injects` | Dependency injection (field/constructor/method) |
 | `@Value` | Spring | `injects` | Configuration value injection |
+| `@GET` | Retrofit/JAX-RS | `consumes_api` | HTTP GET client endpoint (path from annotation value) |
+| `@POST` | Retrofit/JAX-RS | `consumes_api` | HTTP POST client endpoint (path from annotation value) |
+| `@PUT` | Retrofit/JAX-RS | `consumes_api` | HTTP PUT client endpoint (path from annotation value) |
+| `@DELETE` | Retrofit/JAX-RS | `consumes_api` | HTTP DELETE client endpoint (path from annotation value) |
+| `@PATCH` | Retrofit/JAX-RS | `consumes_api` | HTTP PATCH client endpoint (path from annotation value) |
+| `@HEAD` | Retrofit/JAX-RS | `consumes_api` | HTTP HEAD client endpoint (path from annotation value) |
 
 **Edge shape (RPC):**
 
@@ -349,6 +357,16 @@ When `annotations` data is present in the structural extraction output, you MUST
 3. For `@FeignClient`, resolve the target from annotation `arguments.name` / `arguments.value` / `arguments.url`; framework = `feign`.
 4. Add tag `rpc-consumer`. Use `consumes_rpc` exclusively — do NOT also emit `depends_on` for the same remote service.
 5. If the interface definition is not in this batch, emit the edge anyway (merge script resolves or drops dangling targets).
+
+**Module Routing rules (`provides_route` / `consumes_route`):**
+
+Use these edge types for **in-process module-to-module service routing** — NOT for network RPC. Common frameworks: ARouter, TheRouter, WMRouter, ServiceLoader pattern.
+
+1. When a class has `@Route(path="/service/xxx")` annotation AND implements a service interface, emit `provides_route` from the implementation class → interface node.
+2. When code uses `ARouter.getInstance().navigation(XxxService::class.java)` or similar routing discovery, emit `consumes_route` from the caller → interface node.
+3. Add tags `route-provider` and `arouter` (or the specific router framework).
+4. **NEVER use `provides_rpc` for ARouter/TheRouter/WMRouter** — these are in-process, not network calls.
+5. Weight: `provides_route` = `0.8`, `consumes_route` = `0.7`.
 
 **Dependency Injection rules (`injects`):**
 
@@ -377,6 +395,17 @@ When `annotations` data is present in the structural extraction output, you MUST
   "weight": 0.8
 }
 ```
+
+**HTTP client endpoint rules (`consumes_api`):**
+
+When `functions[].annotations` or `classes[].annotations` contain Retrofit/JAX-RS HTTP method annotations (`@GET`, `@POST`, `@PUT`, `@DELETE`, `@PATCH`, `@HEAD`), AND the structural extraction output includes `endpoints[]` data for the file:
+
+1. The containing interface/class is an HTTP API client definition. Create `consumes_api` edges from the client interface → the target API (use the base URL or service name from class-level annotations like `@FeignClient`, `@Path`, or `@RequestMapping` when available).
+2. Each method annotated with `@GET`/`@POST`/etc. represents one HTTP endpoint call. The `endpoints[]` in extraction results already provides `method` and `path` for each.
+3. Add tags `http-client`, `api-consumer` to the client interface/class node.
+4. **Edge shape:** `{ "source": "class:<path>:<ClientInterface>", "target": "endpoint:<path>:<METHOD-apiPath>", "type": "consumes_api", "direction": "forward", "weight": 0.7, "description": "{\"method\": \"POST\", \"path\": \"/api/users\", \"framework\": \"retrofit\"}" }`. The `description` field with method/path/framework JSON is ALWAYS REQUIRED (even when the endpoint node exists in this batch).
+5. **Endpoint node:** Each endpoint MUST be emitted as a node with `type: "endpoint"`, `filePath`, and `lineRange` pointing to the annotated method's line range. The `name` field uses space separator: `"POST /api/users"` (NOT hyphen).
+6. For Retrofit interfaces, the interface name typically indicates the consumed service (e.g., `UserApiService`, `OrderApi`). Include this in the node summary.
 
 **Message-queue rules (`publishes` / `subscribes`):**
 
@@ -538,7 +567,7 @@ Produce a single, valid JSON block. Before writing, verify that all arrays and o
 
 **Conditionally required fields:**
 - `filePath` (string) -- REQUIRED for file-level nodes (file, config, document, service, pipeline, schema, resource), optional for sub-file nodes
-- `lineRange` ([number, number]) -- include for `function` and `class` nodes, sourced directly from script output
+- `lineRange` ([number, number]) -- REQUIRED for `function`, `class`, and `endpoint` nodes, sourced directly from script output. For endpoint nodes, use the lineRange of the corresponding method declaration (the function annotated with @GET/@POST/etc.)
 
 **Optional fields:**
 - `languageNotes` (string) -- only when there is a genuinely notable pattern
@@ -570,6 +599,9 @@ Use these hints for common edge patterns:
 | `@DubboService` / `@MoaProvider` class implements interface | `provides_rpc` from class → interface node |
 | `@DubboReference` / `@MoaConsumer` injected field | `consumes_rpc` from containing class → interface node |
 | `@FeignClient` on interface or class | `consumes_rpc` from client → remote service name |
+| `@GET`/`@POST`/`@PUT`/`@DELETE` on interface methods (Retrofit/JAX-RS) | `consumes_api` from client interface → endpoint |
+| `@Route(path="/service/xxx")` + implements IProvider/service interface (ARouter/TheRouter/WMRouter) | `provides_route` from impl class → interface node |
+| `ARouter.getInstance().navigation(XxxService::class.java)` or `TheRouter.get(...)` | `consumes_route` from caller → interface/path |
 | `@GrpcService` / `@GrpcClient` | `provides_rpc` / `consumes_rpc` respectively |
 | `@KafkaListener` on method | `subscribes` from class/method → topic |
 | `kafkaTemplate.send("topic", ...)` | `publishes` from caller → topic |

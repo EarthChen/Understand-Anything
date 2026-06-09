@@ -16,9 +16,11 @@ export interface SystemGraphServiceStats {
 
 export interface SystemGraphNode {
   id: string;
-  type: "microservice" | "endpoint";
+  type: "microservice" | "endpoint" | "facet";
   name: string;
   summary: string;
+  // Facet-specific fields
+  facetType?: "server" | "mobile" | "frontend";
   // Microservice-specific fields
   languages?: string[];
   frameworks?: string[];
@@ -42,7 +44,7 @@ export interface SystemGraphEdgeDetail {
 export interface SystemGraphEdge {
   source: string;
   target: string;
-  type: "rpc_call" | "event" | "shared_db" | "contains";
+  type: "rpc_call" | "http_call" | "event" | "shared_db" | "contains";
   weight: number;
   detail?: SystemGraphEdgeDetail;
 }
@@ -53,6 +55,10 @@ export interface SystemGraphServiceIndex {
   hasDomain: boolean;
   kgCommit?: string;
   wikiCommit?: string;
+  /** Relative path from project root to this service directory (for nested facet layouts). */
+  basePath?: string;
+  /** Which facet this service belongs to. */
+  facet?: "server" | "mobile" | "frontend";
 }
 
 export interface SystemGraph {

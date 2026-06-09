@@ -45,6 +45,18 @@ export async function handleWikiRequest(
       }
     }
 
+    const svcArchMatch = apiPath.match(/^\/service\/([^/]+)\/architecture$/)
+    if (svcArchMatch) {
+      try {
+        const svcName = decodeURIComponent(svcArchMatch[1])
+        const data = ws.getServiceArchitecture(svcName)
+        if (!data) return { statusCode: 404, body: { error: "Service architecture not found" } }
+        return { statusCode: 200, body: data }
+      } catch {
+        return { statusCode: 400, body: { error: "Invalid URL encoding" } }
+      }
+    }
+
     const svcDomainMatch = apiPath.match(/^\/service\/([^/]+)\/domain\/([^/]+)$/)
     if (svcDomainMatch) {
       try {

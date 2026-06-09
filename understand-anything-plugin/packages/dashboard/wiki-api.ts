@@ -12,6 +12,7 @@ import type {
   WikiCrossDomain,
   WikiSearchResult,
   WikiTopology,
+  WikiTopologyFacet,
   ServiceEndpointDoc,
 } from "@understand-anything/core";
 import { sanitizeSlug } from "./src/utils/sanitize";
@@ -97,24 +98,84 @@ export class WikiDataService {
     const rootMetaExists = fs.existsSync(path.join(rootWikiDir, "meta.json"));
 
     const services: WikiTopology["services"] = [];
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(this.projectRoot, { withFileTypes: true })
-        .filter((d) => d.isDirectory() && !d.name.startsWith("."))
-        .map((d) => d.name);
-    } catch {
-      entries = [];
+
+    // Primary: load service paths from system-graph.json serviceIndex (deterministic)
+    const systemGraphPath = path.join(this.projectRoot, ".understand-anything", "system-graph.json");
+    let resolvedFromRegistry = false;
+    const facets: WikiTopologyFacet[] = [];
+    if (fs.existsSync(systemGraphPath)) {
+      try {
+        const sg = JSON.parse(fs.readFileSync(systemGraphPath, "utf-8")) as Record<string, unknown>;
+        const serviceIndex = sg.serviceIndex as Record<string, { basePath?: string; hasWiki?: boolean; facet?: string }> | undefined;
+        if (serviceIndex && typeof serviceIndex === "object") {
+          const facetMap = new Map<string, string[]>();
+          const facetPaths = new Set<string>();
+          for (const [svcName, svcInfo] of Object.entries(serviceIndex)) {
+            const svcRelPath = svcInfo.basePath ?? svcName;
+            const wikiDir = path.join(this.projectRoot, svcRelPath, ".understand-anything", "wiki");
+            const metaPath = path.join(wikiDir, "meta.json");
+            if (!fs.existsSync(metaPath)) continue;
+            try {
+              const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8")) as WikiMeta;
+              const facet = svcInfo.facet as WikiTopology["services"][0]["facet"];
+              services.push({ name: svcName, wikiDir, meta, facet });
+              if (facet) {
+                const list = facetMap.get(facet) ?? [];
+                list.push(svcName);
+                facetMap.set(facet, list);
+                // Track facet parent directory
+                const parts = svcRelPath.split("/");
+                if (parts.length > 1) facetPaths.add(parts[0]);
+              }
+            } catch {
+              // skip corrupted meta
+            }
+          }
+          // Also load facet-level parent wikis (e.g. backend/, mobile/)
+          for (const facetDir of facetPaths) {
+            const facetWikiDir = path.join(this.projectRoot, facetDir, ".understand-anything", "wiki");
+            const facetMetaPath = path.join(facetWikiDir, "meta.json");
+            if (fs.existsSync(facetMetaPath)) {
+              try {
+                const meta = JSON.parse(fs.readFileSync(facetMetaPath, "utf-8")) as WikiMeta;
+                services.push({ name: facetDir, wikiDir: facetWikiDir, meta });
+              } catch {
+                // skip
+              }
+            }
+          }
+          // Build facet groupings
+          const facetNames: Record<string, string> = { server: "后端微服务", mobile: "移动客户端", frontend: "前端应用" };
+          for (const [facetType, svcNames] of facetMap) {
+            facets.push({ type: facetType as WikiTopologyFacet["type"], name: facetNames[facetType] ?? facetType, services: svcNames });
+          }
+          resolvedFromRegistry = true;
+        }
+      } catch {
+        // fall through to directory scan
+      }
     }
 
-    for (const dirName of entries) {
-      const wikiDir = path.join(this.projectRoot, dirName, ".understand-anything", "wiki");
-      const metaPath = path.join(wikiDir, "meta.json");
-      if (!fs.existsSync(metaPath)) continue;
+    // Fallback: directory scanning (for single-service or legacy projects without system-graph)
+    if (!resolvedFromRegistry) {
+      let entries: string[];
       try {
-        const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8")) as WikiMeta;
-        services.push({ name: dirName, wikiDir, meta });
+        entries = fs.readdirSync(this.projectRoot, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+          .map((d) => d.name);
       } catch {
-        // skip corrupted meta
+        entries = [];
+      }
+      for (const dirName of entries) {
+        const wikiDir = path.join(this.projectRoot, dirName, ".understand-anything", "wiki");
+        const metaPath = path.join(wikiDir, "meta.json");
+        if (!fs.existsSync(metaPath)) continue;
+        try {
+          const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8")) as WikiMeta;
+          services.push({ name: dirName, wikiDir, meta });
+        } catch {
+          // skip corrupted meta
+        }
       }
     }
 
@@ -151,6 +212,7 @@ export class WikiDataService {
       hasParentWiki,
       parentWikiDir,
       services,
+      facets: facets.length > 0 ? facets : undefined,
     };
     this.topologyCachedAt = this.now();
     return this.topology;
@@ -194,7 +256,8 @@ export class WikiDataService {
       const svcIndex = this.readJson<WikiIndex>(path.join(svc.wikiDir, "index.json"));
       if (svcIndex?.entries) {
         for (const entry of svcIndex.entries) {
-          entries.push({ ...entry, service: entry.service ?? svc.name });
+          const svcLabel = entry.service === "cross-service" ? svc.name : (entry.service ?? svc.name);
+          entries.push({ ...entry, service: svcLabel });
         }
       }
     }
@@ -214,6 +277,13 @@ export class WikiDataService {
     return this.readJson<WikiArchitecture>(path.join(topo.parentWikiDir, "architecture.json"));
   }
 
+  getServiceArchitecture(serviceName: string): WikiArchitecture | null {
+    const topo = this.discoverWikis();
+    const svc = topo.services.find((s) => s.name === serviceName);
+    if (!svc) return null;
+    return this.readJson<WikiArchitecture>(path.join(svc.wikiDir, "architecture.json"));
+  }
+
   getServices(): Array<{ name: string; meta: WikiMeta; overview: WikiServiceOverview | null }> {
     const topo = this.discoverWikis();
     return topo.services.map((svc) => ({
@@ -223,15 +293,37 @@ export class WikiDataService {
     }));
   }
 
-  getServiceWiki(serviceName: string): { index: WikiIndex; overview: WikiServiceOverview } | null {
+  getServiceWiki(serviceName: string): { index: WikiIndex; overview: WikiServiceOverview | WikiOverview; architecture?: WikiArchitecture; crossDomains?: WikiCrossDomain[] } | null {
     const topo = this.discoverWikis();
     const svc = topo.services.find((s) => s.name === serviceName);
     if (!svc) return null;
 
     const index = this.readJson<WikiIndex>(path.join(svc.wikiDir, "index.json"));
-    const overview = this.readJson<WikiServiceOverview>(path.join(svc.wikiDir, "service.json"));
-    if (!index || !overview) return null;
-    return { index, overview };
+    if (!index) return null;
+
+    const serviceJson = this.readJson<WikiServiceOverview>(path.join(svc.wikiDir, "service.json"));
+    if (serviceJson) {
+      return { index, overview: serviceJson };
+    }
+
+    // Facet/batch wiki: include architecture and cross-domain flows
+    const overview = this.readJson<WikiOverview>(path.join(svc.wikiDir, "overview.json"));
+    if (!overview) return null;
+
+    const architecture = this.readJson<WikiArchitecture>(path.join(svc.wikiDir, "architecture.json")) ?? undefined;
+    const crossDomains: WikiCrossDomain[] = [];
+    const domainsDir = path.join(svc.wikiDir, "domains");
+    if (fs.existsSync(domainsDir)) {
+      try {
+        const files = fs.readdirSync(domainsDir).filter((f) => f.endsWith(".json"));
+        for (const file of files) {
+          const domain = this.readJson<WikiCrossDomain>(path.join(domainsDir, file));
+          if (domain) crossDomains.push(domain);
+        }
+      } catch { /* skip */ }
+    }
+
+    return { index, overview, architecture: architecture, crossDomains: crossDomains.length > 0 ? crossDomains : undefined };
   }
 
   getDomain(domainName: string): WikiCrossDomain | null {

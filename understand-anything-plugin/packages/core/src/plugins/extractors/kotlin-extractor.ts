@@ -1,6 +1,22 @@
-import type { StructuralAnalysis, CallGraphEntry, AnnotationInfo, PropertyInfo } from "../../types.js";
+import type { StructuralAnalysis, CallGraphEntry, AnnotationInfo, PropertyInfo, EndpointInfo } from "../../types.js";
 import type { LanguageExtractor, TreeSitterNode } from "./types.js";
 import { findChild, findChildren } from "./base-extractor.js";
+
+const HTTP_METHOD_ANNOTATIONS: Record<string, string> = {
+  GET: "GET",
+  POST: "POST",
+  PUT: "PUT",
+  DELETE: "DELETE",
+  PATCH: "PATCH",
+  HEAD: "HEAD",
+  OPTIONS: "OPTIONS",
+  GetMapping: "GET",
+  PostMapping: "POST",
+  PutMapping: "PUT",
+  DeleteMapping: "DELETE",
+  PatchMapping: "PATCH",
+  RequestMapping: "REQUEST",
+};
 
 function extractParams(paramsNode: TreeSitterNode | null): string[] {
   if (!paramsNode) return [];
@@ -77,24 +93,41 @@ function extractAnnotationArguments(
 
   const args: Record<string, string> = {};
   for (const arg of findChildren(valueArgs, "value_argument")) {
-    const keyNode = findChild(arg, "identifier");
-    if (!keyNode) continue;
-
-    let valueText = "";
-    let afterEquals = false;
-    for (let i = 0; i < arg.childCount; i++) {
-      const child = arg.child(i);
-      if (!child) continue;
-      if (child.type === "=") {
-        afterEquals = true;
-        continue;
+    const hasEquals = (() => {
+      for (let i = 0; i < arg.childCount; i++) {
+        if (arg.child(i)?.type === "=") return true;
       }
-      if (afterEquals) {
-        valueText += child.text;
+      return false;
+    })();
+
+    if (hasEquals) {
+      const keyNode = findChild(arg, "identifier");
+      if (!keyNode) continue;
+      let valueText = "";
+      let afterEquals = false;
+      for (let i = 0; i < arg.childCount; i++) {
+        const child = arg.child(i);
+        if (!child) continue;
+        if (child.type === "=") {
+          afterEquals = true;
+          continue;
+        }
+        if (afterEquals) {
+          valueText += child.text;
+        }
+      }
+      args[keyNode.text] = valueText.replace(/^"|"$/g, "");
+    } else {
+      // Positional argument (no key=value syntax) — store as "value"
+      let valueText = "";
+      for (let i = 0; i < arg.childCount; i++) {
+        const child = arg.child(i);
+        if (child) valueText += child.text;
+      }
+      if (valueText) {
+        args["value"] = valueText.replace(/^"|"$/g, "");
       }
     }
-
-    args[keyNode.text] = valueText.replace(/^"|"$/g, "");
   }
 
   return Object.keys(args).length > 0 ? args : undefined;
@@ -204,6 +237,61 @@ function extractPropertyDeclaration(
   }
 }
 
+function extractHttpBasePath(annotations: AnnotationInfo[]): string | undefined {
+  for (const ann of annotations) {
+    if (ann.name === "RequestMapping" || ann.name === "Path") {
+      const path = ann.arguments?.value ?? ann.arguments?.path;
+      if (path) return path.replace(/^["']|["']$/g, "");
+    }
+  }
+  return undefined;
+}
+
+function extractEndpointFromMethod(
+  methodNode: TreeSitterNode,
+  endpoints: EndpointInfo[],
+  basePath?: string,
+): void {
+  const annotations = extractAnnotations(methodNode);
+  for (const ann of annotations) {
+    const httpMethod = HTTP_METHOD_ANNOTATIONS[ann.name];
+    if (!httpMethod) continue;
+
+    let methodPath = ann.arguments?.value ?? ann.arguments?.path ?? "";
+    methodPath = methodPath.replace(/^["']|["']$/g, "");
+
+    if (ann.name === "RequestMapping" && ann.arguments?.method) {
+      const resolvedMethod = ann.arguments.method
+        .replace(/RequestMethod\./g, "")
+        .replace(/[{}]/g, "")
+        .trim();
+      const fullPath = joinPaths(basePath, methodPath);
+      endpoints.push({
+        method: resolvedMethod || "REQUEST",
+        path: fullPath || "/",
+        lineRange: [methodNode.startPosition.row + 1, methodNode.endPosition.row + 1],
+      });
+      return;
+    }
+
+    const fullPath = joinPaths(basePath, methodPath);
+    endpoints.push({
+      method: httpMethod,
+      path: fullPath || "/",
+      lineRange: [methodNode.startPosition.row + 1, methodNode.endPosition.row + 1],
+    });
+    return;
+  }
+}
+
+function joinPaths(base: string | undefined, path: string): string {
+  if (!base) return path;
+  if (!path) return base;
+  const normalizedBase = base.endsWith("/") ? base.slice(0, -1) : base;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return normalizedBase + normalizedPath;
+}
+
 export class KotlinExtractor implements LanguageExtractor {
   readonly languageIds = ["kotlin"];
 
@@ -212,6 +300,7 @@ export class KotlinExtractor implements LanguageExtractor {
     const classes: StructuralAnalysis["classes"] = [];
     const imports: StructuralAnalysis["imports"] = [];
     const exports: StructuralAnalysis["exports"] = [];
+    const endpoints: EndpointInfo[] = [];
 
     for (let i = 0; i < rootNode.childCount; i++) {
       const node = rootNode.child(i);
@@ -222,10 +311,10 @@ export class KotlinExtractor implements LanguageExtractor {
           this.extractImport(node, imports);
           break;
         case "class_declaration":
-          this.extractClassDeclaration(node, functions, classes, exports);
+          this.extractClassDeclaration(node, functions, classes, exports, endpoints);
           break;
         case "object_declaration":
-          this.extractObjectDeclaration(node, functions, classes, exports);
+          this.extractObjectDeclaration(node, functions, classes, exports, endpoints);
           break;
         case "function_declaration":
           this.extractTopLevelFunction(node, functions, exports);
@@ -233,7 +322,9 @@ export class KotlinExtractor implements LanguageExtractor {
       }
     }
 
-    return { functions, classes, imports, exports };
+    const result: StructuralAnalysis = { functions, classes, imports, exports };
+    if (endpoints.length > 0) result.endpoints = endpoints;
+    return result;
   }
 
   extractCallGraph(rootNode: TreeSitterNode): CallGraphEntry[] {
@@ -316,6 +407,7 @@ export class KotlinExtractor implements LanguageExtractor {
     functions: StructuralAnalysis["functions"],
     classes: StructuralAnalysis["classes"],
     exports: StructuralAnalysis["exports"],
+    endpoints: EndpointInfo[],
   ): void {
     const nameNode = node.childForFieldName("name") ?? findChild(node, "identifier");
     if (!nameNode) return;
@@ -323,6 +415,9 @@ export class KotlinExtractor implements LanguageExtractor {
     const methods: string[] = [];
     const properties: string[] = [];
     const typedProperties: PropertyInfo[] = [];
+
+    const annotations = extractAnnotations(node);
+    const basePath = extractHttpBasePath(annotations);
 
     const primaryConstructor = findChild(node, "primary_constructor");
     if (primaryConstructor) {
@@ -343,10 +438,11 @@ export class KotlinExtractor implements LanguageExtractor {
         functions,
         exports,
         typedProperties,
+        endpoints,
+        basePath,
       );
     }
 
-    const annotations = extractAnnotations(node);
     const { superclass, interfaces } = extractDelegationSpecifiers(node);
 
     const classEntry: StructuralAnalysis["classes"][0] = {
@@ -374,6 +470,7 @@ export class KotlinExtractor implements LanguageExtractor {
     functions: StructuralAnalysis["functions"],
     classes: StructuralAnalysis["classes"],
     exports: StructuralAnalysis["exports"],
+    endpoints: EndpointInfo[],
   ): void {
     const nameNode = node.childForFieldName("name") ?? findChild(node, "identifier");
     if (!nameNode) return;
@@ -381,6 +478,9 @@ export class KotlinExtractor implements LanguageExtractor {
     const methods: string[] = [];
     const properties: string[] = [];
     const typedProperties: PropertyInfo[] = [];
+
+    const annotations = extractAnnotations(node);
+    const basePath = extractHttpBasePath(annotations);
 
     const body = findChild(node, "class_body");
     if (body) {
@@ -391,10 +491,10 @@ export class KotlinExtractor implements LanguageExtractor {
         functions,
         exports,
         typedProperties,
+        endpoints,
+        basePath,
       );
     }
-
-    const annotations = extractAnnotations(node);
 
     const classEntry: StructuralAnalysis["classes"][0] = {
       name: nameNode.text,
@@ -421,6 +521,8 @@ export class KotlinExtractor implements LanguageExtractor {
     functions: StructuralAnalysis["functions"],
     exports: StructuralAnalysis["exports"],
     typedProperties: PropertyInfo[],
+    endpoints?: EndpointInfo[],
+    basePath?: string,
   ): void {
     for (let i = 0; i < body.childCount; i++) {
       const child = body.child(i);
@@ -429,6 +531,9 @@ export class KotlinExtractor implements LanguageExtractor {
       switch (child.type) {
         case "function_declaration":
           this.extractFunction(child, methods, functions, exports);
+          if (endpoints) {
+            extractEndpointFromMethod(child, endpoints, basePath);
+          }
           break;
         case "property_declaration":
           extractPropertyDeclaration(child, properties, exports, typedProperties);

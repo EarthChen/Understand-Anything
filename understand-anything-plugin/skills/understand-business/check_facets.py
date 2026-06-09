@@ -17,6 +17,7 @@ from pathlib import Path
 
 GRAPH_FILE_MAP = {
     'backend': 'system-graph.json',
+    'server': 'system-graph.json',
     'mobile': 'client-graph.json',
     'frontend': None,
     'test': None,

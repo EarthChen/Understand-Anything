@@ -75,6 +75,51 @@ def validate_landscape(project_root_str: str) -> list[str]:
             except json.JSONDecodeError as e:
                 errors.append(f'domains/{f.name}: invalid JSON — {e}')
 
+    # Validate wiki/domains/business.json (cross-platform panorama)
+    wiki_dir = project_root / '.understand-anything' / 'wiki'
+    business_path = wiki_dir / 'domains' / 'business.json'
+    if business_path.exists():
+        try:
+            biz = json.loads(business_path.read_text())
+            biz_errors = validate_business_panorama(biz)
+            for e in biz_errors:
+                errors.append(f'wiki/domains/business.json: {e}')
+        except json.JSONDecodeError as e:
+            errors.append(f'wiki/domains/business.json: invalid JSON — {e}')
+
+    return errors
+
+
+def validate_business_panorama(doc: dict) -> list[str]:
+    """Validate cross-platform business panorama document."""
+    errors = []
+    for field in ('id', 'name', 'summary', 'services'):
+        if field not in doc:
+            errors.append(f"missing required field '{field}'")
+    if 'services' in doc:
+        if not isinstance(doc['services'], list) or len(doc['services']) == 0:
+            errors.append("'services' must be a non-empty array")
+    has_content = False
+    if 'steps' in doc and isinstance(doc['steps'], list) and len(doc['steps']) > 0:
+        has_content = True
+        for i, step in enumerate(doc['steps']):
+            if 'order' not in step or 'service' not in step or 'description' not in step:
+                errors.append(f"steps[{i}]: missing required fields (order, service, description)")
+    if 'flows' in doc and isinstance(doc['flows'], list) and len(doc['flows']) > 0:
+        has_content = True
+        for i, flow in enumerate(doc['flows']):
+            if 'name' not in flow or 'steps' not in flow:
+                errors.append(f"flows[{i}]: missing required fields (name, steps)")
+    if 'architecture' in doc and isinstance(doc['architecture'], dict):
+        has_content = True
+        arch = doc['architecture']
+        if 'communications' in arch:
+            for i, comm in enumerate(arch['communications']):
+                for f in ('from', 'to', 'protocol'):
+                    if f not in comm:
+                        errors.append(f"architecture.communications[{i}]: missing '{f}'")
+    if not has_content:
+        errors.append("must have at least one of: steps, flows, or architecture")
     return errors
 
 

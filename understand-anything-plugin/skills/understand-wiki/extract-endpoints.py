@@ -362,6 +362,103 @@ def _enrich_provider_descriptions(
         )
 
 
+def extract_http_endpoints_from_kg(kg_path: Path) -> list[dict[str, Any]]:
+    """Extract client-side HTTP endpoints from a knowledge graph file.
+
+    Reads endpoint nodes and consumes_api edges to produce httpEndpoints array.
+    Resolves functionName by matching KG function nodes via (filePath, lineRange).
+    No source code scanning — all data comes from the KG.
+    """
+    try:
+        kg = json.loads(kg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    nodes = kg.get("nodes", [])
+    edges = kg.get("edges", [])
+
+    endpoint_nodes: dict[str, dict] = {}
+    for n in nodes:
+        if isinstance(n, dict) and n.get("type") == "endpoint":
+            endpoint_nodes[n["id"]] = n
+
+    if not endpoint_nodes:
+        return []
+
+    # Build lookup: (filePath, startLine) -> functionName from KG function nodes
+    fn_lookup: dict[tuple[str, int], str] = {}
+    for n in nodes:
+        if isinstance(n, dict) and n.get("type") == "function":
+            lr = n.get("lineRange")
+            fp = n.get("filePath", "")
+            if fp and isinstance(lr, list) and len(lr) >= 1:
+                fn_lookup[(fp, lr[0])] = n.get("name", "")
+
+    http_endpoints: list[dict] = []
+    seen: set[str] = set()
+
+    for edge in edges:
+        if not isinstance(edge, dict) or edge.get("type") != "consumes_api":
+            continue
+        target_id = edge.get("target", "")
+        if target_id in seen:
+            continue
+        seen.add(target_id)
+
+        node = endpoint_nodes.get(target_id)
+        if not node:
+            continue
+
+        desc_raw = edge.get("description", "")
+        method = ""
+        path = ""
+        framework = ""
+        try:
+            desc_obj = json.loads(desc_raw) if desc_raw.startswith("{") else {}
+            method = desc_obj.get("method", "")
+            path = desc_obj.get("path", "")
+            framework = desc_obj.get("framework", "")
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+        if not method:
+            name = node.get("name", "")
+            parts = name.split(" ", 1)
+            if len(parts) == 2:
+                method, path = parts
+            else:
+                for prefix in ("POST-", "GET-", "PUT-", "DELETE-", "PATCH-", "HEAD-"):
+                    if name.upper().startswith(prefix):
+                        method = prefix[:-1]
+                        path = name[len(prefix):]
+                        break
+
+        source_id = edge.get("source", "")
+        source_class = source_id.split(":")[-1] if ":" in source_id else ""
+
+        line_range = node.get("lineRange")
+        file_path = node.get("filePath", "")
+        source_ref: dict[str, Any] = {"file": file_path}
+        if isinstance(line_range, list) and len(line_range) == 2:
+            source_ref["lineRange"] = line_range
+
+        function_name = ""
+        if file_path and isinstance(line_range, list) and len(line_range) >= 1:
+            function_name = fn_lookup.get((file_path, line_range[0]), "")
+
+        http_endpoints.append({
+            "method": method.upper(),
+            "path": path,
+            "framework": framework or "retrofit",
+            "functionName": function_name,
+            "sourceClass": source_class,
+            "sourceRef": source_ref,
+        })
+
+    http_endpoints.sort(key=lambda e: (e.get("sourceRef", {}).get("file", ""), e["path"]))
+    return http_endpoints
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -375,16 +472,31 @@ if __name__ == "__main__":
         "--project-root",
         help="Project root directory for reading source files (enables Javadoc extraction)",
     )
+    parser.add_argument(
+        "--knowledge-graph",
+        help="Path to knowledge-graph.json for client-side HTTP endpoint extraction",
+    )
     args = parser.parse_args()
 
     proj_root = Path(args.project_root) if args.project_root else None
     result = extract_endpoints_from_dir(
         Path(args.extraction_dir), args.service_name, project_root=proj_root,
     )
+
+    if args.knowledge_graph:
+        kg_path = Path(args.knowledge_graph)
+        http_eps = extract_http_endpoints_from_kg(kg_path)
+        if http_eps:
+            result["httpEndpoints"] = http_eps
+
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_text(
         json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+
+    http_count = len(result.get("httpEndpoints", []))
     print(f"Extracted {len(result['providers'])} providers, "
           f"{len(result['consumers'])} consumers, "
-          f"{len(result['kafkaTopics'])} kafka topics for {args.service_name}")
+          f"{len(result['kafkaTopics'])} kafka topics"
+          f"{f', {http_count} HTTP endpoints' if http_count else ''}"
+          f" for {args.service_name}")

@@ -123,6 +123,9 @@ export function validateWikiEndpointDoc(
   if (!Array.isArray(d.kafkaTopics)) {
     issues.push("endpoint doc missing 'kafkaTopics' array");
   }
+  if (d.httpEndpoints !== undefined && !Array.isArray(d.httpEndpoints)) {
+    issues.push("endpoint doc 'httpEndpoints' must be an array when present");
+  }
   return { valid: issues.length === 0, issues, warnings };
 }
 

@@ -121,7 +121,7 @@ function crossDomainToSequenceDiagram(services: string[], steps: Array<{ order: 
     const step = steps[i];
     const fromSvc = step.service.replace(/[^a-zA-Z0-9_]/g, "_");
     const nextSvc = (i + 1 < steps.length) ? steps[i + 1].service.replace(/[^a-zA-Z0-9_]/g, "_") : fromSvc;
-    const desc = sanitizeSequenceLabel(truncateText(step.description, 40));
+    const desc = sanitizeSequenceLabel(truncateText(step.description, 60));
     const label = `${step.order}. ${desc}`;
 
     if (step.crossServiceCall) {
@@ -142,15 +142,25 @@ function architectureToMermaidDiagram(data: WikiArchitecture): string {
   const calls = Array.isArray(data?.crossServiceCalls) ? data.crossServiceCalls : [];
   const events = Array.isArray(data?.eventFlows) ? data.eventFlows : [];
   const resources = Array.isArray(data?.sharedResources) ? data.sharedResources : [];
+  const facets = Array.isArray(data?.facets) ? data.facets : [];
   if (calls.length === 0 && events.length === 0 && resources.length === 0) return "";
 
+  const svcId = (s: string) => `svc_${s.replace(/[^a-zA-Z0-9]/g, "_")}`;
   const serviceSet = new Set<string>();
   const edgeMap = new Map<string, Set<string>>();
+
+  // Build service → facet lookup for cross-facet filtering
+  const svcToFacet = new Map<string, string>();
+  for (const f of facets) {
+    for (const svc of f.services) svcToFacet.set(svc, f.name);
+  }
 
   for (const c of calls) {
     const from = c.caller?.service;
     const to = c.callee?.service;
     if (!from || !to || from === to) continue;
+    // If facets exist, only show cross-facet edges at top level
+    if (facets.length > 0 && svcToFacet.get(from) === svcToFacet.get(to)) continue;
     serviceSet.add(from);
     serviceSet.add(to);
     const key = `${from}|||${to}`;
@@ -160,10 +170,26 @@ function architectureToMermaidDiagram(data: WikiArchitecture): string {
 
   const lines: string[] = ["```mermaid", "flowchart LR"];
 
-  const svcId = (s: string) => `svc_${s.replace(/[^a-zA-Z0-9]/g, "_")}`;
-
-  for (const svc of serviceSet) {
-    lines.push(`    ${svcId(svc)}["${sanitizeMermaidLabel(svc)}"]`);
+  if (facets.length > 0) {
+    // Render services grouped by facet subgraphs
+    for (const f of facets) {
+      lines.push(`    subgraph ${f.name}["${sanitizeMermaidLabel(f.label)}"]`);
+      for (const svc of f.services) {
+        lines.push(`        ${svcId(svc)}["${sanitizeMermaidLabel(svc)}"]`);
+        serviceSet.add(svc);
+      }
+      lines.push("    end");
+    }
+    // Any services not in a facet
+    for (const svc of serviceSet) {
+      if (!svcToFacet.has(svc)) {
+        lines.push(`    ${svcId(svc)}["${sanitizeMermaidLabel(svc)}"]`);
+      }
+    }
+  } else {
+    for (const svc of serviceSet) {
+      lines.push(`    ${svcId(svc)}["${sanitizeMermaidLabel(svc)}"]`);
+    }
   }
 
   for (const [key, types] of edgeMap) {
@@ -365,8 +391,33 @@ export function overviewToMarkdown(data: WikiOverview, labels: WikiLabels = defa
     lines.push("");
   }
 
+  // Handle both flat services[] and facets[].services[] structures
+  const facets = Array.isArray((data as Record<string, unknown>).facets) ? (data as Record<string, unknown>).facets as Array<{ type?: string; name: string; path?: string; services?: Array<{ name: string; description?: string; domains?: string[] }>; techStack?: string[] }> : null;
   const services = Array.isArray(data?.services) ? data.services : [];
-  if (services.length > 0) {
+
+  if (facets && facets.length > 0) {
+    for (const facet of facets) {
+      const icon = facet.type === "server" ? "🖥️" : facet.type === "mobile" ? "📱" : "🌐";
+      lines.push(`## ${icon} ${facet.name}`);
+      lines.push("");
+      const fSvcs = Array.isArray(facet.services) ? facet.services : [];
+      if (fSvcs.length > 0) {
+        lines.push("| Service | Description | Domains |");
+        lines.push("|---|---|---|");
+        for (const svc of fSvcs) {
+          const domains = Array.isArray(svc?.domains) ? svc.domains.join(", ") : "";
+          const name = svc?.name ? svcLink(svc.name) : "";
+          lines.push(`| ${name} | ${svc?.description ?? ""} | ${domains} |`);
+        }
+        lines.push("");
+      }
+      const fTech = Array.isArray(facet.techStack) ? facet.techStack : [];
+      if (fTech.length > 0) {
+        lines.push(`**${labels.techStack}:** ${fTech.join(", ")}`);
+        lines.push("");
+      }
+    }
+  } else if (services.length > 0) {
     lines.push(`## ${labels.services}`);
     lines.push("");
     lines.push("| Service | Description | Domains |");
@@ -377,6 +428,44 @@ export function overviewToMarkdown(data: WikiOverview, labels: WikiLabels = defa
       lines.push(`| ${name} | ${svc?.description ?? ""} | ${domains} |`);
     }
     lines.push("");
+  }
+
+  // Embedded architecture diagram (from facet wiki)
+  const arch = (data as Record<string, unknown>)._architecture as WikiArchitecture | undefined;
+  if (arch) {
+    const archDiagram = architectureToMermaidDiagram(arch);
+    if (archDiagram) {
+      lines.push(`## ${labels.systemArchitecture}`);
+      lines.push("");
+      lines.push(archDiagram);
+      lines.push("");
+      const crossServiceCalls = Array.isArray(arch.crossServiceCalls) ? arch.crossServiceCalls : [];
+      if (crossServiceCalls.length > 0) {
+        lines.push(crossServiceCallsToTable(crossServiceCalls, labels, true));
+      }
+    }
+  }
+
+  // Embedded cross-domain flows (from facet wiki)
+  const crossDomains = (data as Record<string, unknown>)._crossDomains as WikiCrossDomain[] | undefined;
+  if (crossDomains && crossDomains.length > 0) {
+    lines.push(`## ${labels.crossDomainFlows ?? "跨域业务流程"}`);
+    lines.push("");
+    for (const domain of crossDomains) {
+      lines.push(`### ${domain.name}`);
+      lines.push("");
+      lines.push(domain.summary ?? "");
+      lines.push("");
+      const steps = Array.isArray(domain.steps) ? domain.steps : [];
+      const domServices = Array.isArray(domain.services) ? domain.services : [];
+      if (steps.length > 0) {
+        const seqDiagram = crossDomainToSequenceDiagram(domServices, steps);
+        if (seqDiagram) {
+          lines.push(seqDiagram);
+          lines.push("");
+        }
+      }
+    }
   }
 
   const techStack = Array.isArray(data?.techStack) ? data.techStack : [];
@@ -397,15 +486,44 @@ export function architectureToMarkdown(data: WikiArchitecture, labels: WikiLabel
   lines.push(`# ${labels.systemArchitecture}`);
   lines.push("");
 
+  const facets = Array.isArray(data?.facets) ? data.facets : [];
+
+  // Facet-level service overview table
+  if (facets.length > 0) {
+    lines.push("## 服务总览");
+    lines.push("");
+    lines.push("| 端 | 服务 | 说明 |");
+    lines.push("|---|---|---|");
+    for (const f of facets) {
+      const svcList = f.services.map(s => svcLink(s)).join(", ");
+      lines.push(`| **${f.label}** | ${svcList} | ${f.description ?? ""} |`);
+    }
+    lines.push("");
+  }
+
   const archDiagram = architectureToMermaidDiagram(data);
   if (archDiagram) {
     lines.push(archDiagram);
     lines.push("");
   }
 
+  // Build facet lookup to filter cross-facet only calls
+  const svcToFacet = new Map<string, string>();
+  for (const f of facets) {
+    for (const svc of f.services) svcToFacet.set(svc, f.name);
+  }
+
   const crossServiceCalls = Array.isArray(data?.crossServiceCalls) ? data.crossServiceCalls : [];
-  if (crossServiceCalls.length > 0) {
-    lines.push(crossServiceCallsToTable(crossServiceCalls, labels, true));
+  const filteredCalls = facets.length > 0
+    ? crossServiceCalls.filter(c => {
+        const from = c.caller?.service;
+        const to = c.callee?.service;
+        return from && to && svcToFacet.get(from) !== svcToFacet.get(to);
+      })
+    : crossServiceCalls;
+
+  if (filteredCalls.length > 0) {
+    lines.push(crossServiceCallsToTable(filteredCalls, labels, true));
   }
 
   const eventFlows = Array.isArray(data?.eventFlows)
@@ -451,6 +569,72 @@ export function crossDomainToMarkdown(data: WikiCrossDomain, labels: WikiLabels 
     lines.push("");
   }
 
+  // Cross-platform architecture diagram
+  const archData = (data as Record<string, unknown>).architecture as { layers?: Array<{ name: string; services: string[]; description: string }>; communications?: Array<{ from: string; to: string; protocol: string; description: string }> } | undefined;
+  if (archData?.communications && archData.communications.length > 0) {
+    lines.push("## 跨端通信架构");
+    lines.push("");
+    lines.push("```mermaid");
+    lines.push("flowchart TD");
+    const seen = new Set<string>();
+    for (const layer of archData.layers ?? []) {
+      for (const svc of layer.services) {
+        if (!seen.has(svc)) {
+          const pid = svc.replace(/[^a-zA-Z0-9_]/g, "_");
+          lines.push(`    ${pid}["${svc}"]`);
+          seen.add(svc);
+        }
+      }
+    }
+    for (const comm of archData.communications) {
+      const from = comm.from.replace(/[^a-zA-Z0-9_]/g, "_");
+      const to = comm.to.replace(/[^a-zA-Z0-9_]/g, "_");
+      lines.push(`    ${from} -->|"${comm.protocol}"| ${to}`);
+    }
+    lines.push("```");
+    lines.push("");
+    if (archData.layers && archData.layers.length > 0) {
+      lines.push("| 层级 | 服务 | 说明 |");
+      lines.push("|---|---|---|");
+      for (const layer of archData.layers) {
+        lines.push(`| ${layer.name} | ${layer.services.map(s => svcLink(s)).join(", ")} | ${layer.description} |`);
+      }
+      lines.push("");
+    }
+  }
+
+  // Multi-flow aggregation (panorama page with embedded flows)
+  const flows = Array.isArray((data as Record<string, unknown>).flows) ? (data as Record<string, unknown>).flows as Array<{ facet?: string; name: string; summary: string; services: string[]; steps: Array<{ order: number; service: string; description: string; wikiRef?: string; crossServiceCall?: { interface?: string; method: string; type: string } }> }> : null;
+  if (flows && flows.length > 0) {
+    for (const flow of flows) {
+      const header = flow.facet ? `## [${flow.facet}] ${flow.name}` : `## ${flow.name}`;
+      lines.push(header);
+      lines.push("");
+      lines.push(flow.summary ?? "");
+      lines.push("");
+      if (flow.steps.length > 0) {
+        const seqDiagram = crossDomainToSequenceDiagram(flow.services, flow.steps);
+        if (seqDiagram) {
+          lines.push(seqDiagram);
+          lines.push("");
+        }
+        for (const step of flow.steps) {
+          let line = `${step.order}. **${svcLink(step.service)}** ${step.description}`;
+          if (step.wikiRef) {
+            line += `\n   → [View details](wiki://${step.wikiRef})`;
+          }
+          if (step.crossServiceCall) {
+            line += `\n   🔗 ${step.crossServiceCall.interface}.${step.crossServiceCall.method} (${step.crossServiceCall.type})`;
+          }
+          lines.push(line);
+        }
+        lines.push("");
+      }
+    }
+    return lines.join("\n");
+  }
+
+  // Single flow rendering
   const steps = Array.isArray(data?.steps) ? data.steps : [];
   if (steps.length > 0) {
     const seqDiagram = crossDomainToSequenceDiagram(services, steps);
@@ -698,6 +882,39 @@ export function endpointDocToMarkdown(doc: ServiceEndpointDoc, labels: WikiLabel
       lines.push(`| \`${t.topic}\` | ${t.role} | \`${t.handlerMethod ?? "—"}\` |`);
     }
     lines.push("");
+  }
+
+  const httpEndpoints = Array.isArray(doc.httpEndpoints) ? doc.httpEndpoints : [];
+  if (httpEndpoints.length > 0) {
+    lines.push(`## ${labels.httpEndpoints ?? "HTTP Endpoints"} (${httpEndpoints.length})`);
+    lines.push("");
+
+    const grouped = new Map<string, typeof httpEndpoints>();
+    for (const ep of httpEndpoints) {
+      const key = ep.sourceClass || "Unknown";
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(ep);
+    }
+
+    for (const [className, eps] of grouped) {
+      const firstFile = eps[0]?.sourceRef?.file ?? "";
+      const classLink = firstFile
+        ? `[${className}](source://${firstFile})`
+        : `\`${className}\``;
+      lines.push(`### ${classLink}`);
+      lines.push("");
+      lines.push(`| Method | Path | Function |`);
+      lines.push("| --- | --- | --- |");
+      for (const ep of eps) {
+        const lr = ep.sourceRef?.lineRange;
+        const pathDisplay = lr && ep.sourceRef?.file
+          ? `[${ep.path}](source://${ep.sourceRef.file}#L${lr[0]}-L${lr[1]})`
+          : `\`${ep.path}\``;
+        const fnDisplay = ep.functionName ? `\`${ep.functionName}\`` : "—";
+        lines.push(`| **${ep.method}** | ${pathDisplay} | ${fnDisplay} |`);
+      }
+      lines.push("");
+    }
   }
 
   return lines.join("\n");

@@ -362,4 +362,70 @@ class OrderController : BaseController(), OrderService {
       parser.delete();
     });
   });
+
+  // ---- HTTP Endpoint Extraction ----
+
+  describe("extractStructure - HTTP endpoint annotations", () => {
+    it("extracts Retrofit-style @GET and @POST from interface", () => {
+      const { tree, parser, root } = parse(`
+interface UserApiService {
+    @GET("/api/users")
+    suspend fun getUsers(): List<User>
+
+    @POST("/api/users")
+    suspend fun createUser(@Body request: UserRequest): User
+
+    @DELETE("/api/users/{id}")
+    suspend fun deleteUser(@Path("id") id: String)
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.endpoints).toBeDefined();
+      expect(result.endpoints).toHaveLength(3);
+      expect(result.endpoints![0]).toMatchObject({ method: "GET", path: "/api/users" });
+      expect(result.endpoints![1]).toMatchObject({ method: "POST", path: "/api/users" });
+      expect(result.endpoints![2]).toMatchObject({ method: "DELETE", path: "/api/users/{id}" });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("extracts Spring @GetMapping/@PostMapping with base path", () => {
+      const { tree, parser, root } = parse(`
+@RestController
+@RequestMapping("/api/orders")
+class OrderController {
+    @GetMapping("/list")
+    fun listOrders(): List<Order> = emptyList()
+
+    @PostMapping("/create")
+    fun createOrder(@RequestBody dto: OrderDTO): Order = Order()
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.endpoints).toBeDefined();
+      expect(result.endpoints).toHaveLength(2);
+      expect(result.endpoints![0]).toMatchObject({ method: "GET", path: "/api/orders/list" });
+      expect(result.endpoints![1]).toMatchObject({ method: "POST", path: "/api/orders/create" });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("returns no endpoints when no HTTP annotations present", () => {
+      const { tree, parser, root } = parse(`
+class PlainService {
+    fun doSomething() {}
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.endpoints).toBeUndefined();
+
+      tree.delete();
+      parser.delete();
+    });
+  });
 });

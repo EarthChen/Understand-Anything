@@ -1,6 +1,22 @@
-import type { StructuralAnalysis, CallGraphEntry, AnnotationInfo, PropertyInfo } from "../../types.js";
+import type { StructuralAnalysis, CallGraphEntry, AnnotationInfo, PropertyInfo, EndpointInfo } from "../../types.js";
 import type { LanguageExtractor, TreeSitterNode } from "./types.js";
 import { findChild, findChildren } from "./base-extractor.js";
+
+const HTTP_METHOD_ANNOTATIONS: Record<string, string> = {
+  GET: "GET",
+  POST: "POST",
+  PUT: "PUT",
+  DELETE: "DELETE",
+  PATCH: "PATCH",
+  HEAD: "HEAD",
+  OPTIONS: "OPTIONS",
+  GetMapping: "GET",
+  PostMapping: "POST",
+  PutMapping: "PUT",
+  DeleteMapping: "DELETE",
+  PatchMapping: "PATCH",
+  RequestMapping: "REQUEST",
+};
 
 /**
  * Extract parameter names and types from a Java `formal_parameters` node.
@@ -176,6 +192,70 @@ function lastComponent(path: string): string {
 }
 
 /**
+ * Extract the base path from class-level annotations like @RequestMapping("/api")
+ * or Retrofit-style base URL annotations.
+ */
+function extractHttpBasePath(annotations: AnnotationInfo[]): string | undefined {
+  for (const ann of annotations) {
+    if (ann.name === "RequestMapping" || ann.name === "Path") {
+      const path = ann.arguments?.value ?? ann.arguments?.path;
+      if (path) return path.replace(/^["']|["']$/g, "");
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Extract HTTP endpoint info from method-level annotations.
+ * Supports JAX-RS (@GET, @POST, etc.), Retrofit (@GET, @POST, etc.),
+ * and Spring (@GetMapping, @PostMapping, @RequestMapping, etc.).
+ */
+function extractEndpointFromMethod(
+  methodNode: TreeSitterNode,
+  endpoints: EndpointInfo[],
+  basePath?: string,
+): void {
+  const annotations = extractAnnotations(methodNode);
+  for (const ann of annotations) {
+    const httpMethod = HTTP_METHOD_ANNOTATIONS[ann.name];
+    if (!httpMethod) continue;
+
+    let methodPath = ann.arguments?.value ?? ann.arguments?.path ?? "";
+    methodPath = methodPath.replace(/^["']|["']$/g, "");
+
+    if (ann.name === "RequestMapping" && ann.arguments?.method) {
+      const resolvedMethod = ann.arguments.method
+        .replace(/RequestMethod\./g, "")
+        .replace(/[{}]/g, "")
+        .trim();
+      const fullPath = joinPaths(basePath, methodPath);
+      endpoints.push({
+        method: resolvedMethod || "REQUEST",
+        path: fullPath || "/",
+        lineRange: [methodNode.startPosition.row + 1, methodNode.endPosition.row + 1],
+      });
+      return;
+    }
+
+    const fullPath = joinPaths(basePath, methodPath);
+    endpoints.push({
+      method: httpMethod,
+      path: fullPath || "/",
+      lineRange: [methodNode.startPosition.row + 1, methodNode.endPosition.row + 1],
+    });
+    return;
+  }
+}
+
+function joinPaths(base: string | undefined, path: string): string {
+  if (!base) return path;
+  if (!path) return base;
+  const normalizedBase = base.endsWith("/") ? base.slice(0, -1) : base;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return normalizedBase + normalizedPath;
+}
+
+/**
  * Java extractor for tree-sitter structural analysis and call graph extraction.
  *
  * Handles classes, interfaces, methods, constructors, fields, imports,
@@ -198,6 +278,7 @@ export class JavaExtractor implements LanguageExtractor {
     const classes: StructuralAnalysis["classes"] = [];
     const imports: StructuralAnalysis["imports"] = [];
     const exports: StructuralAnalysis["exports"] = [];
+    const endpoints: EndpointInfo[] = [];
 
     for (let i = 0; i < rootNode.childCount; i++) {
       const node = rootNode.child(i);
@@ -209,16 +290,18 @@ export class JavaExtractor implements LanguageExtractor {
           break;
 
         case "class_declaration":
-          this.extractClass(node, functions, classes, exports);
+          this.extractClass(node, functions, classes, exports, endpoints);
           break;
 
         case "interface_declaration":
-          this.extractInterface(node, functions, classes, exports);
+          this.extractInterface(node, functions, classes, exports, endpoints);
           break;
       }
     }
 
-    return { functions, classes, imports, exports };
+    const result: StructuralAnalysis = { functions, classes, imports, exports };
+    if (endpoints.length > 0) result.endpoints = endpoints;
+    return result;
   }
 
   extractCallGraph(rootNode: TreeSitterNode): CallGraphEntry[] {
@@ -338,6 +421,7 @@ export class JavaExtractor implements LanguageExtractor {
     functions: StructuralAnalysis["functions"],
     classes: StructuralAnalysis["classes"],
     exports: StructuralAnalysis["exports"],
+    endpoints: EndpointInfo[],
   ): void {
     const nameNode = node.childForFieldName("name");
     if (!nameNode) return;
@@ -345,6 +429,9 @@ export class JavaExtractor implements LanguageExtractor {
     const methods: string[] = [];
     const properties: string[] = [];
     const typedProperties: PropertyInfo[] = [];
+
+    const annotations = extractAnnotations(node);
+    const basePath = extractHttpBasePath(annotations);
 
     const body = node.childForFieldName("body");
     if (body) {
@@ -355,10 +442,11 @@ export class JavaExtractor implements LanguageExtractor {
         functions,
         exports,
         typedProperties,
+        endpoints,
+        basePath,
       );
     }
 
-    const annotations = extractAnnotations(node);
     const superclass = extractSuperclass(node);
     const interfaces = extractInterfaces(node);
 
@@ -390,12 +478,16 @@ export class JavaExtractor implements LanguageExtractor {
     functions: StructuralAnalysis["functions"],
     classes: StructuralAnalysis["classes"],
     exports: StructuralAnalysis["exports"],
+    endpoints: EndpointInfo[],
   ): void {
     const nameNode = node.childForFieldName("name");
     if (!nameNode) return;
 
     const methods: string[] = [];
     const properties: string[] = [];
+
+    const annotations = extractAnnotations(node);
+    const basePath = extractHttpBasePath(annotations);
 
     const body = node.childForFieldName("body");
     if (body) {
@@ -405,6 +497,7 @@ export class JavaExtractor implements LanguageExtractor {
         if (methNameNode) {
           methods.push(methNameNode.text);
         }
+        extractEndpointFromMethod(methodNode, endpoints, basePath);
       }
 
       const fields = findChildren(body, "constant_declaration");
@@ -419,7 +512,6 @@ export class JavaExtractor implements LanguageExtractor {
       }
     }
 
-    const annotations = extractAnnotations(node);
     const interfaces = extractInterfaces(node);
 
     const classEntry: StructuralAnalysis["classes"][0] = {
@@ -450,6 +542,8 @@ export class JavaExtractor implements LanguageExtractor {
     functions: StructuralAnalysis["functions"],
     exports: StructuralAnalysis["exports"],
     typedProperties?: PropertyInfo[],
+    endpoints?: EndpointInfo[],
+    basePath?: string,
   ): void {
     for (let i = 0; i < body.childCount; i++) {
       const child = body.child(i);
@@ -458,6 +552,9 @@ export class JavaExtractor implements LanguageExtractor {
       switch (child.type) {
         case "method_declaration":
           this.extractMethod(child, methods, functions, exports);
+          if (endpoints) {
+            extractEndpointFromMethod(child, endpoints, basePath);
+          }
           break;
 
         case "constructor_declaration":

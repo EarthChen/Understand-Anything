@@ -1,10 +1,11 @@
 import { z } from "zod";
 
-// Edge types (39 values across 8 categories)
+// Edge types (41 values across 8 categories)
 export const EdgeTypeSchema = z.enum([
   "imports", "exports", "contains", "inherits", "implements",  // Structural
   "calls", "subscribes", "publishes", "middleware",             // Behavioral
   "provides_rpc", "consumes_rpc",                               // RPC (cross-service)
+  "provides_route", "consumes_route",                            // Module routing (ARouter/TheRouter/WMRouter)
   "consumes_api",                                                // API consumption (client→server)
   "injects",                                                     // Dependency Injection
   "reads_from", "writes_to", "transforms", "validates",        // Data flow
@@ -735,3 +736,50 @@ export function validateGraph(data: unknown): ValidationResult {
 
   return { success: true, data: graph, issues, errors: buildErrors(issues), droppedNonStandardEdges };
 }
+
+// --- Wiki Cross-Domain schema (for validate_landscape and Dashboard) ---
+
+export const WikiCrossDomainStepSchema = z.object({
+  order: z.number(),
+  service: z.string(),
+  description: z.string(),
+  wikiRef: z.string().optional(),
+  crossServiceCall: z.object({
+    interface: z.string(),
+    method: z.string(),
+    type: z.string(),
+  }).optional(),
+});
+
+export const WikiCrossDomainArchSchema = z.object({
+  layers: z.array(z.object({
+    name: z.string(),
+    services: z.array(z.string()),
+    description: z.string(),
+  })).optional(),
+  communications: z.array(z.object({
+    from: z.string(),
+    to: z.string(),
+    protocol: z.string(),
+    description: z.string(),
+  })).optional(),
+});
+
+export const WikiCrossDomainSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  summary: z.string(),
+  services: z.array(z.string()).min(1),
+  steps: z.array(WikiCrossDomainStepSchema).optional(),
+  flows: z.array(z.object({
+    facet: z.string().optional(),
+    name: z.string(),
+    summary: z.string(),
+    services: z.array(z.string()),
+    steps: z.array(WikiCrossDomainStepSchema),
+  })).optional(),
+  architecture: WikiCrossDomainArchSchema.optional(),
+}).refine(
+  (d) => (d.steps && d.steps.length > 0) || (d.flows && d.flows.length > 0) || d.architecture,
+  { message: "Must have at least one of: steps, flows, or architecture" },
+);

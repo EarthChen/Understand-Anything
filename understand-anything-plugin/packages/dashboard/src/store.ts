@@ -215,7 +215,7 @@ interface DashboardStore {
   wikiActivePage: { type: "service" | "domain" | "overview" | "architecture" | "cross-domain" | "endpoint"; id: string; service?: string; fragment?: string } | null;
   wikiPageContent: unknown | null;
   wikiLoading: boolean;
-  wikiTopology: { hasParentWiki: boolean; services: Array<{ name: string }> } | null;
+  wikiTopology: { hasParentWiki: boolean; services: Array<{ name: string; facet?: string }>; facets?: Array<{ type: string; name: string; services: string[] }> } | null;
   systemGraph: SystemGraph | null;
   setSystemGraph: (graph: SystemGraph | null) => void;
   activeService: string | null;
@@ -227,7 +227,7 @@ interface DashboardStore {
   setWikiActivePage: (page: { type: "service" | "domain" | "overview" | "architecture" | "cross-domain" | "endpoint"; id: string; service?: string; fragment?: string } | null) => void;
   setWikiPageContent: (content: unknown | null) => void;
   setWikiLoading: (loading: boolean) => void;
-  setWikiTopology: (topology: { hasParentWiki: boolean; services: Array<{ name: string }> } | null) => void;
+  setWikiTopology: (topology: { hasParentWiki: boolean; services: Array<{ name: string; facet?: string }>; facets?: Array<{ type: string; name: string; services: string[] }> } | null) => void;
   setWikiViewScope: (scope: "global" | string) => void;
   setWikiBreadcrumb: (crumbs: Array<{ label: string; page: { type: string; id: string; service?: string } | null }>) => void;
 

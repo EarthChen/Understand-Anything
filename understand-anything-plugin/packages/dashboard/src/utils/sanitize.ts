@@ -7,6 +7,7 @@ const UNSAFE_PATH_SEGMENT = /(^|\/)\.\.(\/|$)/;
 export function sanitizeSlug(input: string): string | null {
   const slug = input
     .replace(/^(?:wiki:)?(?:cross-domain|domain):/, "")
+    .replace(/^wiki:/, "")
     .replace(/\.json$/, "");
   if (!slug || !SAFE_SLUG.test(slug)) return null;
   if (slug.includes("..") || slug.includes("/") || slug.includes("\\") || slug.includes("\0")) {

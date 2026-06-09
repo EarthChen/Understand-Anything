@@ -2,6 +2,7 @@ import path from "path"
 import fs from "fs"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
 import { graphFileCandidates, projectRootFromGraphFile } from "../utils"
+import type { SystemGraph } from "@understand-anything/core"
 
 const STATIC_GRAPH_PATHS = new Set([
   "/knowledge-graph.json",
@@ -38,7 +39,7 @@ export async function handleGraphRequest(
     const serviceName = searchParams.get("service")
     const fileName = searchParams.get("file") || "knowledge-graph.json"
     if (!serviceName) return { statusCode: 400, body: { error: "service parameter required" } }
-    if (serviceName.includes("/") || serviceName.includes("\\") || serviceName.includes("..")) {
+    if (serviceName.includes("\\") || serviceName.includes("..")) {
       return { statusCode: 400, body: { error: "invalid service name" } }
     }
     const allowedFiles = ["knowledge-graph.json", "domain-graph.json", "meta.json", "config.json"]
@@ -46,11 +47,22 @@ export async function handleGraphRequest(
       return { statusCode: 400, body: { error: "file not allowed" } }
     }
     const graphDir = process.env.GRAPH_DIR
-    const candidates = [
-      ...(graphDir ? [path.resolve(graphDir, serviceName, ".understand-anything", fileName)] : []),
-      path.resolve(process.cwd(), serviceName, ".understand-anything", fileName),
-      path.resolve(process.cwd(), "../../..", serviceName, ".understand-anything", fileName),
-    ]
+    const candidates: string[] = []
+
+    // Try basePath from system-graph serviceIndex first (supports nested facet layout)
+    const resolvedBasePath = resolveServiceBasePath(serviceName)
+    if (resolvedBasePath) {
+      if (graphDir) candidates.push(path.resolve(graphDir, resolvedBasePath, ".understand-anything", fileName))
+      candidates.push(path.resolve(process.cwd(), resolvedBasePath, ".understand-anything", fileName))
+    }
+
+    // Flat layout fallback (service is direct child of project root)
+    if (!serviceName.includes("/")) {
+      if (graphDir) candidates.push(path.resolve(graphDir, serviceName, ".understand-anything", fileName))
+      candidates.push(path.resolve(process.cwd(), serviceName, ".understand-anything", fileName))
+      candidates.push(path.resolve(process.cwd(), "../../..", serviceName, ".understand-anything", fileName))
+    }
+
     for (const candidate of candidates) {
       if (!fs.existsSync(candidate)) continue
       try {
@@ -100,4 +112,27 @@ export async function handleGraphRequest(
     return { statusCode: 404, body: { error: "No knowledge graph found. Run /understand first." } }
   }
   return { statusCode: 404, body: { error: `${fileName} not found` } }
+}
+
+let cachedSystemGraph: SystemGraph | null = null
+let systemGraphMtime = 0
+
+function resolveServiceBasePath(serviceName: string): string | null {
+  const sgCandidates = graphFileCandidates("system-graph.json")
+  for (const candidate of sgCandidates) {
+    if (!fs.existsSync(candidate)) continue
+    try {
+      const mtime = fs.statSync(candidate).mtimeMs
+      if (!cachedSystemGraph || mtime !== systemGraphMtime) {
+        cachedSystemGraph = JSON.parse(fs.readFileSync(candidate, "utf-8")) as SystemGraph
+        systemGraphMtime = mtime
+      }
+      const entry = cachedSystemGraph.serviceIndex?.[serviceName]
+      if (entry?.basePath) return entry.basePath
+    } catch {
+      // fall through
+    }
+    break
+  }
+  return null
 }

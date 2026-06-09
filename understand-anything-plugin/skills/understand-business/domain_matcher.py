@@ -23,14 +23,9 @@ def _normalize_name(name):
     return name.lower().replace('-', '_').replace(' ', '_')
 
 
-def _load_server_domains(project_root, server_path):
-    facet_dir = (Path(project_root) / server_path).resolve()
-    if not facet_dir.is_relative_to(Path(project_root).resolve()):
-        raise ValueError(f"Path escapes project root: {server_path}")
-    wiki_dir = facet_dir / '.understand-anything' / 'wiki' / 'domains'
-    domains = {}
+def _load_domains_from_wiki_dir(wiki_dir, domains, service=''):
     if not wiki_dir.exists():
-        return domains
+        return
     for f in wiki_dir.glob('*.json'):
         try:
             data = json.loads(f.read_text())
@@ -41,9 +36,28 @@ def _load_server_domains(project_root, server_path):
                 ep = entry.get('endpoint', '')
                 if ep:
                     endpoints.append(ep)
-            domains[name] = {'data': data, 'endpoints': endpoints, 'file': str(f)}
+            if name not in domains:
+                domains[name] = {
+                    'data': data,
+                    'endpoints': endpoints,
+                    'file': str(f),
+                    'service': service,
+                }
         except (json.JSONDecodeError, IOError):
             continue
+
+
+def _load_server_domains(project_root, server_path, sub_paths=None):
+    facet_dir = (Path(project_root) / server_path).resolve()
+    if not facet_dir.is_relative_to(Path(project_root).resolve()):
+        raise ValueError(f"Path escapes project root: {server_path}")
+    domains = {}
+    parent_wiki = facet_dir / '.understand-anything' / 'wiki' / 'domains'
+    _load_domains_from_wiki_dir(parent_wiki, domains, service='cross-service')
+    for sp in sub_paths or []:
+        service = sp.rstrip('/')
+        wiki_dir = facet_dir / service / '.understand-anything' / 'wiki' / 'domains'
+        _load_domains_from_wiki_dir(wiki_dir, domains, service=service)
     return domains
 
 
@@ -53,6 +67,15 @@ def _load_client_domains(project_root, client_path, sub_paths):
     if not facet_dir.is_relative_to(Path(project_root).resolve()):
         raise ValueError(f"Path escapes project root: {client_path}")
     root = facet_dir
+    parent_wiki = root / '.understand-anything' / 'wiki' / 'domains'
+    for f in (parent_wiki.glob('*.json') if parent_wiki.exists() else []):
+        try:
+            data = json.loads(f.read_text())
+            name = data.get('name', f.stem)
+            if name not in domains:
+                domains[name] = {'data': data, 'api_calls': [], 'platform': 'cross-platform', 'file': str(f)}
+        except (json.JSONDecodeError, IOError):
+            continue
     for sp in sub_paths:
         platform = sp.rstrip('/')
         wiki_dir = root / platform / '.understand-anything' / 'wiki' / 'domains'
@@ -130,6 +153,86 @@ def _match_by_name(server_domains, client_domains, already_matched_server, alrea
     return matches
 
 
+def _strip_suffix(name):
+    """Remove common suffixes like （端到端）to get core domain name."""
+    import re
+    return re.sub(r'[（(].+?[)）]', '', name).strip()
+
+
+def _char_bigrams(text):
+    """Generate character bigrams for Chinese text matching."""
+    return {text[i:i+2] for i in range(len(text) - 1)} if len(text) >= 2 else {text}
+
+
+def _match_by_fuzzy(server_domains, client_domains, already_matched_server, already_matched_client):
+    """Fuzzy name matching: substring, shared bigrams, or common prefix for CJK text."""
+    matches = []
+    matched_pairs = set()
+
+    for s_name in server_domains:
+        if s_name in already_matched_server:
+            continue
+        s_clean = _strip_suffix(s_name)
+
+        for c_name in client_domains:
+            if c_name in already_matched_client:
+                continue
+            c_clean = _strip_suffix(c_name)
+
+            pair = (s_name, c_name)
+            if pair in matched_pairs:
+                continue
+
+            # Substring match (either direction)
+            if len(s_clean) >= 2 and len(c_clean) >= 2:
+                if s_clean in c_clean or c_clean in s_clean:
+                    matched_pairs.add(pair)
+                    matches.append({
+                        'canonical': s_name,
+                        'server': [s_name],
+                        'client': [c_name],
+                        'matchType': 'auto-fuzzy',
+                        'confidence': 0.9,
+                    })
+                    continue
+
+            # Common prefix (>= 2 chars)
+            prefix_len = 0
+            for a, b in zip(s_clean, c_clean):
+                if a == b:
+                    prefix_len += 1
+                else:
+                    break
+            min_len = min(len(s_clean), len(c_clean))
+            if prefix_len >= 2 and min_len > 0 and prefix_len / min_len >= 0.5:
+                matched_pairs.add(pair)
+                matches.append({
+                    'canonical': s_name,
+                    'server': [s_name],
+                    'client': [c_name],
+                    'matchType': 'auto-fuzzy',
+                    'confidence': 0.8,
+                })
+                continue
+
+            # Bigram overlap (Jaccard >= 0.4)
+            s_bigrams = _char_bigrams(s_clean)
+            c_bigrams = _char_bigrams(c_clean)
+            if s_bigrams and c_bigrams:
+                jaccard = len(s_bigrams & c_bigrams) / len(s_bigrams | c_bigrams)
+                if jaccard >= 0.4:
+                    matched_pairs.add(pair)
+                    matches.append({
+                        'canonical': s_name,
+                        'server': [s_name],
+                        'client': [c_name],
+                        'matchType': 'auto-fuzzy',
+                        'confidence': round(0.6 + jaccard * 0.3, 2),
+                    })
+
+    return matches
+
+
 def _load_manual_mappings(project_root):
     mapping_path = Path(project_root) / '.understand-anything' / 'domain-mapping.json'
     if not mapping_path.exists():
@@ -153,15 +256,20 @@ def match_domains(project_root_str: str, system_config: dict | None = None) -> d
     server_facet = None
     client_facet = None
     for facet in system_config.get('facets', []):
-        if facet.get('type') == 'backend':
+        facet_type = facet.get('type', '')
+        if facet_type in ('backend', 'server'):
             server_facet = facet
-        elif facet.get('type') == 'mobile':
+        elif facet_type == 'mobile':
             client_facet = facet
 
     if not server_facet or not client_facet:
         return {'matched': [], 'candidates': []}
 
-    server_domains = _load_server_domains(project_root_str, server_facet['path'])
+    server_domains = _load_server_domains(
+        project_root_str,
+        server_facet['path'],
+        server_facet.get('subPaths', []),
+    )
     client_domains = _load_client_domains(
         project_root_str,
         client_facet['path'],
@@ -197,6 +305,14 @@ def match_domains(project_root_str: str, system_config: dict | None = None) -> d
 
     name_matches = _match_by_name(server_domains, client_domains, matched_server, matched_client)
     for m in name_matches:
+        for s in m['server']:
+            matched_server.add(s)
+        for c in m['client']:
+            matched_client.add(c)
+        all_matched.append(m)
+
+    fuzzy_matches = _match_by_fuzzy(server_domains, client_domains, matched_server, matched_client)
+    for m in fuzzy_matches:
         for s in m['server']:
             matched_server.add(s)
         for c in m['client']:

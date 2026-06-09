@@ -866,4 +866,100 @@ interface Repository {
       parser.delete();
     });
   });
+
+  // ---- HTTP Endpoint Extraction ----
+
+  describe("extractStructure - HTTP endpoint annotations", () => {
+    it("extracts Retrofit-style @GET and @POST endpoints from interface", () => {
+      const { tree, parser, root } = parse(`
+public interface UserApiService {
+    @GET("/api/users")
+    Call<List<User>> getUsers();
+
+    @POST("/api/users")
+    Call<User> createUser(@Body UserRequest request);
+
+    @DELETE("/api/users/{id}")
+    Call<Void> deleteUser(@Path("id") String id);
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.endpoints).toBeDefined();
+      expect(result.endpoints).toHaveLength(3);
+      expect(result.endpoints![0]).toMatchObject({ method: "GET", path: "/api/users" });
+      expect(result.endpoints![1]).toMatchObject({ method: "POST", path: "/api/users" });
+      expect(result.endpoints![2]).toMatchObject({ method: "DELETE", path: "/api/users/{id}" });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("extracts Spring @GetMapping/@PostMapping from controller class", () => {
+      const { tree, parser, root } = parse(`
+@RestController
+@RequestMapping("/api/orders")
+public class OrderController {
+    @GetMapping("/list")
+    public List<Order> listOrders() { return null; }
+
+    @PostMapping("/create")
+    public Order createOrder(@RequestBody OrderDTO dto) { return null; }
+
+    @DeleteMapping("/{id}")
+    public void deleteOrder(@PathVariable String id) {}
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.endpoints).toBeDefined();
+      expect(result.endpoints).toHaveLength(3);
+      expect(result.endpoints![0]).toMatchObject({ method: "GET", path: "/api/orders/list" });
+      expect(result.endpoints![1]).toMatchObject({ method: "POST", path: "/api/orders/create" });
+      expect(result.endpoints![2]).toMatchObject({ method: "DELETE", path: "/api/orders/{id}" });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("extracts JAX-RS @GET/@POST with @Path", () => {
+      const { tree, parser, root } = parse(`
+@Path("/api/products")
+public class ProductResource {
+    @GET
+    public List<Product> getAll() { return null; }
+
+    @POST
+    public Product create(Product product) { return null; }
+
+    @PUT
+    public Product update(Product product) { return null; }
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.endpoints).toBeDefined();
+      expect(result.endpoints).toHaveLength(3);
+      expect(result.endpoints![0]).toMatchObject({ method: "GET", path: "/api/products" });
+      expect(result.endpoints![1]).toMatchObject({ method: "POST", path: "/api/products" });
+      expect(result.endpoints![2]).toMatchObject({ method: "PUT", path: "/api/products" });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("returns no endpoints when no HTTP annotations present", () => {
+      const { tree, parser, root } = parse(`
+public class PlainService {
+    public void doSomething() {}
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.endpoints).toBeUndefined();
+
+      tree.delete();
+      parser.delete();
+    });
+  });
 });

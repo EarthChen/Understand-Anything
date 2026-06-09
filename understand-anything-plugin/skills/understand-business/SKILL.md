@@ -72,14 +72,25 @@ python3 "$SKILL_DIR/domain_matcher.py" "$PROJECT_ROOT"
 
 Read the output at `$PROJECT_ROOT/.understand-anything/intermediate/phase1-matches.json`.
 
+Matching layers (executed in order):
+1. **API endpoint exact match** — client API call path matches server endpoint path
+2. **Domain name exact match** — normalized case-insensitive name equality
+3. **Fuzzy CJK match** — substring containment, common prefix (≥2 chars, ≥50%), or character bigram Jaccard (≥0.4)
+4. **Manual mapping** — from `domain-mapping.json`
+
+**IMPORTANT**: `system.json` must include `subPaths` for each facet (list of subdirectory names containing individual services). Without this, only the parent-level wiki domains are loaded.
+
 Report: `Phase 1 complete. <N> domains matched deterministically, <M> candidates for LLM verification.`
 
-### Phase 2 — LLM Domain Match Verification
+### Phase 2 — LLM Domain Match & Association Discovery
 
-Report: `[Phase 2/5] Verifying domain match candidates...`
+Report: `[Phase 2/5] Verifying domain match candidates and discovering associations...`
 
 **Skip if no candidates from Phase 1.**
 
+Phase 2 uses two LLM strategies:
+
+#### Strategy A: Pairwise Match (same as before)
 For each candidate pair in `phase1-matches.json.candidates[]`:
 
 1. Check checkpoint: `intermediate/match-{server}-{client}.json`
@@ -111,7 +122,49 @@ Respond with JSON only:
 4. Write checkpoint using `checkpoint-writer.mjs` pattern:
    - `{ match, confidence, reason, _checkpoint: { status: "complete" } }`
 
-Report: `Phase 2 complete. <N> candidates verified, <M> auto-matched (confidence ≥ 0.7), <K> unmapped.`
+#### Strategy B: Cross-Facet Association Discovery (NEW)
+When Strategy A yields 0 matches (coverage = 0%), execute association discovery:
+
+1. Collect ALL server domain summaries + endpoints AND ALL client domain summaries + API calls
+2. Prompt LLM with the full picture:
+
+```
+These are business domains from two facets of the same product. The server-side domains represent backend business logic, and the client-side domains represent frontend/mobile integration patterns.
+
+Server domains:
+<list of {name, summary, endpoints}>
+
+Client domains:
+<list of {name, summary, api_calls}>
+
+Even if the domains have different names or granularities, identify which client domains CALL or DEPEND ON which server domains based on:
+1. API endpoint overlap (client calls server endpoints)
+2. Business capability overlap (client feature relies on server domain)
+3. Data flow relationship (client displays data produced by server domain)
+
+Respond with JSON:
+{
+  "associations": [
+    {
+      "server_domain": "<server domain name>",
+      "client_domain": "<client domain name>",
+      "relationship": "calls|depends_on|displays",
+      "confidence": 0.0-1.0,
+      "shared_endpoints": ["<endpoint paths if any>"],
+      "reason": "explanation"
+    }
+  ]
+}
+```
+
+3. For associations with `confidence >= 0.6`:
+   - Create a merged domain entry with `matchType: "llm-association"`
+   - Use the server domain name as canonical (it represents the business logic)
+   - Include both facets in the merged domain
+
+4. Write to `intermediate/phase2-associations.json`
+
+Report: `Phase 2 complete. <N> candidates verified, <M> auto-matched (confidence ≥ 0.7), <K> associations discovered, <L> unmapped.`
 
 ### Phase 3 — Output Assembly & Index Generation
 
@@ -232,11 +285,89 @@ If validation passes:
 }
 ```
 3. Clean up intermediate files (keep if `--keep-intermediate`)
+4. **Build system topology registry** (Dashboard service discovery):
+
+   a. **Generate `system-graph.json`** — merge all facet-level topology graphs into a single root-level registry:
+   - Read each facet's topology: `<facet-path>/.understand-anything/system-graph.json` (server) or `client-graph.json` (mobile)
+   - Merge all nodes and edges into one graph
+   - Build `serviceIndex` with `basePath` for each service (relative path from project root, e.g. `"backend/ultron-basic-user"`)
+   - Write to `$PROJECT_ROOT/.understand-anything/system-graph.json`
+
+   ```json
+   {
+     "version": "1.0",
+     "generatedAt": "<ISO 8601>",
+     "project": {
+       "name": "<from system.json.name>",
+       "description": "<from system.json.description>",
+       "serviceCount": "<total services across all facets>",
+       "totalNodes": "<sum of service KG node counts>",
+       "totalEdges": "<sum of service KG edge counts>"
+     },
+     "nodes": ["<merged from all facet topology graphs + facet-type nodes>"],
+     "edges": ["<merged from all facet topology graphs + contains edges>"],
+     "serviceIndex": {
+       "<service-name>": {
+         "hasKg": true,
+         "hasWiki": true,
+         "hasDomain": true,
+         "kgCommit": "<from facet serviceIndex>",
+         "basePath": "<facet-path>/<service-name>",
+         "facet": "<server|mobile|frontend from system.json facet type>"
+       }
+     }
+   }
+   ```
+
+   Add `"facet"` node for each facet (type: "facet", facetType: server/mobile/frontend) and `"contains"` edges from facet nodes to their services.
+
+   b. **Generate `wiki/` directory** — build root-level wiki entry points for Dashboard navigation:
+   - `wiki/meta.json`: `{ "generatedAt": "<ISO>", "version": "1.0.0", "outputLanguage": "<lang>", "serviceCount": <N> }`
+   - `wiki/overview.json`: system overview with `facets[]` array grouping services by facet, including services and techStack
+   - `wiki/index.json`: navigation entries linking to each service wiki, MUST include a `cross-domain` entry for business panorama:
+     ```json
+     { "id": "wiki:business", "name": "跨端业务全景", "type": "cross-domain", "summary": "<N>个已匹配的跨端业务域" }
+     ```
+   - `wiki/domains/business.json`: cross-platform business panorama document:
+     ```json
+     {
+       "id": "cross-domain:business",
+       "name": "跨端业务全景",
+       "summary": "<describe cross-platform communication>",
+       "services": ["<all services involved>"],
+       "steps": [
+         { "order": 1, "service": "<svc>", "description": "<cross-platform step>", "crossServiceCall": {"interface": "...", "method": "...", "type": "bridge|http|moa_rpc"} }
+       ],
+       "architecture": {
+         "layers": [{ "name": "<layer>", "services": ["..."], "description": "..." }],
+         "communications": [{ "from": "<svc>", "to": "<svc>", "protocol": "<protocol>", "description": "..." }]
+       }
+     }
+     ```
+     This document shows the CROSS-PLATFORM interactions (mobile↔backend), NOT copies of internal per-facet flows. Build it from the domain matching results and cross-facet-links.
+     **Validated by** `validate_landscape.py` → `validate_business_panorama()` (checks required fields, step structure, architecture communications).
+
+   - `wiki/architecture.json`: top-level system architecture (SERVICE perspective, facet-grouped):
+     ```json
+     {
+       "facets": [
+         { "name": "mobile", "label": "移动客户端", "services": ["ddoversea", "ddoversea_flutter"], "description": "..." },
+         { "name": "backend", "label": "后端微服务", "services": ["ultron-relation", "ultron-basic-user"], "description": "..." }
+       ],
+       "crossServiceCalls": ["<ONLY cross-facet calls — omit intra-facet calls>"],
+       "eventFlows": [],
+       "sharedResources": []
+     }
+     ```
+     The `facets` field enables the Dashboard to render Mermaid subgraphs grouped by端 and filter out intra-facet calls at the top level. Intra-facet calls remain visible in each facet's own architecture page.
+
+   The Dashboard reads `system-graph.json` as its authoritative service registry (no directory scanning).
 
 If validation fails:
 - Report errors
 - Set `meta.json.status = "degraded"`
 - Still produce output (degraded is better than nothing)
+- Still generate system-graph.json and wiki/ (topology is independent of business-landscape quality)
 
 Print final summary:
 ```
@@ -250,6 +381,8 @@ Print final summary:
 ║ Status:     <complete|degraded>                  ║
 ║                                                  ║
 ║ Output: .understand-anything/business-landscape/ ║
+║         .understand-anything/system-graph.json   ║
+║         .understand-anything/wiki/               ║
 ╚══════════════════════════════════════════════════╝
 ```
 

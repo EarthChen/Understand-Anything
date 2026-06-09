@@ -19,7 +19,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { flowFragmentFromId, isSameWikiPage, isSameWikiTarget, type WikiPageType } from "../utils/wikiFlowNav";
 
 function crossDomainSlug(id: string): string {
-  return id.replace(/^(?:wiki:)?(?:cross-domain|domain):/, "");
+  return id.replace(/^(?:wiki:)?(?:cross-domain|domain):/, "").replace(/^wiki:/, "");
 }
 import type {
   WikiDomainPage,
@@ -88,16 +88,12 @@ function WikiNavTree({
   entries,
   topology,
   activePage,
-  viewScope,
   onSelect,
-  onScopeChange,
 }: {
   entries: NavEntry[];
-  topology: { hasParentWiki: boolean; services: Array<{ name: string }> } | null;
+  topology: { hasParentWiki: boolean; services: Array<{ name: string; facet?: string }>; facets?: Array<{ type: string; name: string; services: string[] }> } | null;
   activePage: { type: WikiPageType; id: string; service?: string; fragment?: string } | null;
-  viewScope: "global" | string;
   onSelect: (page: { type: WikiPageType; id: string; service?: string; fragment?: string }) => void;
-  onScopeChange: (scope: "global" | string) => void;
 }) {
   const [expandedServices, setExpandedServices] = useState<Set<string>>(new Set());
   const [expandedDomains, setExpandedDomains] = useState<Set<string>>(new Set());
@@ -138,8 +134,8 @@ function WikiNavTree({
       (e) => e.service === svcName && e.type === "flow" && e.domain === domainId,
     );
 
-  const showGlobalSection = topology?.hasParentWiki && viewScope === "global";
-  const showServiceSection = viewScope === "global" || services.length <= 1;
+  const showGlobalSection = topology?.hasParentWiki;
+  const showServiceSection = services.length > 0;
 
   // Initialize expanded state on first render (all expanded)
   const initializedRef = useState({ current: false })[0];
@@ -156,26 +152,20 @@ function WikiNavTree({
     setExpandedDomains(domSet);
   }
 
+  const [expandedFacets, setExpandedFacets] = useState<Set<string>>(
+    () => new Set(topology?.facets?.map((f) => f.type) ?? []),
+  );
+  const toggleFacet = useCallback((facetType: string) => {
+    setExpandedFacets((prev) => {
+      const next = new Set(prev);
+      if (next.has(facetType)) next.delete(facetType);
+      else next.add(facetType);
+      return next;
+    });
+  }, []);
+
   return (
     <nav className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-1">
-      {/* Scope switcher */}
-      {services.length > 1 && (
-        <div className="mb-3">
-          <select
-            value={viewScope}
-            onChange={(e) => onScopeChange(e.target.value)}
-            className="w-full px-2 py-1 text-[10px] rounded bg-surface border border-border text-text"
-          >
-            <option value="global">Global View</option>
-            {services.map((s) => (
-              <option key={s.name} value={s.name}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
       {/* Global section: Overview + Architecture */}
       {showGlobalSection && parentEntries.length > 0 && (
         <div className="mb-3">
@@ -246,111 +236,123 @@ function WikiNavTree({
         </button>
       ))}
 
-      {/* By Service section */}
-      {showServiceSection && services.length > 0 && (
+      {/* Hierarchical facet tree */}
+      {showServiceSection && topology?.facets && topology.facets.length > 0 && (
         <div className="mb-3">
-          <h4 className="text-[10px] uppercase tracking-wider text-text-muted mb-1 px-2">
-            By Service
-          </h4>
-          {services
-            .filter((s) => viewScope === "global" || s.name === viewScope)
-            .map((svc) => {
-              const domainItems = serviceDomainEntries(svc.name);
-              const svcExpanded = expandedServices.has(svc.name);
-              return (
-                <div key={svc.name} className="mb-1">
-                  <div className="flex items-center gap-0.5 group">
-                    {domainItems.length > 0 ? (
-                      <ChevronToggle expanded={svcExpanded} onClick={() => toggleService(svc.name)} />
-                    ) : (
-                      <span className="w-4" />
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => onSelect({ type: "service", id: svc.name, service: svc.name })}
-                      className={`flex-1 text-left px-1 py-1.5 rounded text-xs font-medium transition-colors ${
-                        isActive("service", svc.name, svc.name)
-                          ? "bg-accent/20 text-accent"
-                          : "hover:bg-surface-hover text-text"
-                      }`}
-                    >
-                      📦 {svc.name}
-                    </button>
-                  </div>
-                  {svcExpanded && domainItems.length > 0 && (
-                    <div className="ml-4 mt-0.5">
-                      {domainItems.map((item) => {
-                        const flows = flowsForDomain(svc.name, item.id);
-                        const domExpanded = expandedDomains.has(item.id);
-                        return (
-                          <div key={item.id}>
-                            <div className="flex items-center gap-0.5">
-                              {flows.length > 0 ? (
-                                <ChevronToggle expanded={domExpanded} onClick={() => toggleDomain(item.id)} />
-                              ) : (
-                                <span className="w-4" />
-                              )}
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  onSelect({ type: "domain", id: item.id, service: svc.name })
-                                }
-                                className={`flex-1 text-left px-1 py-1 rounded text-[11px] transition-colors ${
-                                  isActive("domain", item.id, svc.name)
-                                    ? "bg-accent/20 text-accent"
-                                    : "hover:bg-surface-hover text-text-secondary"
-                                }`}
-                              >
-                                {item.name}
-                              </button>
-                            </div>
-                            {domExpanded && flows.length > 0 && (
-                              <div className="ml-5 mt-0.5">
-                                {flows.map((flow) => (
-                                  <button
-                                    key={flow.id}
-                                    type="button"
-                                    onClick={() =>
-                                      onSelect({
-                                        type: "domain",
-                                        id: item.id,
-                                        service: svc.name,
-                                        fragment: flowFragmentFromId(flow.id),
-                                      })
-                                    }
-                                    className={`w-full text-left px-2 py-0.5 rounded text-[10px] transition-colors ${
-                                      activePage?.fragment === flowFragmentFromId(flow.id)
-                                        ? "bg-accent/10 text-accent"
-                                        : "hover:bg-surface-hover text-text-muted"
-                                    }`}
-                                  >
-                                    ↳ {flow.name}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {entries.filter((e) => e.type === "endpoint" && e.service === svc.name).map((ep) => (
-                    <button
-                      key={ep.id}
-                      type="button"
-                      onClick={() => onSelect({ type: "endpoint" as WikiPageType, id: ep.id, service: svc.name })}
-                      className={`w-full text-left px-3 py-1.5 rounded text-xs transition-colors ${
-                        activePage?.type === "endpoint" && activePage?.id === ep.id
-                          ? "bg-accent/10 text-accent font-medium"
-                          : "hover:bg-surface-hover text-text-muted"
-                      }`}
-                    >
-                      {ep.name}
-                    </button>
-                  ))}
+          {topology.facets.map((facet) => {
+            const facetExpanded = expandedFacets.has(facet.type);
+            const facetIcon = facet.type === "server" ? "🖥️" : facet.type === "mobile" ? "📱" : "🌐";
+            const facetServiceName = facet.type === "server" ? "backend" : facet.type === "mobile" ? "mobile" : facet.type;
+            const hasFacetWiki = services.some((s) => s.name === facetServiceName);
+            return (
+              <div key={facet.type} className="mb-1">
+                <div className="flex items-center gap-0.5 group">
+                  <ChevronToggle expanded={facetExpanded} onClick={() => toggleFacet(facet.type)} />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (hasFacetWiki) {
+                        onSelect({ type: "service", id: facetServiceName, service: facetServiceName });
+                      } else {
+                        toggleFacet(facet.type);
+                      }
+                    }}
+                    className={`flex-1 text-left px-1 py-1.5 rounded text-xs font-medium transition-colors ${
+                      hasFacetWiki && isActive("service", facetServiceName, facetServiceName)
+                        ? "bg-accent/20 text-accent"
+                        : "hover:bg-surface-hover text-text"
+                    }`}
+                  >
+                    {facetIcon} {facet.name}
+                  </button>
                 </div>
-              );
-            })}
+                {facetExpanded && (
+                  <div className="ml-3">
+                    {/* Facet-level pages: architecture, cross-domain flows */}
+                    {entries
+                      .filter((e) => e.service === facetServiceName && e.type === "architecture")
+                      .map((entry) => (
+                        <button
+                          key={entry.id}
+                          type="button"
+                          onClick={() => onSelect({ type: "architecture", id: entry.id, service: facetServiceName })}
+                          className={`w-full text-left px-2 py-1 rounded text-[11px] transition-colors ${
+                            isActive("architecture", entry.id, facetServiceName)
+                              ? "bg-accent/20 text-accent"
+                              : "hover:bg-surface-hover text-text-secondary"
+                          }`}
+                        >
+                          🏗️ {entry.name}
+                        </button>
+                      ))}
+                    {entries
+                      .filter((e) => e.service === facetServiceName && (e.type === "domain" || e.type === "cross-domain"))
+                      .map((entry) => (
+                        <button
+                          key={entry.id}
+                          type="button"
+                          onClick={() => onSelect({ type: entry.type as WikiPageType, id: entry.id, service: facetServiceName })}
+                          className={`w-full text-left px-2 py-1 rounded text-[11px] transition-colors ${
+                            isActive(entry.type as WikiPageType, entry.id, facetServiceName)
+                              ? "bg-accent/20 text-accent"
+                              : "hover:bg-surface-hover text-text-secondary"
+                          }`}
+                        >
+                          🌐 {entry.name}
+                        </button>
+                      ))}
+                    {/* Child services */}
+                    {facet.services.map((svcName) => {
+                      const domainItems = serviceDomainEntries(svcName);
+                      const svcExpanded = expandedServices.has(svcName);
+                      return (
+                        <ServiceNavItem
+                          key={svcName}
+                          svcName={svcName}
+                          domainItems={domainItems}
+                          svcExpanded={svcExpanded}
+                          expandedDomains={expandedDomains}
+                          entries={entries}
+                          activePage={activePage}
+                          isActive={isActive}
+                          onSelect={onSelect}
+                          toggleService={toggleService}
+                          toggleDomain={toggleDomain}
+                          flowsForDomain={flowsForDomain}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Flat fallback for services without facets */}
+      {showServiceSection && !(topology?.facets && topology.facets.length > 0) && (
+        <div className="mb-3">
+          {services.map((svc) => {
+            const domainItems = serviceDomainEntries(svc.name);
+            const svcExpanded = expandedServices.has(svc.name);
+            return (
+              <ServiceNavItem
+                key={svc.name}
+                svcName={svc.name}
+                domainItems={domainItems}
+                svcExpanded={svcExpanded}
+                expandedDomains={expandedDomains}
+                entries={entries}
+                activePage={activePage}
+                isActive={isActive}
+                onSelect={onSelect}
+                toggleService={toggleService}
+                toggleDomain={toggleDomain}
+                flowsForDomain={flowsForDomain}
+              />
+            );
+          })}
         </div>
       )}
 
@@ -388,6 +390,126 @@ function WikiNavTree({
         </div>
       )}
     </nav>
+  );
+}
+
+function ServiceNavItem({
+  svcName,
+  domainItems,
+  svcExpanded,
+  expandedDomains,
+  entries,
+  activePage,
+  isActive,
+  onSelect,
+  toggleService,
+  toggleDomain,
+  flowsForDomain,
+}: {
+  svcName: string;
+  domainItems: NavEntry[];
+  svcExpanded: boolean;
+  expandedDomains: Set<string>;
+  entries: NavEntry[];
+  activePage: { type: WikiPageType; id: string; service?: string; fragment?: string } | null;
+  isActive: (type: WikiPageType, id: string, service?: string) => boolean;
+  onSelect: (page: { type: WikiPageType; id: string; service?: string; fragment?: string }) => void;
+  toggleService: (name: string) => void;
+  toggleDomain: (id: string) => void;
+  flowsForDomain: (svcName: string, domainId: string) => NavEntry[];
+}) {
+  return (
+                <div key={svcName} className="mb-1">
+                  <div className="flex items-center gap-0.5 group">
+                    {domainItems.length > 0 ? (
+                      <ChevronToggle expanded={svcExpanded} onClick={() => toggleService(svcName)} />
+                    ) : (
+                      <span className="w-4" />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onSelect({ type: "service", id: svcName, service: svcName })}
+                      className={`flex-1 text-left px-1 py-1.5 rounded text-xs font-medium transition-colors ${
+                        isActive("service", svcName, svcName)
+                          ? "bg-accent/20 text-accent"
+                          : "hover:bg-surface-hover text-text"
+                      }`}
+                    >
+                      📦 {svcName}
+                    </button>
+                  </div>
+                  {svcExpanded && domainItems.length > 0 && (
+                    <div className="ml-4 mt-0.5">
+                      {domainItems.map((item) => {
+                        const flows = flowsForDomain(svcName, item.id);
+                        const domExpanded = expandedDomains.has(item.id);
+                        return (
+                          <div key={item.id}>
+                            <div className="flex items-center gap-0.5">
+                              {flows.length > 0 ? (
+                                <ChevronToggle expanded={domExpanded} onClick={() => toggleDomain(item.id)} />
+                              ) : (
+                                <span className="w-4" />
+                              )}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onSelect({ type: "domain", id: item.id, service: svcName })
+                                }
+                                className={`flex-1 text-left px-1 py-1 rounded text-[11px] transition-colors ${
+                                  isActive("domain", item.id, svcName)
+                                    ? "bg-accent/20 text-accent"
+                                    : "hover:bg-surface-hover text-text-secondary"
+                                }`}
+                              >
+                                {item.name}
+                              </button>
+                            </div>
+                            {domExpanded && flows.length > 0 && (
+                              <div className="ml-5 mt-0.5">
+                                {flows.map((flow) => (
+                                  <button
+                                    key={flow.id}
+                                    type="button"
+                                    onClick={() =>
+                                      onSelect({
+                                        type: "domain",
+                                        id: item.id,
+                                        service: svcName,
+                                        fragment: flowFragmentFromId(flow.id),
+                                      })
+                                    }
+                                    className={`w-full text-left px-2 py-0.5 rounded text-[10px] transition-colors ${
+                                      activePage?.fragment === flowFragmentFromId(flow.id)
+                                        ? "bg-accent/10 text-accent"
+                                        : "hover:bg-surface-hover text-text-muted"
+                                    }`}
+                                  >
+                                    ↳ {flow.name}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {entries.filter((e) => e.type === "endpoint" && e.service === svcName).map((ep) => (
+                    <button
+                      key={ep.id}
+                      type="button"
+                      onClick={() => onSelect({ type: "endpoint" as WikiPageType, id: ep.id, service: svcName })}
+                      className={`w-full text-left px-3 py-1.5 rounded text-xs transition-colors ${
+                        activePage?.type === "endpoint" && activePage?.id === ep.id
+                          ? "bg-accent/10 text-accent font-medium"
+                          : "hover:bg-surface-hover text-text-muted"
+                      }`}
+                    >
+                      {ep.name}
+                    </button>
+                  ))}
+                </div>
   );
 }
 
@@ -483,12 +605,24 @@ function WikiContent({
       case "cross-domain":
         markdown = crossDomainToMarkdown(content as WikiCrossDomain, wikiLabels);
         break;
-      case "service":
-        markdown = serviceOverviewToMarkdown(content as WikiServiceOverview, wikiLabels);
+      case "service": {
+        const record = content as Record<string, unknown>;
+        if ("projectName" in record || (Array.isArray(record.services) && !("serviceName" in record))) {
+          markdown = overviewToMarkdown(content as WikiOverview, wikiLabels);
+        } else {
+          markdown = serviceOverviewToMarkdown(content as WikiServiceOverview, wikiLabels);
+        }
         break;
-      case "domain":
-        markdown = domainPageToMarkdown(content as WikiDomainPage, wikiLabels);
+      }
+      case "domain": {
+        const domRecord = content as Record<string, unknown>;
+        if (Array.isArray(domRecord.steps)) {
+          markdown = crossDomainToMarkdown(content as WikiCrossDomain, wikiLabels);
+        } else {
+          markdown = domainPageToMarkdown(content as WikiDomainPage, wikiLabels);
+        }
         break;
+      }
       case "endpoint":
         if ((content as Record<string, unknown>)?.byService) {
           markdown = endpointIndexToMarkdown(content as Record<string, unknown>, wikiLabels);
@@ -529,14 +663,12 @@ export default function WikiView() {
   const wikiPageContent = useDashboardStore((s) => s.wikiPageContent);
   const wikiLoading = useDashboardStore((s) => s.wikiLoading);
   const wikiTopology = useDashboardStore((s) => s.wikiTopology);
-  const wikiViewScope = useDashboardStore((s) => s.wikiViewScope);
   const wikiBreadcrumb = useDashboardStore((s) => s.wikiBreadcrumb);
   const setWikiIndex = useDashboardStore((s) => s.setWikiIndex);
   const setWikiActivePage = useDashboardStore((s) => s.setWikiActivePage);
   const setWikiPageContent = useDashboardStore((s) => s.setWikiPageContent);
   const setWikiLoading = useDashboardStore((s) => s.setWikiLoading);
   const setWikiTopology = useDashboardStore((s) => s.setWikiTopology);
-  const setWikiViewScope = useDashboardStore((s) => s.setWikiViewScope);
   const setWikiBreadcrumb = useDashboardStore((s) => s.setWikiBreadcrumb);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -584,7 +716,11 @@ export default function WikiView() {
         endpoint = "/overview";
         break;
       case "architecture":
-        endpoint = "/architecture";
+        if (fetchPageService) {
+          endpoint = `/service/${encodeURIComponent(fetchPageService)}/architecture`;
+        } else {
+          endpoint = "/architecture";
+        }
         break;
       case "cross-domain":
         endpoint = `/domain/${encodeURIComponent(crossDomainSlug(fetchPageId))}`;
@@ -614,7 +750,12 @@ export default function WikiView() {
       .then((data) => {
         if (controller.signal.aborted) return;
         if (fetchPageType === "service" && data?.index && data?.overview) {
-          setWikiPageContent(data.overview);
+          // For facet wikis, pass the full response (overview + architecture + crossDomains)
+          if (data.architecture || data.crossDomains) {
+            setWikiPageContent({ ...data.overview, _architecture: data.architecture, _crossDomains: data.crossDomains });
+          } else {
+            setWikiPageContent(data.overview);
+          }
         } else {
           setWikiPageContent(data);
         }
@@ -784,9 +925,7 @@ export default function WikiView() {
             entries={displayEntries}
             topology={wikiTopology}
             activePage={wikiActivePage}
-            viewScope={wikiViewScope}
             onSelect={handleSelect}
-            onScopeChange={setWikiViewScope}
           />
         </div>
         <div className="flex-1 flex flex-col min-h-0 min-w-0">

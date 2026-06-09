@@ -1327,13 +1327,16 @@ def recover_rpc_mq_from_extraction(
                 recovered += 1
                 subscriber_count += 1
 
-    # Quality gate: count total RPC/MQ edges in the final graph to detect
+    # Quality gate: count total RPC/MQ/route edges in the final graph to detect
     # cases where annotations exist but zero edges were produced overall.
     final_rpc_counts: Counter[str] = Counter()
+    final_route_counts: Counter[str] = Counter()
     for edge in assembled["edges"]:
         etype = edge.get("type", "")
         if etype in ("provides_rpc", "consumes_rpc", "publishes", "subscribes"):
             final_rpc_counts[etype] += 1
+        elif etype in ("provides_route", "consumes_route"):
+            final_route_counts[etype] += 1
 
     lines: list[str] = []
     lines.append(
@@ -1347,9 +1350,31 @@ def recover_rpc_mq_from_extraction(
     if subscriber_count:
         lines.append(f"  {subscriber_count:>4} × subscribes edges")
 
-    # Emit quality gate warnings
+    # Emit quality gate warnings — suppress for client-side projects
+    # Detect client-side by frameworks in scan-result.json
+    is_client_project = False
+    scan_result_path = tmp_dir.parent / "intermediate" / "scan-result.json"
+    if scan_result_path.is_file():
+        try:
+            scan_data = json.loads(scan_result_path.read_text(encoding="utf-8"))
+            frameworks = [f.lower() for f in scan_data.get("frameworks", [])]
+            client_frameworks = {"android", "ios", "swift", "swiftui", "uikit",
+                                 "flutter", "react native", "expo", "kotlin multiplatform",
+                                 "jetpack compose", "compose multiplatform",
+                                 "android gradle plugin"}
+            if any(f in client_frameworks for f in frameworks):
+                is_client_project = True
+        except (json.JSONDecodeError, OSError):
+            pass
+
     if final_rpc_counts:
         lines.append(f"  Final graph RPC/MQ totals: {dict(final_rpc_counts)}")
+    elif is_client_project:
+        route_info = f" (module routing: {dict(final_route_counts)})" if final_route_counts else ""
+        lines.append(
+            f"  No network RPC edges — client-side project{route_info}"
+            f" (expected: no Dubbo/gRPC/MQ in mobile/frontend apps)"
+        )
     else:
         lines.append(
             "  WARNING: no provides_rpc / consumes_rpc / subscribes / publishes "

@@ -180,9 +180,10 @@ export const useBusinessStore = create<BusinessState>()((set) => ({
       if (!res.ok) {
         throw new Error(`Failed to fetch domains: ${res.status}`);
       }
-      const data = (await res.json()) as { domains?: Record<string, unknown>[] };
+      const data = (await res.json()) as { domains?: Record<string, unknown>[]; unmapped?: unknown[]; stats?: Record<string, number> };
       const domains = (data.domains ?? []).map((item) => toBusinessDomain(item));
-      set({ domains, available: domains.length > 0, isLoading: false });
+      const hasContent = domains.length > 0 || (Array.isArray(data.unmapped) && data.unmapped.length > 0) || (data.stats?.totalDomains ?? 0) > 0;
+      set({ domains, available: hasContent, isLoading: false });
     } catch (e) {
       set({
         error: e instanceof Error ? e.message : String(e),
@@ -194,13 +195,18 @@ export const useBusinessStore = create<BusinessState>()((set) => ({
 
   selectDomain: async (slug) => {
     const domainId = `domain:${slug}`;
-    set({ isLoading: true, error: null, selectedDomainSlug: slug, selectedDomainId: domainId });
+    // Find basic info from already-loaded domains list
+    const currentDomains = useBusinessStore.getState().domains;
+    const basicDomain = currentDomains.find(d => d.slug === slug || d.id === domainId);
+    set({ isLoading: true, error: null, selectedDomainSlug: slug, selectedDomainId: domainId, selectedDomain: basicDomain ?? null });
     try {
       const res = await fetch(
         businessApiUrl(`/api/business/domains/${encodeURIComponent(slug)}`),
       );
       if (!res.ok) {
-        throw new Error(`Failed to fetch domain: ${res.status}`);
+        // Detail file not generated yet — keep basic domain info visible
+        set({ isLoading: false, error: null });
+        return;
       }
       const data = (await res.json()) as Record<string, unknown>;
       const domain = toBusinessDomain(data, slug);
@@ -225,7 +231,6 @@ export const useBusinessStore = create<BusinessState>()((set) => ({
       set({
         error: e instanceof Error ? e.message : String(e),
         isLoading: false,
-        selectedDomain: null,
       });
     }
   },

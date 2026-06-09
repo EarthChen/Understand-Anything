@@ -6,11 +6,12 @@ export type NodeType =
   | "domain" | "flow" | "step"
   | "article" | "entity" | "topic" | "claim" | "source";
 
-// Edge types (39 total in 8 categories: Structural, Behavioral, Data flow, Dependencies, Semantic, Infrastructure/Schema, Domain, Knowledge)
+// Edge types (41 total in 8 categories: Structural, Behavioral, Data flow, Dependencies, Semantic, Infrastructure/Schema, Domain, Knowledge)
 export type EdgeType =
   | "imports" | "exports" | "contains" | "inherits" | "implements"  // Structural
   | "calls" | "subscribes" | "publishes" | "middleware"              // Behavioral
   | "provides_rpc" | "consumes_rpc"                                  // RPC (cross-service)
+  | "provides_route" | "consumes_route"                              // Module routing (ARouter/TheRouter/WMRouter)
   | "consumes_api"                                                    // API consumption (client→server)
   | "injects"                                                        // Dependency Injection
   | "reads_from" | "writes_to" | "transforms" | "validates"         // Data flow
@@ -94,6 +95,14 @@ export interface ServiceEndpointDoc {
     topic: string;
     role: "publisher" | "subscriber";
     handlerMethod?: string;
+    sourceRef?: { file: string; lineRange?: [number, number] };
+  }>;
+  httpEndpoints?: Array<{
+    method: string;
+    path: string;
+    framework: string;
+    functionName: string;
+    sourceClass: string;
     sourceRef?: { file: string; lineRange?: [number, number] };
   }>;
 }
@@ -208,6 +217,12 @@ export interface WikiOverview {
 }
 
 export interface WikiArchitecture {
+  facets?: Array<{
+    name: string;
+    label: string;
+    services: string[];
+    description?: string;
+  }>;
   crossServiceCalls: CrossServiceCall[];
   sharedResources: Array<{
     type: "database" | "cache" | "queue" | "storage";
@@ -233,12 +248,36 @@ export interface WikiCrossDomainStep {
   };
 }
 
+export interface WikiCrossDomainArchLayer {
+  name: string;
+  services: string[];
+  description: string;
+}
+
+export interface WikiCrossDomainArchComm {
+  from: string;
+  to: string;
+  protocol: string;
+  description: string;
+}
+
 export interface WikiCrossDomain {
   id: string;
   name: string;
   summary: string;
   services: string[];
-  steps: WikiCrossDomainStep[];
+  steps?: WikiCrossDomainStep[];
+  flows?: Array<{
+    facet?: string;
+    name: string;
+    summary: string;
+    services: string[];
+    steps: WikiCrossDomainStep[];
+  }>;
+  architecture?: {
+    layers?: WikiCrossDomainArchLayer[];
+    communications?: WikiCrossDomainArchComm[];
+  };
 }
 
 export interface WikiSearchResult {
@@ -252,6 +291,12 @@ export interface WikiSearchResult {
   matchSnippet?: string;
 }
 
+export interface WikiTopologyFacet {
+  type: "server" | "mobile" | "frontend";
+  name: string;
+  services: string[];
+}
+
 export interface WikiTopology {
   hasParentWiki: boolean;
   parentWikiDir: string | null;
@@ -259,7 +304,9 @@ export interface WikiTopology {
     name: string;
     wikiDir: string;
     meta: WikiMeta;
+    facet?: "server" | "mobile" | "frontend";
   }>;
+  facets?: WikiTopologyFacet[];
 }
 
 // RPC annotation config

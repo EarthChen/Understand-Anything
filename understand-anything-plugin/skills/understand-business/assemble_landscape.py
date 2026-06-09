@@ -50,6 +50,27 @@ def assemble_landscape(project_root_str: str) -> dict | None:
             except (json.JSONDecodeError, IOError):
                 continue
 
+    # Phase 2 Strategy B: Association discovery results
+    assoc_path = intermediate / 'phase2-associations.json'
+    if assoc_path.exists():
+        try:
+            assoc_data = json.loads(assoc_path.read_text())
+            for assoc in assoc_data.get('associations', []):
+                s_name = assoc.get('server_domain', '')
+                c_name = assoc.get('client_domain', '')
+                confidence = assoc.get('confidence', 0)
+                if s_name and c_name and confidence >= 0.6:
+                    all_matched.append({
+                        'canonical': s_name,
+                        'server': [s_name],
+                        'client': [c_name],
+                        'matchType': 'llm-association',
+                        'confidence': confidence,
+                        'relationship': assoc.get('relationship', 'unknown'),
+                    })
+        except (json.JSONDecodeError, IOError):
+            pass
+
     matched_server = set()
     matched_client = set()
     for m in all_matched:
