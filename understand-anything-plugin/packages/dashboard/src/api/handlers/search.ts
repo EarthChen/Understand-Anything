@@ -133,6 +133,16 @@ export function bm25Search(
     if (nameLower === qLower) score += 15
     else if (nameLower.includes(qLower)) score += 5
 
+    const nodeType = items[i].meta.type
+    const TYPE_BOOST: Record<string, number> = {
+      class: 2, function: 1.5, interface: 2, module: 1, endpoint: 2, service: 2.5,
+      file: 0.5, flow: 1, domain: 1,
+    }
+    score += TYPE_BOOST[nodeType] ?? 0
+
+    if (items[i].meta.filePath) score += 1.5
+    if (items[i].meta.lineRange) score += 1
+
     if (score > 0) {
       scored.push({ id: items[i].id, score, ...items[i].meta })
     }
@@ -178,6 +188,17 @@ function bm25SearchIndexed(
     const nameLower = items[i].meta.name.toLowerCase()
     if (nameLower === qLower) score += 15
     else if (nameLower.includes(qLower)) score += 5
+
+    // Structural signals (language-agnostic)
+    const nodeType = items[i].meta.type
+    const TYPE_BOOST: Record<string, number> = {
+      class: 2, function: 1.5, interface: 2, module: 1, endpoint: 2, service: 2.5,
+      file: 0.5, flow: 1, domain: 1,
+    }
+    score += TYPE_BOOST[nodeType] ?? 0
+
+    if (items[i].meta.filePath) score += 1.5
+    if (items[i].meta.lineRange) score += 1
 
     if (score > 0) {
       scored.push({ id: items[i].id, score, ...items[i].meta })

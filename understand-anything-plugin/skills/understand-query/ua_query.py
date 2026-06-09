@@ -336,7 +336,7 @@ def cmd_meta(args: argparse.Namespace) -> Any:
 
 
 def _score_node_relevance(node: dict[str, Any], query: str) -> float:
-    """Score a node's relevance to the query. Higher = more relevant."""
+    """Score a node's relevance to the query using language-agnostic structural signals."""
     q = query.lower()
     name = node.get("name", "").lower()
     node_id = node.get("id", "").lower()
@@ -348,15 +348,10 @@ def _score_node_relevance(node: dict[str, Any], query: str) -> float:
     if q in node_id:
         score += 2.0
     node_type = node.get("type", "")
-    type_bonus = {"class": 3, "function": 2, "interface": 2.5, "module": 1.5, "endpoint": 2}.get(node_type, 0)
+    type_bonus = {"class": 2, "function": 1.5, "interface": 2, "module": 1, "endpoint": 2, "service": 2.5}.get(node_type, 0)
     score += type_bonus
-    raw_name = node.get("name", "")
-    if any(suffix in raw_name for suffix in ("ServiceImpl", "WebService", "Service", "Controller", "Manager", "Handler")):
-        score += 4.0
-    elif any(suffix in raw_name for suffix in ("Dto", "DTO", "Req", "Resp", "Po", "PO", "Vo", "VO")):
-        score -= 1.5
     if node.get("filePath"):
-        score += 1.0
+        score += 1.5
     if node.get("lineRange"):
         score += 1.0
     return score
