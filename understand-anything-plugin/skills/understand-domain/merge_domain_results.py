@@ -100,7 +100,7 @@ def merge_domain_results(
             steps = flow.get("steps", [])
             n_steps = len(steps)
             for i, step in enumerate(steps):
-                nodes.append({
+                step_node: dict[str, Any] = {
                     "id": step["id"],
                     "type": "step",
                     "name": step.get("name", ""),
@@ -108,8 +108,12 @@ def merge_domain_results(
                     "tags": step.get("tags", []),
                     "complexity": step.get("complexity", "simple"),
                     "filePath": step.get("filePath", ""),
-                    "lineRange": step.get("lineRange", [0, 0]),
-                })
+                }
+                if step.get("lineRange"):
+                    step_node["lineRange"] = step["lineRange"]
+                if step.get("sourceNode"):
+                    step_node["sourceNode"] = step["sourceNode"]
+                nodes.append(step_node)
                 weight = round((i + 1) / max(n_steps, 1), 1) if n_steps > 0 else 0.1
                 weight = max(0.1, min(weight, 1.0))
                 edges.append({
