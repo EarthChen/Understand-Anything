@@ -104,6 +104,29 @@ function findNodeByIdOrName(graph: KnowledgeGraph, nodeRef: string): GraphNode |
   return graph.nodes.find((n) => n.name === nodeRef) ?? null
 }
 
+function tokenize(s: string): string[] {
+  return s.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_\-./]/g, " ").toLowerCase().split(/\s+/).filter(Boolean)
+}
+
+function fuzzyMatchNodes(graph: KnowledgeGraph, query: string, limit = 10): GraphNode[] {
+  const q = query.toLowerCase()
+  const tokens = tokenize(query)
+
+  const exact = graph.nodes.filter((n) => n.name.toLowerCase().includes(q) || n.id.toLowerCase().includes(q))
+  if (exact.length > 0) return exact.slice(0, limit)
+
+  if (tokens.length === 0) return []
+  const scored = graph.nodes
+    .map((n) => {
+      const haystack = (n.name + " " + n.id).toLowerCase()
+      const hits = tokens.filter((t) => haystack.includes(t)).length
+      return { node: n, score: hits / tokens.length }
+    })
+    .filter((s) => s.score >= 0.5)
+    .sort((a, b) => b.score - a.score)
+  return scored.slice(0, limit).map((s) => s.node)
+}
+
 function resolveNodeId(graph: KnowledgeGraph, nodeRef: string): string | null {
   return findNodeByIdOrName(graph, nodeRef)?.id ?? null
 }
@@ -217,7 +240,10 @@ function handleNeighbors(searchParams: URLSearchParams): ApiResponse {
   if (isApiResponse(loaded)) return loaded
 
   const center = findNodeByIdOrName(loaded, nodeRef)
-  if (!center) return { statusCode: 404, body: { error: "node not found" } }
+  if (!center) {
+    const suggestions = fuzzyMatchNodes(loaded, nodeRef)
+    return { statusCode: 404, body: { error: "node not found", query: nodeRef, suggestions: suggestions.map((n) => ({ id: n.id, name: n.name, type: n.type })) } }
+  }
 
   const edgeType = searchParams.get("edgeType") ?? undefined
   const neighbors = traverseNeighbors(loaded, center.id, direction, edgeType, depth)
@@ -257,13 +283,19 @@ function handleEdges(searchParams: URLSearchParams): ApiResponse {
   let sourceId: string | null = null
   if (sourceRef) {
     sourceId = resolveNodeId(loaded, sourceRef)
-    if (!sourceId) return { statusCode: 404, body: { error: "source node not found" } }
+    if (!sourceId) {
+      const suggestions = fuzzyMatchNodes(loaded, sourceRef)
+      return { statusCode: 404, body: { error: "source node not found", query: sourceRef, suggestions: suggestions.map((n) => ({ id: n.id, name: n.name, type: n.type })) } }
+    }
   }
 
   let targetId: string | null = null
   if (targetRef) {
     targetId = resolveNodeId(loaded, targetRef)
-    if (!targetId) return { statusCode: 404, body: { error: "target node not found" } }
+    if (!targetId) {
+      const suggestions = fuzzyMatchNodes(loaded, targetRef)
+      return { statusCode: 404, body: { error: "target node not found", query: targetRef, suggestions: suggestions.map((n) => ({ id: n.id, name: n.name, type: n.type })) } }
+    }
   }
 
   const filtered = loaded.edges.filter((edge) => {
