@@ -115,6 +115,72 @@ const SAMPLE_STRUCTURE = {
     imports: [],
     exports: [],
   },
+  "svc/src/main/java/com/example/base/BaseEntity.java": {
+    language: "java",
+    fileCategory: "code",
+    totalLines: 20,
+    functions: [],
+    classes: [
+      {
+        name: "BaseEntity",
+        startLine: 3,
+        endLine: 20,
+        methods: [],
+        properties: ["id"],
+        annotations: [{ name: "MappedSuperclass" }],
+        interfaces: ["Serializable"],
+        superclasses: [],
+        typedProperties: [{ name: "id", type: "Long" }],
+      },
+    ],
+    imports: [],
+    exports: [],
+  },
+  "svc/src/main/java/com/example/user/UserEntity.java": {
+    language: "java",
+    fileCategory: "code",
+    totalLines: 40,
+    functions: [],
+    classes: [
+      {
+        name: "UserEntity",
+        startLine: 5,
+        endLine: 40,
+        methods: [],
+        properties: ["name", "email"],
+        annotations: [{ name: "Entity" }],
+        interfaces: [],
+        superclasses: ["BaseEntity"],
+        typedProperties: [
+          { name: "name", type: "String" },
+          { name: "email", type: "String" },
+        ],
+      },
+    ],
+    imports: [],
+    exports: [],
+  },
+  "svc/src/main/java/com/example/user/VipUserEntity.java": {
+    language: "java",
+    fileCategory: "code",
+    totalLines: 25,
+    functions: [],
+    classes: [
+      {
+        name: "VipUserEntity",
+        startLine: 5,
+        endLine: 25,
+        methods: [],
+        properties: ["level"],
+        annotations: [{ name: "Entity" }],
+        interfaces: [],
+        superclasses: ["UserEntity"],
+        typedProperties: [{ name: "level", type: "Integer" }],
+      },
+    ],
+    imports: [],
+    exports: [],
+  },
 }
 
 function seedStructure(dir: string) {
@@ -175,7 +241,7 @@ describe("handleStructureRequest", () => {
     expect(res).not.toBeNull()
     expect(res!.statusCode).toBe(200)
     const body = res!.body as { files: string[]; total: number }
-    expect(body.total).toBe(3)
+    expect(body.total).toBe(6)
     expect(body.files).toContain("svc/src/main/java/com/example/user/UserService.java")
     expect(body.files).toContain("svc/src/main/java/com/example/order/OrderController.java")
   })
@@ -326,9 +392,10 @@ describe("handleStructureRequest", () => {
     )
     expect(res!.statusCode).toBe(200)
     const body = res!.body as { results: Array<{ name: string; kind: string }> }
-    expect(body.results).toHaveLength(1)
-    expect(body.results[0].name).toBe("UserDTO")
-    expect(body.results[0].kind).toBe("class")
+    expect(body.results.length).toBeGreaterThanOrEqual(2)
+    const names = body.results.map((r) => r.name)
+    expect(names).toContain("UserDTO")
+    expect(names).toContain("BaseEntity")
   })
 
   it("searches by property type", async () => {
@@ -371,6 +438,156 @@ describe("handleStructureRequest", () => {
     expect(res!.statusCode).toBe(200)
     const body = res!.body as { results: unknown[]; total: number; hasMore: boolean }
     expect(body.results).toHaveLength(1)
+  })
+
+  // --- typeRef resolution ---
+
+  it("includes typeRef when searching by returnType", async () => {
+    const res = await handleStructureRequest(
+      makeReq("/api/structure/search", { service: "my-service", returnType: "UserDTO" }),
+      mockCtx,
+    )
+    expect(res!.statusCode).toBe(200)
+    const body = res!.body as {
+      results: Array<{ name: string; typeRef?: { name: string; filePath: string } }>
+    }
+    const fn = body.results.find((r) => r.name === "findById")
+    expect(fn).toBeDefined()
+    expect(fn!.typeRef).toBeDefined()
+    expect(fn!.typeRef!.name).toBe("UserDTO")
+    expect(fn!.typeRef!.filePath).toContain("UserDTO.java")
+  })
+
+  it("does not include typeRef when type is in the same file", async () => {
+    const res = await handleStructureRequest(
+      makeReq("/api/structure/search", { service: "my-service", interface: "Serializable" }),
+      mockCtx,
+    )
+    expect(res!.statusCode).toBe(200)
+    const body = res!.body as {
+      results: Array<{ name: string; typeRef?: { name: string; filePath: string } }>
+    }
+    for (const r of body.results) {
+      if (r.typeRef) {
+        expect(r.typeRef.filePath).not.toBe(r.name)
+      }
+    }
+  })
+
+  // --- /api/structure/chain ---
+
+  it("requires service and class for chain", async () => {
+    const res = await handleStructureRequest(
+      makeReq("/api/structure/chain", { service: "my-service" }),
+      mockCtx,
+    )
+    expect(res!.statusCode).toBe(400)
+  })
+
+  it("traverses inheritance chain upward", async () => {
+    const res = await handleStructureRequest(
+      makeReq("/api/structure/chain", {
+        service: "my-service",
+        class: "VipUserEntity",
+        direction: "up",
+      }),
+      mockCtx,
+    )
+    expect(res!.statusCode).toBe(200)
+    const body = res!.body as {
+      chain: Array<{ name: string; filePath: string }>
+      depth: number
+    }
+    expect(body.chain).toHaveLength(3)
+    expect(body.chain[0].name).toBe("VipUserEntity")
+    expect(body.chain[1].name).toBe("UserEntity")
+    expect(body.chain[2].name).toBe("BaseEntity")
+  })
+
+  it("traverses inheritance chain downward", async () => {
+    const res = await handleStructureRequest(
+      makeReq("/api/structure/chain", {
+        service: "my-service",
+        class: "BaseEntity",
+        direction: "down",
+      }),
+      mockCtx,
+    )
+    expect(res!.statusCode).toBe(200)
+    const body = res!.body as {
+      chain: Array<{ name: string }>
+      depth: number
+    }
+    const names = body.chain.map((n) => n.name)
+    expect(names).toContain("BaseEntity")
+    expect(names).toContain("UserEntity")
+    expect(names).toContain("VipUserEntity")
+  })
+
+  it("returns 404 for non-existent class in chain", async () => {
+    const res = await handleStructureRequest(
+      makeReq("/api/structure/chain", {
+        service: "my-service",
+        class: "NonExistentClass",
+        direction: "up",
+      }),
+      mockCtx,
+    )
+    expect(res!.statusCode).toBe(404)
+  })
+
+  it("rejects invalid direction for chain", async () => {
+    const res = await handleStructureRequest(
+      makeReq("/api/structure/chain", {
+        service: "my-service",
+        class: "UserEntity",
+        direction: "left",
+      }),
+      mockCtx,
+    )
+    expect(res!.statusCode).toBe(400)
+  })
+
+  // --- /api/structure/implementors ---
+
+  it("finds all implementors of an interface", async () => {
+    const res = await handleStructureRequest(
+      makeReq("/api/structure/implementors", {
+        service: "my-service",
+        interface: "Serializable",
+      }),
+      mockCtx,
+    )
+    expect(res!.statusCode).toBe(200)
+    const body = res!.body as {
+      implementors: Array<{ name: string; filePath: string }>
+      total: number
+    }
+    expect(body.total).toBeGreaterThanOrEqual(2)
+    const names = body.implementors.map((i) => i.name)
+    expect(names).toContain("UserDTO")
+    expect(names).toContain("BaseEntity")
+  })
+
+  it("returns empty implementors for unknown interface", async () => {
+    const res = await handleStructureRequest(
+      makeReq("/api/structure/implementors", {
+        service: "my-service",
+        interface: "NonExistentInterface",
+      }),
+      mockCtx,
+    )
+    expect(res!.statusCode).toBe(200)
+    const body = res!.body as { total: number }
+    expect(body.total).toBe(0)
+  })
+
+  it("requires service and interface for implementors", async () => {
+    const res = await handleStructureRequest(
+      makeReq("/api/structure/implementors", { service: "my-service" }),
+      mockCtx,
+    )
+    expect(res!.statusCode).toBe(400)
   })
 
   // --- path traversal safety ---

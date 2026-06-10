@@ -165,6 +165,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     struct.add_argument("--property-type", help="Search by class property type")
     struct.add_argument("--path", help="Filter results by path pattern (substring match)")
     struct.add_argument("--limit", type=int, default=50, help="Max results to return")
+    struct.add_argument("--chain", help="Traverse inheritance chain for a class name")
+    struct.add_argument("--direction", choices=["up", "down"], default="up", help="Chain direction: up=superclasses, down=subclasses")
+    struct.add_argument("--implementors", help="Find all classes implementing an interface")
 
     return parser.parse_args(argv)
 
@@ -585,10 +588,16 @@ def cmd_trace(args: argparse.Namespace) -> Any:
 def cmd_structure(args: argparse.Namespace) -> Any:
     if not args.service:
         raise SystemExit("structure requires --service")
+    if args.chain:
+        params: dict[str, str] = {"service": args.service, "class": args.chain, "direction": args.direction}
+        return fetch_json(build_url(args.server, "/api/structure/chain", params))
+    if args.implementors:
+        params = {"service": args.service, "interface": args.implementors}
+        return fetch_json(build_url(args.server, "/api/structure/implementors", params))
     if args.files:
         return fetch_json(build_url(args.server, "/api/structure/files", {"service": args.service}))
     if args.file:
-        params: dict[str, str] = {"service": args.service, "path": args.file}
+        params = {"service": args.service, "path": args.file}
         return fetch_json(build_url(args.server, "/api/structure/file", params))
     search_params: dict[str, str] = {"service": args.service, "limit": str(args.limit)}
     if args.annotation:

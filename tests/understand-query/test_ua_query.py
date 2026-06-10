@@ -142,3 +142,27 @@ class TestStructureSubcommand:
     def test_structure_search_requires_filter(self):
         with pytest.raises(SystemExit):
             ua_query.main(["structure", "--service", "my-svc"])
+
+    @patch.object(ua_query, "fetch_json")
+    def test_structure_chain_up(self, mock_fetch):
+        mock_fetch.return_value = {"chain": [{"name": "VipUser"}], "depth": 1}
+        ua_query.main(["structure", "--service", "my-svc", "--chain", "VipUser", "--direction", "up"])
+        url = mock_fetch.call_args[0][0]
+        assert "/api/structure/chain" in url
+        assert "class=VipUser" in url
+        assert "direction=up" in url
+
+    @patch.object(ua_query, "fetch_json")
+    def test_structure_chain_down(self, mock_fetch):
+        mock_fetch.return_value = {"chain": [], "depth": 0}
+        ua_query.main(["structure", "--service", "my-svc", "--chain", "BaseEntity", "--direction", "down"])
+        url = mock_fetch.call_args[0][0]
+        assert "direction=down" in url
+
+    @patch.object(ua_query, "fetch_json")
+    def test_structure_implementors(self, mock_fetch):
+        mock_fetch.return_value = {"implementors": [{"name": "UserDTO"}], "total": 1}
+        ua_query.main(["structure", "--service", "my-svc", "--implementors", "Serializable"])
+        url = mock_fetch.call_args[0][0]
+        assert "/api/structure/implementors" in url
+        assert "interface=Serializable" in url

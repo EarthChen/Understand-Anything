@@ -1,5 +1,4 @@
 import fs from "fs"
-import path from "path"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
 import {
   resolveServiceDataPath,
@@ -23,6 +22,7 @@ interface ClassEntry {
   properties?: string[]
   annotations?: Array<{ name: string; arguments?: Record<string, string> }>
   interfaces?: string[]
+  superclasses?: string[]
   typedProperties?: Array<{ name: string; type: string }>
 }
 
@@ -119,12 +119,63 @@ function handleFile(service: string, filePath: string): ApiResponse {
   }
 }
 
+interface TypeRef {
+  name: string
+  filePath: string
+  lineRange?: [number, number]
+}
+
 interface SearchResult {
   filePath: string
   name: string
   kind: "class" | "function"
   lineRange: [number, number]
   match: Record<string, string>
+  typeRef?: TypeRef
+}
+
+function buildClassIndex(data: StructuralAnalysis): Map<string, TypeRef> {
+  const index = new Map<string, TypeRef>()
+  for (const [fp, fileData] of Object.entries(data)) {
+    const classes = Array.isArray(fileData.classes) ? fileData.classes : []
+    for (const cls of classes) {
+      if (!index.has(cls.name)) {
+        index.set(cls.name, {
+          name: cls.name,
+          filePath: fp,
+          lineRange: [cls.startLine, cls.endLine],
+        })
+      }
+    }
+  }
+  return index
+}
+
+interface ClassIndexCache {
+  index: Map<string, TypeRef>
+  mtime: number
+}
+
+const classIndexCache = new Map<string, ClassIndexCache>()
+
+function getClassIndex(service: string, data: StructuralAnalysis): Map<string, TypeRef> {
+  const cached = cache.get(service)
+  const mtime = cached?.mtime ?? 0
+  const idxCached = classIndexCache.get(service)
+  if (idxCached && idxCached.mtime === mtime) return idxCached.index
+
+  const index = buildClassIndex(data)
+  classIndexCache.set(service, { index, mtime })
+  return index
+}
+
+function stripGenericWrapper(typeName: string): string {
+  const match = typeName.match(/^(?:List|Set|Map|Collection|Optional|Iterable)<(.+)>$/)
+  if (match) {
+    const inner = match[1].includes(",") ? match[1].split(",")[1].trim() : match[1].trim()
+    return stripGenericWrapper(inner)
+  }
+  return typeName
 }
 
 function handleSearch(
@@ -266,11 +317,139 @@ function handleSearch(
     return true
   })
 
+  const resolveTypes = searchParams.get("resolveTypes") !== "false"
+  if (resolveTypes && (paramType || returnType || propertyType || iface)) {
+    const classIndex = getClassIndex(service, data)
+    for (const r of deduped) {
+      const typeToResolve =
+        r.match.paramType || r.match.returnType || r.match.propertyType || r.match.interface
+      if (!typeToResolve) continue
+      const coreName = stripGenericWrapper(typeToResolve)
+      const ref = classIndex.get(coreName)
+      if (ref && ref.filePath !== r.filePath) {
+        r.typeRef = ref
+      }
+    }
+  }
+
   const total = deduped.length
   const hasMore = total > limit
   return {
     statusCode: 200,
     body: { results: deduped.slice(0, limit), total, hasMore, query },
+  }
+}
+
+interface ChainNode {
+  name: string
+  filePath: string
+  lineRange?: [number, number]
+  interfaces?: string[]
+  superclass?: string
+}
+
+function handleChain(service: string, className: string, direction: string): ApiResponse {
+  const data = loadStructuralAnalysis(service)
+  if (!data) {
+    return {
+      statusCode: 404,
+      body: { error: `structural-analysis.json not found for service "${service}"` },
+    }
+  }
+
+  const classMap = new Map<string, ChainNode>()
+  for (const [fp, fileData] of Object.entries(data)) {
+    const classes = Array.isArray(fileData.classes) ? fileData.classes : []
+    for (const cls of classes) {
+      const superclass =
+        Array.isArray(cls.superclasses) && cls.superclasses.length > 0
+          ? cls.superclasses[0]
+          : undefined
+      classMap.set(cls.name, {
+        name: cls.name,
+        filePath: fp,
+        lineRange: [cls.startLine, cls.endLine],
+        interfaces: cls.interfaces,
+        superclass,
+      })
+    }
+  }
+
+  const chain: ChainNode[] = []
+  const visited = new Set<string>()
+
+  if (direction === "up") {
+    let current = classMap.get(className)
+    while (current && !visited.has(current.name)) {
+      chain.push(current)
+      visited.add(current.name)
+      if (!current.superclass) break
+      current = classMap.get(current.superclass)
+    }
+  } else {
+    const childrenMap = new Map<string, string[]>()
+    for (const [name, node] of classMap) {
+      if (node.superclass) {
+        const children = childrenMap.get(node.superclass) || []
+        children.push(name)
+        childrenMap.set(node.superclass, children)
+      }
+    }
+    const queue = [className]
+    while (queue.length > 0) {
+      const name = queue.shift()!
+      if (visited.has(name)) continue
+      visited.add(name)
+      const node = classMap.get(name)
+      if (node) chain.push(node)
+      const children = childrenMap.get(name) || []
+      queue.push(...children)
+    }
+  }
+
+  if (chain.length === 0) {
+    return { statusCode: 404, body: { error: `Class "${className}" not found` } }
+  }
+
+  return {
+    statusCode: 200,
+    body: { className, direction, chain, depth: chain.length },
+  }
+}
+
+function handleImplementors(service: string, interfaceName: string): ApiResponse {
+  const data = loadStructuralAnalysis(service)
+  if (!data) {
+    return {
+      statusCode: 404,
+      body: { error: `structural-analysis.json not found for service "${service}"` },
+    }
+  }
+
+  const implementors: Array<{
+    name: string
+    filePath: string
+    lineRange: [number, number]
+    interfaces: string[]
+  }> = []
+
+  for (const [fp, fileData] of Object.entries(data)) {
+    const classes = Array.isArray(fileData.classes) ? fileData.classes : []
+    for (const cls of classes) {
+      if (cls.interfaces?.includes(interfaceName)) {
+        implementors.push({
+          name: cls.name,
+          filePath: fp,
+          lineRange: [cls.startLine, cls.endLine],
+          interfaces: cls.interfaces,
+        })
+      }
+    }
+  }
+
+  return {
+    statusCode: 200,
+    body: { interface: interfaceName, implementors, total: implementors.length },
   }
 }
 
@@ -308,6 +487,41 @@ export async function handleStructureRequest(
     const err = validateServiceNameRequired(service)
     if (err) return err
     return handleSearch(service!, searchParams)
+  }
+
+  if (pathname === "/api/structure/chain") {
+    const service = searchParams.get("service")
+    const className = searchParams.get("class")
+    const direction = searchParams.get("direction") || "up"
+    if (!service || !className) {
+      return {
+        statusCode: 400,
+        body: { error: "service and class parameters required" },
+      }
+    }
+    if (direction !== "up" && direction !== "down") {
+      return {
+        statusCode: 400,
+        body: { error: 'direction must be "up" or "down"' },
+      }
+    }
+    const err = validateServiceNameRequired(service)
+    if (err) return err
+    return handleChain(service, className, direction)
+  }
+
+  if (pathname === "/api/structure/implementors") {
+    const service = searchParams.get("service")
+    const iface = searchParams.get("interface")
+    if (!service || !iface) {
+      return {
+        statusCode: 400,
+        body: { error: "service and interface parameters required" },
+      }
+    }
+    const err = validateServiceNameRequired(service)
+    if (err) return err
+    return handleImplementors(service, iface)
   }
 
   return null

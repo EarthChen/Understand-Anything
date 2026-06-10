@@ -110,7 +110,8 @@ python ua_query.py trace --service svc-b --query "keyword" --source
 │ 5. For impact analysis: kg --neighbors inbound first                    │
 │ 6. For cross-service: business panorama → links → wiki                  │
 │ 7. For type/annotation queries: use structure                           │
-│ 8. Prefer --search over full graph download                             │
+│ 8. For inheritance/interface: structure --chain / --implementors        │
+│ 9. Prefer --search over full graph download                            │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -125,6 +126,7 @@ python ua_query.py trace --service svc-b --query "keyword" --source
 | Architecture | "How is system structured?" | `wiki --architecture` → `services --list` | [business-domain.md](docs/business-domain.md#path-5-architecture-understanding) |
 | Data Quality | "Is KB data reliable?" | `meta --stale` | [reference.md](docs/reference.md) |
 | Code-Level Detail | "Find all @X annotations" | `structure --annotation X` | [source-code.md](docs/source-code.md#path-7-code-level-detail-signatures--annotations) |
+| Inheritance/Impl | "Subclasses of X?" | `structure --chain X` / `--implementors I` | [source-code.md](docs/source-code.md#path-8-inheritance--implementation) |
 
 ### Drill-Down Across Layers
 
@@ -145,7 +147,9 @@ When a business/domain query reveals code you need to inspect, follow the natura
 | `wiki --service S --domain D` | 1000–3000 | On demand |
 | `kg --neighbors X` (depth=1) | 500–1500 | Primary traversal |
 | `structure --file PATH` | 200–800 | Get signatures for one file |
-| `structure --annotation X` | 300–1500 | Search by annotation |
+| `structure --annotation X` | 300–1500 | Search by annotation (includes typeRef) |
+| `structure --chain X` | 200–600 | Inheritance chain traversal |
+| `structure --implementors I` | 200–800 | Find all interface implementors |
 | `kg` full graph (no filter) | 5000–50000 | **AVOID** |
 | `domain` full graph | 3000–20000 | **AVOID** — use `--flows` |
 
@@ -157,9 +161,27 @@ When a business/domain query reveals code you need to inspect, follow the natura
 
 ---
 
+## Combination Recipes (Reduce Tool Calls)
+
+Common scenarios optimized to minimize calls. Full details in [source-code.md](docs/source-code.md#combination-recipes-reducing-tool-calls).
+
+| Scenario | Calls | Recipe |
+|----------|-------|--------|
+| "How does X work?" | 1 | `trace --query "X,英文,Synonym" --source --business` |
+| "Find RPC endpoints + types" | 2 | `structure --annotation` → `kg --edges --type consumes_rpc` |
+| "Impact of changing X" | 2 | `kg --neighbors X --direction both` → `structure --property-type X` |
+| "Class hierarchy" | 2 | `structure --chain X --direction up` → `structure --implementors I` |
+| "Read large file" | 2 | `kg --file F --toc` → `kg --file F --start N --end M` |
+| "Business → source code" | 3 | `business --search` → `trace --source --business` → `structure --file` |
+| "Cross-service dep" | 3 | `business --panorama` → `trace` in source svc → `trace` in target svc |
+
+**Key insight:** `typeRef` auto-resolution means type-based searches (`--param-type`, `--return-type`, `--property-type`, `--interface`) automatically include where the referenced type is defined — saving one extra lookup per result.
+
+---
+
 ## Detail Documentation
 
-- **[Source-Level Queries](docs/source-code.md)** — `kg`, `trace`, `structure`, `kg --file` TOC pattern
+- **[Source-Level Queries](docs/source-code.md)** — `kg`, `trace`, `structure`, `kg --file` TOC pattern, combination recipes
 - **[Business & Domain Queries](docs/business-domain.md)** — `business`, `wiki`, `domain`, cross-platform recipe
 - **[Technical Reference](docs/reference.md)** — `services`, `meta`, search algorithm, error handling, output formats
 
@@ -173,8 +195,9 @@ When a business/domain query reveals code you need to inspect, follow the natura
 2. **Target discovery:** Run `services --has wiki,kg` to pick a service
 3. **Contextual lookup:** Business search → wiki domain → kg neighbors before editing code
 4. **Cross-reference:** Check business rules (`--type rules`) before modifying domain logic
-5. **Impact check:** Inbound `kg --neighbors` before refactoring shared classes
-6. **Type inspection:** Use `structure --annotation` or `--param-type` for signature-level queries
+5. **Impact check:** Inbound `kg --neighbors` + `structure --property-type X` before refactoring shared classes
+6. **Type inspection:** Use `structure --annotation` or `--param-type` for signature-level queries (results include `typeRef` auto-resolution)
+7. **Hierarchy exploration:** `structure --chain X --direction up/down` + `structure --implementors I` for type relationships
 
 **Related skills:**
 
