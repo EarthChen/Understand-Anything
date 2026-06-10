@@ -159,6 +159,14 @@ function createWikiFetchMock() {
     if (pathname === "/api/wiki/service/order-service") {
       return jsonResponse(mockServiceWiki);
     }
+    if (pathname === "/api/search") {
+      const q = url.searchParams.get("q") ?? "";
+      const scope = url.searchParams.get("scope") ?? "";
+      if (scope === "wiki" && q.toLowerCase().includes("order")) {
+        return jsonResponse({ results: mockSearchResults });
+      }
+      return jsonResponse({ results: [] });
+    }
     if (pathname === "/api/wiki/search") {
       const q = url.searchParams.get("q") ?? "";
       if (q.toLowerCase().includes("order")) {

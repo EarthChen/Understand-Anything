@@ -2,35 +2,11 @@ import fs from "fs"
 import path from "path"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
 import { businessLandscapeDir, readJsonFile, resolveProjectRoot } from "../utils"
+import { handleUnifiedSearch } from "./search"
 
 interface DomainsIndex {
   domains: Array<{ id: string; name: string; summary: string; detailRef: string }>
   stats: Record<string, number>
-}
-
-function searchDomains(blDir: string, query: string): Array<{ id: string; name: string; match: string }> {
-  const keywords = query
-    .split(",")
-    .map((k) => k.trim())
-    .filter(Boolean)
-    .map((k) => k.toLowerCase())
-  if (keywords.length === 0) return []
-
-  const results: Array<{ id: string; name: string; match: string }> = []
-  const domainsDir = path.join(blDir, "domains")
-  if (!fs.existsSync(domainsDir)) return results
-  for (const file of fs.readdirSync(domainsDir).filter((f) => f.endsWith(".json"))) {
-    const detail = readJsonFile<{ id: string; name: string; summary: string; interactions?: Array<{ name: string }> }>(
-      path.join(domainsDir, file),
-    )
-    if (!detail) continue
-    const haystack = [detail.name, detail.summary, ...(detail.interactions?.map((i) => i.name) ?? [])].join(" ").toLowerCase()
-    const matchedKeyword = keywords.find((k) => haystack.includes(k))
-    if (matchedKeyword) {
-      results.push({ id: detail.id, name: detail.name, match: matchedKeyword })
-    }
-  }
-  return results
 }
 
 export async function handleBusinessRequest(req: ApiRequest, _ctx: ApiContext): Promise<ApiResponse | null> {
@@ -79,7 +55,14 @@ export async function handleBusinessRequest(req: ApiRequest, _ctx: ApiContext): 
   if (pathname === "/api/business/search") {
     const q = searchParams.get("q") ?? ""
     if (!q.trim()) return { statusCode: 400, body: { error: "q parameter required" } }
-    return { statusCode: 200, body: { results: searchDomains(blDir, q) } }
+    const response = handleUnifiedSearch(q, "business", undefined, 50)
+    const body = response.body as { results?: Array<{ id: string; name: string; summary: string }> }
+    const results = (body.results ?? []).map((r) => ({
+      id: r.id.replace(/^business:/, ""),
+      name: r.name,
+      match: q,
+    }))
+    return { statusCode: 200, body: { results } }
   }
 
   if (pathname === "/api/business/meta") {

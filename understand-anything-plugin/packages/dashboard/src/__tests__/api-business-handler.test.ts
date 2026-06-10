@@ -75,8 +75,20 @@ describe("handleBusinessRequest", () => {
     expect(results[0].match).toBe("下单")
   })
 
-  it("GET /api/business/search?q=挚友,ClosedFriend matches via OR on comma keywords", async () => {
-    fs.writeFileSync(path.join(dir, ".understand-anything/business-landscape/domains/friend.json"), JSON.stringify({
+  it("GET /api/business/search?q=挚友,ClosedFriend matches via unified BM25 search", async () => {
+    const bl = path.join(dir, ".understand-anything", "business-landscape")
+    const domainsJson = JSON.parse(fs.readFileSync(path.join(bl, "domains.json"), "utf-8"))
+    domainsJson.domains.push({
+      id: "domain:friend",
+      name: "ClosedFriend",
+      summary: "挚友关系管理",
+      facets: [],
+      matchType: "auto-api",
+      matchConfidence: 0.9,
+      detailRef: "business-landscape/domains/friend.json",
+    })
+    fs.writeFileSync(path.join(bl, "domains.json"), JSON.stringify(domainsJson))
+    fs.writeFileSync(path.join(bl, "domains", "friend.json"), JSON.stringify({
       id: "domain:friend", name: "ClosedFriend", summary: "挚友关系管理",
       interactions: [{ id: "flow:add", name: "Add Friend", steps: [] }],
       businessRules: [],
@@ -88,7 +100,7 @@ describe("handleBusinessRequest", () => {
     const results = (res?.body as { results: Array<{ id: string; match: string }> }).results
     expect(results.length).toBeGreaterThan(0)
     expect(results.some((r) => r.id === "domain:friend")).toBe(true)
-    expect(["挚友", "closedfriend"]).toContain(results.find((r) => r.id === "domain:friend")!.match.toLowerCase())
+    expect(results.find((r) => r.id === "domain:friend")!.match).toBe("挚友,ClosedFriend")
   })
 
   it("GET /api/business/search?q=keyword1, keyword2 trims whitespace around keywords", async () => {
@@ -97,7 +109,17 @@ describe("handleBusinessRequest", () => {
     expect(res?.statusCode).toBe(200)
     const results = (res?.body as { results: Array<{ match: string }> }).results
     expect(results.length).toBeGreaterThan(0)
-    expect(results.some((r) => r.match.toLowerCase() === "下单" || r.match.toLowerCase() === "create")).toBe(true)
+    expect(results[0].match).toBe("下单, Create")
+  })
+
+  it("/api/business/search returns results (backward compat)", async () => {
+    const res = await handleBusinessRequest(
+      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "order" }) }, ctx)
+    expect(res?.statusCode).toBe(200)
+    const body = res?.body as { results: Array<{ id: string; name: string; match: string }> }
+    expect(Array.isArray(body.results)).toBe(true)
+    expect(body.results.some((r) => r.name === "Order Management")).toBe(true)
+    expect(body.results[0].match).toBe("order")
   })
 
   it("returns null for unrelated paths", async () => {

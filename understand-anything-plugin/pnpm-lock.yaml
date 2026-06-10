@@ -103,6 +103,9 @@ importers:
       '@dagrejs/dagre':
         specifier: ^2.0.4
         version: 2.0.4
+      '@lumosearch/search':
+        specifier: ^1.0.2
+        version: 1.0.2
       '@understand-anything/core':
         specifier: workspace:*
         version: link:../core
@@ -746,6 +749,9 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@lumosearch/search@1.0.2':
+    resolution: {integrity: sha512-PoFu8ss2xAXoUyrcdKfzUyBKQsF0Xy5SCmg78goAVwf/igNt384PIO4Agm975VhHv3GFM0ixjhvG/qm2sWyhPg==}
 
   '@mermaid-js/parser@1.1.1':
     resolution: {integrity: sha512-VuHdsYMK1bT6X2JbcAaWAhugTRvRBRyuZgd+c22swUeI9g/ntaxF7CY7dYarhZovofCbUNO0G7JesfmNtjYOCw==}
@@ -3627,6 +3633,8 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@lumosearch/search@1.0.2': {}
 
   '@mermaid-js/parser@1.1.1':
     dependencies:

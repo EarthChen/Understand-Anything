@@ -1,5 +1,6 @@
 import path from "path"
 import fs from "fs"
+import { LumoSearch } from "@lumosearch/search"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
 import {
   graphFileCandidates,
@@ -37,11 +38,27 @@ interface SearchIndexItem {
   meta: Omit<UnifiedSearchResult, "id" | "score">
 }
 
+interface LumoDocument extends Record<string, unknown> {
+  id: string
+  name: string
+  summary: string
+  type: string
+  service: string
+  content: string
+  layer: string
+}
+
+interface KgEdgeEntry {
+  source: string
+  target: string
+  type: string
+}
+
 interface SearchIndexState {
   items: SearchIndexItem[]
   tokenizedDocs: string[][]
-  avgDl: number
-  df: Map<string, number>
+  lumo: LumoSearch<LumoDocument>
+  edges: KgEdgeEntry[]
   mtimes: Record<string, number>
 }
 
@@ -94,76 +111,210 @@ export function tokenize(text: string): string[] {
   return tokens
 }
 
-function buildBm25Stats(items: SearchIndexItem[]): {
-  tokenizedDocs: string[][]
-  avgDl: number
-  df: Map<string, number>
-} {
-  const tokenizedDocs = items.map((item) => tokenize(item.text))
-  const N = tokenizedDocs.length
-  const avgDl = tokenizedDocs.reduce((sum, doc) => sum + doc.length, 0) / Math.max(N, 1)
-  const df = new Map<string, number>()
+const LUMO_SEARCH_KEYS = [
+  { name: "name", weight: 3 },
+  { name: "summary", weight: 2 },
+  { name: "type", weight: 0.5 },
+  { name: "content", weight: 1 },
+] as const
 
-  for (const doc of tokenizedDocs) {
-    const seen = new Set(doc)
-    for (const term of seen) {
-      df.set(term, (df.get(term) ?? 0) + 1)
+const LUMO_CANDIDATE_LIMIT = 500
+
+const CJK_REGEX = /[\u4e00-\u9fff]/
+
+function buildTokenizedDocs(items: SearchIndexItem[]): string[][] {
+  return items.map((item) => tokenize(item.text))
+}
+
+function applyResultBoosts(item: SearchIndexItem, baseScore: number, query: string): number {
+  const qLower = query.toLowerCase()
+  let score = baseScore
+
+  const nameLower = (item.meta.name ?? "").toLowerCase()
+  if (nameLower === qLower) score += 15
+  else if (nameLower.includes(qLower)) score += 5
+
+  score += TYPE_BOOST[item.meta.type] ?? 0
+  if (item.meta.filePath) score += 1.5
+  if (item.meta.lineRange) score += 1
+
+  return score
+}
+
+/** CJK bigram token overlap — LumoSearch strips non-ASCII during normalization. */
+function cjkTokenScores(
+  state: SearchIndexState,
+  query: string,
+  scope: SearchScope,
+): Map<string, number> {
+  const queryTokens = tokenize(query).filter((t) => CJK_REGEX.test(t))
+  if (queryTokens.length === 0) return new Map()
+
+  const scores = new Map<string, number>()
+
+  for (let i = 0; i < state.items.length; i++) {
+    const item = state.items[i]
+    if (scope !== "all" && item.meta.layer !== scope) continue
+
+    const docTokens = state.tokenizedDocs[i]
+    const docSet = new Set(docTokens)
+
+    let matchCount = 0
+    for (const qt of queryTokens) {
+      if (docSet.has(qt)) matchCount++
+    }
+    if (matchCount === 0) continue
+
+    let score = (matchCount / queryTokens.length) * 10
+    if (item.meta.summary.includes(query) || item.meta.name.includes(query)) score += 10
+
+    score = applyResultBoosts(item, score, query)
+    scores.set(item.id, score)
+  }
+
+  return scores
+}
+
+function buildLumoIndex(items: SearchIndexItem[]): LumoSearch<LumoDocument> {
+  const lumoDocs: LumoDocument[] = items.map((item) => ({
+    id: item.id,
+    name: item.meta.name,
+    summary: item.meta.summary,
+    type: item.meta.type,
+    service: item.meta.service ?? "",
+    content: item.text,
+    layer: item.meta.layer,
+  }))
+
+  return new LumoSearch(lumoDocs, {
+    keys: [...LUMO_SEARCH_KEYS],
+    candidateLimit: LUMO_CANDIDATE_LIMIT,
+  })
+}
+
+const RRF_K = 60
+
+function kgGraphExpansion(
+  state: SearchIndexState,
+  seedIds: string[],
+  maxNeighbors: number = 50,
+): Map<string, number> {
+  const adj = new Map<string, Set<string>>()
+  for (const edge of state.edges) {
+    if (!adj.has(edge.source)) adj.set(edge.source, new Set())
+    if (!adj.has(edge.target)) adj.set(edge.target, new Set())
+    adj.get(edge.source)!.add(edge.target)
+    adj.get(edge.target)!.add(edge.source)
+  }
+
+  const seedSet = new Set(seedIds)
+  const neighborScores = new Map<string, number>()
+
+  for (const seedId of seedIds) {
+    const neighbors = adj.get(seedId) ?? new Set()
+    for (const neighborId of neighbors) {
+      if (seedSet.has(neighborId)) continue
+      const current = neighborScores.get(neighborId) ?? 0
+      neighborScores.set(neighborId, current + 1)
     }
   }
 
-  return { tokenizedDocs, avgDl, df }
+  const sorted = [...neighborScores.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, maxNeighbors)
+
+  const rankMap = new Map<string, number>()
+  for (let i = 0; i < sorted.length; i++) {
+    rankMap.set(sorted[i][0], i + 1)
+  }
+  return rankMap
 }
 
-function bm25SearchIndexed(
+function rrfFuse(
+  bm25Results: UnifiedSearchResult[],
+  kgRanks: Map<string, number>,
+  state: SearchIndexState,
+  limit: number,
+): UnifiedSearchResult[] {
+  const rrfScores = new Map<string, number>()
+  const resultById = new Map<string, UnifiedSearchResult>()
+
+  for (let i = 0; i < bm25Results.length; i++) {
+    const r = bm25Results[i]
+    const rank = i + 1
+    rrfScores.set(r.id, (rrfScores.get(r.id) ?? 0) + 1 / (RRF_K + rank))
+    resultById.set(r.id, r)
+  }
+
+  for (const [id, rank] of kgRanks) {
+    rrfScores.set(id, (rrfScores.get(id) ?? 0) + 1 / (RRF_K + rank))
+    if (!resultById.has(id)) {
+      const item = state.items.find((it) => it.id === id)
+      if (item) {
+        resultById.set(id, { id, score: 0, ...item.meta })
+      }
+    }
+  }
+
+  const fused = [...rrfScores.entries()]
+    .map(([id, rrfScore]) => {
+      const result = resultById.get(id)
+      if (!result) return null
+      return { ...result, score: rrfScore }
+    })
+    .filter(Boolean) as UnifiedSearchResult[]
+
+  fused.sort((a, b) => b.score - a.score)
+  return fused.slice(0, limit)
+}
+
+function lumoSearch(
   state: SearchIndexState,
   query: string,
   limit: number,
+  scope: SearchScope = "all",
+  fusion: "none" | "rrf" = "none",
 ): { results: UnifiedSearchResult[]; total: number } {
-  const queryTokens = tokenize(query)
-  if (queryTokens.length === 0 || state.items.length === 0) {
+  if (!query.trim() || state.items.length === 0) {
     return { results: [], total: 0 }
   }
 
-  const { items, tokenizedDocs, avgDl, df } = state
-  const N = items.length
-  const qLower = query.toLowerCase()
-  const k1 = 1.5
-  const b = 0.75
-  const scored: UnifiedSearchResult[] = []
+  const lumoResults = state.lumo.search(query, {
+    limit: LUMO_CANDIDATE_LIMIT,
+    candidateLimit: LUMO_CANDIDATE_LIMIT,
+    ...(scope !== "all" ? { predicate: (doc) => doc.layer === scope } : {}),
+  })
 
-  for (let i = 0; i < N; i++) {
-    const doc = tokenizedDocs[i]
-    const dl = doc.length
-    const tf = new Map<string, number>()
-    for (const term of doc) {
-      tf.set(term, (tf.get(term) ?? 0) + 1)
-    }
+  const scoreById = new Map<string, UnifiedSearchResult>()
 
-    let score = 0
-    for (const qt of queryTokens) {
-      const termFreq = tf.get(qt)
-      if (!termFreq) continue
-      const docFreq = df.get(qt) ?? 0
-      const idf = Math.log((N - docFreq + 0.5) / (docFreq + 0.5) + 1)
-      score += idf * (termFreq * (k1 + 1)) / (termFreq + k1 * (1 - b + b * dl / avgDl))
-    }
+  for (const r of lumoResults) {
+    const item = state.items[r.refIndex]
+    if (!item) continue
 
-    const nameLower = (items[i].meta.name ?? "").toLowerCase()
-    if (nameLower === qLower) score += 15
-    else if (nameLower.includes(qLower)) score += 5
+    const score = applyResultBoosts(item, r.score, query)
+    scoreById.set(item.id, { id: item.id, score, ...item.meta })
+  }
 
-    const nodeType = items[i].meta.type
-    score += TYPE_BOOST[nodeType] ?? 0
-
-    if (items[i].meta.filePath) score += 1.5
-    if (items[i].meta.lineRange) score += 1
-
-    if (score > 0) {
-      scored.push({ id: items[i].id, score, ...items[i].meta })
+  for (const [id, cjkScore] of cjkTokenScores(state, query, scope)) {
+    const existing = scoreById.get(id)
+    if (existing) {
+      existing.score = Math.max(existing.score, cjkScore)
+    } else {
+      const item = state.items.find((i) => i.id === id)
+      if (item) scoreById.set(id, { id, score: cjkScore, ...item.meta })
     }
   }
 
+  const scored = [...scoreById.values()]
   scored.sort((a, b) => b.score - a.score)
+
+  if (fusion === "rrf" && state.edges.length > 0) {
+    const seedIds = scored.slice(0, 10).map((r) => r.id)
+    const kgRanks = kgGraphExpansion(state, seedIds)
+    const fused = rrfFuse(scored, kgRanks, state, limit)
+    return { results: fused, total: fused.length }
+  }
+
   return { results: scored.slice(0, limit), total: scored.length }
 }
 
@@ -189,6 +340,7 @@ function resolveProjectDataPath(projectRoot: string, relativePath: string): stri
 
 function pushKgItems(
   items: SearchIndexItem[],
+  edges: KgEdgeEntry[],
   graph: KnowledgeGraph,
   serviceName: string,
   projectRoot: string,
@@ -196,6 +348,11 @@ function pushKgItems(
   if (!Array.isArray(graph?.nodes)) {
     console.warn(`[search] KG data missing nodes array for service "${serviceName}"`)
     return
+  }
+  if (Array.isArray(graph.edges)) {
+    for (const edge of graph.edges) {
+      edges.push({ source: edge.source, target: edge.target, type: edge.type ?? "unknown" })
+    }
   }
   for (const node of graph.nodes) {
     const fp = node.filePath
@@ -306,6 +463,7 @@ function mtimesEqual(a: Record<string, number>, b: Record<string, number>): bool
 
 function buildSearchIndex(projectRoot: string, serviceFilter: string | null): SearchIndexState {
   const items: SearchIndexItem[] = []
+  const edges: KgEdgeEntry[] = []
   const mtimes = collectIndexMtimes(projectRoot, serviceFilter)
 
   const parentWikiPath = resolveProjectDataPath(projectRoot, "wiki/index.json")
@@ -316,7 +474,7 @@ function buildSearchIndex(projectRoot: string, serviceFilter: string | null): Se
     try {
       const kgPath = resolveServiceDataPath(serviceName, "knowledge-graph.json")
       const kg = kgPath ? readJsonFile<KnowledgeGraph>(kgPath) : null
-      if (kg) pushKgItems(items, kg, serviceName, projectRoot)
+      if (kg) pushKgItems(items, edges, kg, serviceName, projectRoot)
 
       const wikiPath = resolveServiceDataPath(serviceName, "wiki/index.json")
       const wiki = wikiPath ? readJsonFile<WikiIndex>(wikiPath) : null
@@ -335,8 +493,9 @@ function buildSearchIndex(projectRoot: string, serviceFilter: string | null): Se
     pushBusinessItems(items, blDir)
   }
 
-  const { tokenizedDocs, avgDl, df } = buildBm25Stats(items)
-  return { items, tokenizedDocs, avgDl, df, mtimes }
+  const lumo = buildLumoIndex(items)
+  const tokenizedDocs = buildTokenizedDocs(items)
+  return { items, tokenizedDocs, lumo, edges, mtimes }
 }
 
 function getOrBuildIndex(projectRoot: string, serviceFilter: string | null): SearchIndexState {
@@ -371,9 +530,12 @@ function parseLimit(value: string | null): number | ApiResponse {
   return limit
 }
 
-function filterByScope(items: SearchIndexItem[], scope: SearchScope): SearchIndexItem[] {
-  if (scope === "all") return items
-  return items.filter((item) => item.meta.layer === scope)
+function parseFusion(value: string | null): "none" | "rrf" | ApiResponse {
+  const fusion = value ?? "none"
+  if (fusion !== "none" && fusion !== "rrf") {
+    return { statusCode: 400, body: { error: "invalid fusion value, must be 'none' or 'rrf'" } }
+  }
+  return fusion
 }
 
 function handleSearch(searchParams: URLSearchParams): ApiResponse {
@@ -386,30 +548,36 @@ function handleSearch(searchParams: URLSearchParams): ApiResponse {
   const limit = parseLimit(searchParams.get("limit"))
   if (isApiResponse(limit)) return limit
 
+  const fusion = parseFusion(searchParams.get("fusion"))
+  if (isApiResponse(fusion)) return fusion
+
   const serviceName = searchParams.get("service")
   const serviceErr = validateServiceName(serviceName)
   if (serviceErr) return serviceErr
 
   const projectRoot = resolveProjectRoot()
   const indexState = getOrBuildIndex(projectRoot, serviceName)
-  const scopedItems = filterByScope(indexState.items, scope)
 
-  if (scopedItems.length === 0) {
+  if (indexState.items.length === 0) {
     return { statusCode: 200, body: { results: [], total: 0, query } }
   }
 
-  if (scope === "all") {
-    const { results, total } = bm25SearchIndexed(indexState, query, limit)
-    return { statusCode: 200, body: { results, total, query } }
-  }
-
-  const scopedState: SearchIndexState = {
-    items: scopedItems,
-    ...buildBm25Stats(scopedItems),
-    mtimes: indexState.mtimes,
-  }
-  const { results, total } = bm25SearchIndexed(scopedState, query, limit)
+  const { results, total } = lumoSearch(indexState, query, limit, scope, fusion)
   return { statusCode: 200, body: { results, total, query } }
+}
+
+export function handleUnifiedSearch(
+  query: string,
+  scope: string,
+  service?: string,
+  limit?: number,
+): ApiResponse {
+  const params = new URLSearchParams()
+  params.set("q", query)
+  params.set("scope", scope)
+  if (service) params.set("service", service)
+  if (limit) params.set("limit", String(limit))
+  return handleSearch(params)
 }
 
 export async function handleSearchRequest(

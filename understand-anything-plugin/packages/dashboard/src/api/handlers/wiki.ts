@@ -3,6 +3,7 @@ import path from "path"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
 import { graphFileCandidates } from "../utils"
 import { resolvePathWithinRoot, sanitizeSlug } from "../../utils/sanitize"
+import { handleUnifiedSearch } from "./search"
 
 export async function handleWikiRequest(
   req: ApiRequest,
@@ -32,17 +33,12 @@ export async function handleWikiRequest(
     }
     if (apiPath === "/search") {
       const q = searchParams.get("q") ?? ""
+      if (!q.trim()) return { statusCode: 200, body: [] }
       const rawLimit = parseInt(searchParams.get("limit") ?? "20", 10)
       const limit = Math.min(100, Math.max(1, Number.isNaN(rawLimit) ? 20 : rawLimit))
-      try {
-        const results = await ws.search(q, limit)
-        return { statusCode: 200, body: results }
-      } catch (err: unknown) {
-        return {
-          statusCode: 500,
-          body: { error: err instanceof Error ? err.message : String(err) },
-        }
-      }
+      const response = handleUnifiedSearch(q, "wiki", undefined, limit)
+      const body = response.body as { results?: unknown[] }
+      return { statusCode: 200, body: body.results ?? [] }
     }
 
     const svcFlowMatch = apiPath.match(/^\/service\/([^/]+)\/flow\/(.+)$/)

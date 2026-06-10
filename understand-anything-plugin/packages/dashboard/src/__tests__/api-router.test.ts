@@ -141,6 +141,61 @@ describe("createApiRouter", () => {
     warnSpy.mockRestore()
   })
 
+  it("returns wiki-scoped results from /api/search?scope=wiki", async () => {
+    writeJson(path.join(dir, ".understand-anything", "wiki", "index.json"), {
+      entries: [
+        {
+          id: "wiki:order-mgmt",
+          name: "Order Management",
+          type: "domain",
+          summary: "Handles order lifecycle",
+        },
+      ],
+    })
+
+    const res = await router.handle(
+      {
+        pathname: "/api/search",
+        searchParams: new URLSearchParams({ q: "order", scope: "wiki" }),
+      },
+      ctx(dir),
+    )
+
+    expect(res?.statusCode).toBe(200)
+    const body = res?.body as { results: Array<{ layer: string; name: string }> }
+    expect(body.results).toBeDefined()
+    expect(body.results.length).toBeGreaterThan(0)
+    for (const r of body.results) {
+      expect(r.layer).toBe("wiki")
+    }
+  })
+
+  it("/api/wiki/search returns results (backward compat)", async () => {
+    writeJson(path.join(dir, ".understand-anything", "wiki", "index.json"), {
+      entries: [
+        {
+          id: "wiki:order-mgmt",
+          name: "Order Management",
+          type: "domain",
+          summary: "Handles order lifecycle",
+        },
+      ],
+    })
+
+    const res = await router.handle(
+      {
+        pathname: "/api/wiki/search",
+        searchParams: new URLSearchParams({ q: "order" }),
+      },
+      ctx(dir),
+    )
+
+    expect(res?.statusCode).toBe(200)
+    expect(Array.isArray(res?.body)).toBe(true)
+    const results = res?.body as Array<{ name: string }>
+    expect(results.some((r) => r.name === "Order Management")).toBe(true)
+  })
+
   it("rejects service parameter with path traversal in /api/source", async () => {
     const res = await router.handle(
       {
@@ -176,6 +231,130 @@ describe("createApiRouter", () => {
 
     expect(res?.statusCode).not.toBe(200)
     fs.rmSync(escapedDir, { recursive: true, force: true })
+  })
+
+  describe("fuzzy search", () => {
+    function setupAuthService() {
+      writeJson(path.join(dir, ".understand-anything/system-graph.json"), {
+        serviceIndex: {
+          "auth-svc": { hasKg: true, basePath: "services/auth" },
+        },
+      })
+      writeJson(path.join(dir, "services/auth/.understand-anything/knowledge-graph.json"), {
+        nodes: [
+          {
+            id: "n1",
+            name: "AuthenticationService",
+            type: "class",
+            summary: "Handles user auth",
+            tags: [],
+          },
+          {
+            id: "n2",
+            name: "UserRepository",
+            type: "class",
+            summary: "User data access",
+            tags: [],
+          },
+        ],
+        edges: [],
+      })
+    }
+
+    it("finds results with typos via trigram matching", async () => {
+      setupAuthService()
+
+      const res = await router.handle(
+        { pathname: "/api/search", searchParams: new URLSearchParams("q=Authentcation") },
+        ctx(dir),
+      )
+      expect(res?.statusCode).toBe(200)
+      const body = res?.body as { results: Array<{ name: string }> }
+      expect(body.results.length).toBeGreaterThan(0)
+      expect(body.results[0].name).toBe("AuthenticationService")
+    })
+
+    it("finds results with prefix matching", async () => {
+      setupAuthService()
+
+      const res = await router.handle(
+        { pathname: "/api/search", searchParams: new URLSearchParams("q=Auth") },
+        ctx(dir),
+      )
+      expect(res?.statusCode).toBe(200)
+      const body = res?.body as { results: Array<{ name: string }> }
+      expect(body.results.length).toBeGreaterThan(0)
+      expect(body.results[0].name).toBe("AuthenticationService")
+    })
+  })
+
+  describe("RRF fusion search", () => {
+    it("discovers graph-connected nodes via fusion=rrf", async () => {
+      writeJson(path.join(dir, ".understand-anything/system-graph.json"), {
+        serviceIndex: {
+          "auth-svc": { hasKg: true, basePath: "services/auth" },
+        },
+      })
+      writeJson(path.join(dir, "services/auth/.understand-anything/knowledge-graph.json"), {
+        nodes: [
+          { id: "auth-svc", name: "AuthService", type: "class", summary: "Authentication logic" },
+          { id: "user-repo", name: "UserRepository", type: "class", summary: "Database access layer" },
+          { id: "token-gen", name: "TokenGenerator", type: "class", summary: "JWT token creation" },
+        ],
+        edges: [
+          { source: "auth-svc", target: "user-repo", type: "calls" },
+          { source: "auth-svc", target: "token-gen", type: "calls" },
+        ],
+      })
+
+      const noRrf = await router.handle(
+        { pathname: "/api/search", searchParams: new URLSearchParams("q=Authentication") },
+        ctx(dir),
+      )
+      expect(noRrf?.statusCode).toBe(200)
+
+      const withRrf = await router.handle(
+        { pathname: "/api/search", searchParams: new URLSearchParams("q=Authentication&fusion=rrf") },
+        ctx(dir),
+      )
+      expect(withRrf?.statusCode).toBe(200)
+      const rrfBody = withRrf?.body as { results: Array<{ id: string }> }
+      expect(rrfBody.results.length).toBeGreaterThanOrEqual(1)
+
+      const rrfIds = rrfBody.results.map((r) => r.id)
+      expect(rrfIds).toContain("auth-svc")
+    })
+
+    it("returns 400 for invalid fusion value", async () => {
+      const res = await router.handle(
+        { pathname: "/api/search", searchParams: new URLSearchParams("q=test&fusion=invalid") },
+        ctx(dir),
+      )
+      expect(res?.statusCode).toBe(400)
+    })
+
+    it("fusion=none behaves same as default", async () => {
+      writeJson(path.join(dir, ".understand-anything/system-graph.json"), {
+        serviceIndex: {
+          svc: { hasKg: true, basePath: "services/svc" },
+        },
+      })
+      writeJson(path.join(dir, "services/svc/.understand-anything/knowledge-graph.json"), {
+        nodes: [{ id: "n1", name: "TestClass", type: "class", summary: "A test" }],
+        edges: [],
+      })
+
+      const defaultRes = await router.handle(
+        { pathname: "/api/search", searchParams: new URLSearchParams("q=TestClass") },
+        ctx(dir),
+      )
+      const noneRes = await router.handle(
+        { pathname: "/api/search", searchParams: new URLSearchParams("q=TestClass&fusion=none") },
+        ctx(dir),
+      )
+
+      expect(defaultRes?.body).toEqual(noneRes?.body)
+    })
   })
 
   it("GET /api/search normalizes absolute filePaths to relative", async () => {

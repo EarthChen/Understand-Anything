@@ -878,12 +878,21 @@ export default function WikiView() {
       return;
     }
     const controller = new AbortController();
-    fetch(`${apiUrl("/search")}?q=${encodeURIComponent(searchQuery.trim())}`, {
+    fetch(`/api/search?scope=wiki&q=${encodeURIComponent(searchQuery.trim())}`, {
       signal: controller.signal,
     })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((results) => {
-        if (!controller.signal.aborted) setSearchResults(results);
+      .then((r) => (r.ok ? r.json() : { results: [] }))
+      .then((data) => {
+        if (!controller.signal.aborted) {
+          const results = (data.results ?? []).map((r: NavEntry) => ({
+            id: r.id,
+            name: r.name,
+            type: r.type,
+            service: r.service,
+            summary: r.summary ?? "",
+          }));
+          setSearchResults(results);
+        }
       })
       .catch(() => {});
     return () => controller.abort();
