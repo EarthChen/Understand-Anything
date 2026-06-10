@@ -171,6 +171,39 @@ describe("WikiDataService", () => {
       expect(result!.name).toBe("Order Management");
       expect(result!.flows).toHaveLength(1);
     });
+
+    it("resolves domain by Chinese name via index fallback", () => {
+      writeJson(path.join(tmpDir, "ultron-relation/.understand-anything/wiki/meta.json"), {
+        gitCommitHash: "a", generatedAt: "t", version: "1", outputLanguage: "zh",
+      });
+      writeJson(path.join(tmpDir, "ultron-relation/.understand-anything/wiki/index.json"), {
+        entries: [
+          {
+            id: "wiki:domain:closed-friend-relation",
+            name: "挚友关系管理",
+            type: "domain",
+            summary: "Closed friend relation management",
+          },
+        ],
+      });
+      writeJson(
+        path.join(tmpDir, "ultron-relation/.understand-anything/wiki/domains/closed-friend-relation.json"),
+        {
+          id: "domain:closed-friend-relation",
+          name: "挚友关系管理",
+          summary: "Manages closed friend relationships",
+          entities: ["ClosedFriendRelation"],
+          flows: [{ id: "flow:bind", name: "Bind Friend", summary: "Binds a closed friend", steps: [] }],
+        },
+      );
+
+      const svc = new WikiDataService(tmpDir);
+      const result = svc.getServiceDomain("ultron-relation", "挚友关系");
+      expect(result).not.toBeNull();
+      expect(result!.id).toBe("domain:closed-friend-relation");
+      expect(result!.name).toBe("挚友关系管理");
+      expect(result!.flows).toHaveLength(1);
+    });
   });
 
   describe("search", () => {

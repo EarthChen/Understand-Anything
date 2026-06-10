@@ -59,6 +59,25 @@ export const DEFAULT_IGNORE_PATTERNS: string[] = [
   // IDE/editor
   ".idea/",
   ".vscode/",
+  ".vs/",
+  ".fleet/",
+  "*.swp",
+  "*.swo",
+  "*~",
+
+  // AI tools
+  ".cursor/",
+  ".claude/",
+  ".copilot/",
+  ".github/copilot/",
+  ".aider*",
+  ".continue/",
+  ".codeium/",
+  ".tabnine/",
+  ".sourcegraph/",
+
+  // Own output directory
+  ".understand-anything/",
 
   // Misc
   "LICENSE",

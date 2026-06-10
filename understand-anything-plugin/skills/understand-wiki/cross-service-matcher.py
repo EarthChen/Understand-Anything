@@ -28,13 +28,22 @@ def load_knowledge_graph(service_root: str) -> dict | None:
     kg_path = os.path.join(service_root, ".understand-anything", "knowledge-graph.json")
     if not os.path.isfile(kg_path):
         return None
-    with open(kg_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(kg_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"[cross-service-matcher] WARNING: Failed to parse KG at {kg_path}: {e}", file=sys.stderr)
+        return None
 
 
 def build_nodes_index(kg: dict) -> dict[str, dict]:
     """Build a mapping from node ID to node data for fast lookup."""
-    return {n["id"]: n for n in kg.get("nodes", [])}
+    return {n["id"]: n for n in kg.get("nodes", []) if n.get("id")}
+
+
+def _node_name(node: dict) -> str:
+    """Safely extract node name, falling back to ID-derived name."""
+    return node.get("name") or node.get("id", "unknown").split(":")[-1]
 
 
 def extract_rpc_providers(kg: dict, service_name: str) -> list[dict]:
@@ -43,14 +52,13 @@ def extract_rpc_providers(kg: dict, service_name: str) -> list[dict]:
     nodes_by_id = build_nodes_index(kg)
 
     for edge in kg.get("edges", []):
-        if edge["type"] == "provides_rpc":
-            source_node = nodes_by_id.get(edge["source"])
-            target_node = nodes_by_id.get(edge["target"])
+        if edge.get("type", "") == "provides_rpc":
+            source_node = nodes_by_id.get(edge.get("source"))
+            target_node = nodes_by_id.get(edge.get("target"))
             if source_node and target_node:
-                interface_name = target_node["name"]
+                interface_name = _node_name(target_node)
                 methods = []
                 if source_node.get("summary"):
-                    # Try to extract method list from summary
                     summary = source_node["summary"]
                     if ":" in summary:
                         method_part = summary.split(":", 1)[1].strip()
@@ -63,7 +71,7 @@ def extract_rpc_providers(kg: dict, service_name: str) -> list[dict]:
                 providers.append({
                     "service": service_name,
                     "interface": interface_name,
-                    "implementor": source_node["name"],
+                    "implementor": _node_name(source_node),
                     "implementor_id": source_node["id"],
                     "file": source_node.get("filePath", ""),
                     "methods": methods,
@@ -77,15 +85,15 @@ def extract_rpc_consumers(kg: dict, service_name: str) -> list[dict]:
     nodes_by_id = build_nodes_index(kg)
 
     for edge in kg.get("edges", []):
-        if edge["type"] == "consumes_rpc":
-            source_node = nodes_by_id.get(edge["source"])
-            target_node = nodes_by_id.get(edge["target"])
+        if edge.get("type", "") == "consumes_rpc":
+            source_node = nodes_by_id.get(edge.get("source"))
+            target_node = nodes_by_id.get(edge.get("target"))
             if source_node and target_node:
-                interface_name = target_node["name"]
+                interface_name = _node_name(target_node)
                 consumers.append({
                     "service": service_name,
                     "interface": interface_name,
-                    "consumer_class": source_node["name"],
+                    "consumer_class": _node_name(source_node),
                     "consumer_id": source_node["id"],
                     "file": source_node.get("filePath", ""),
                 })
@@ -98,15 +106,15 @@ def extract_event_publishers(kg: dict, service_name: str) -> list[dict]:
     nodes_by_id = build_nodes_index(kg)
 
     for edge in kg.get("edges", []):
-        if edge["type"] == "publishes":
-            source_node = nodes_by_id.get(edge["source"])
-            target_node = nodes_by_id.get(edge["target"])
+        if edge.get("type", "") == "publishes":
+            source_node = nodes_by_id.get(edge.get("source"))
+            target_node = nodes_by_id.get(edge.get("target"))
             if source_node and target_node:
                 publishers.append({
                     "service": service_name,
-                    "topic": target_node["name"],
+                    "topic": _node_name(target_node),
                     "publisher_id": source_node["id"],
-                    "publisher_name": source_node["name"],
+                    "publisher_name": _node_name(source_node),
                     "file": source_node.get("filePath", ""),
                 })
     return publishers
@@ -118,15 +126,15 @@ def extract_event_subscribers(kg: dict, service_name: str) -> list[dict]:
     nodes_by_id = build_nodes_index(kg)
 
     for edge in kg.get("edges", []):
-        if edge["type"] == "subscribes":
-            source_node = nodes_by_id.get(edge["source"])
-            target_node = nodes_by_id.get(edge["target"])
+        if edge.get("type", "") == "subscribes":
+            source_node = nodes_by_id.get(edge.get("source"))
+            target_node = nodes_by_id.get(edge.get("target"))
             if source_node and target_node:
                 subscribers.append({
                     "service": service_name,
-                    "topic": target_node["name"],
+                    "topic": _node_name(target_node),
                     "subscriber_id": source_node["id"],
-                    "subscriber_name": source_node["name"],
+                    "subscriber_name": _node_name(source_node),
                     "file": source_node.get("filePath", ""),
                 })
     return subscribers
@@ -138,17 +146,18 @@ def extract_table_accesses(kg: dict, service_name: str) -> list[dict]:
     nodes_by_id = build_nodes_index(kg)
 
     for edge in kg.get("edges", []):
-        if edge["type"] in ("reads_from", "writes_to"):
-            target_node = nodes_by_id.get(edge["target"])
+        edge_type = edge.get("type", "")
+        if edge_type in ("reads_from", "writes_to"):
+            target_node = nodes_by_id.get(edge.get("target"))
             if target_node and target_node.get("type") == "table":
-                source_node = nodes_by_id.get(edge["source"])
+                source_node = nodes_by_id.get(edge.get("source"))
                 if source_node:
                     accesses.append({
                         "service": service_name,
-                        "table": target_node["name"],
-                        "access_type": edge["type"],
+                        "table": _node_name(target_node),
+                        "access_type": edge_type,
                         "accessor_id": source_node["id"],
-                        "accessor_name": source_node["name"],
+                        "accessor_name": _node_name(source_node),
                         "file": source_node.get("filePath", ""),
                     })
     return accesses
@@ -305,9 +314,9 @@ def extract_wrapper_providers(kg: dict, service_name: str) -> list[dict]:
 
     rpc_consumers: dict[str, dict] = {}
     for edge in kg.get("edges", []):
-        if edge["type"] == "consumes_rpc":
-            source_id = edge["source"]
-            target_id = edge["target"]
+        if edge.get("type", "") == "consumes_rpc":
+            source_id = edge.get("source")
+            target_id = edge.get("target")
             source_node = nodes_by_id.get(source_id)
             target_name = nodes_by_id.get(target_id, {}).get("name") or target_id.split(":")[-1]
             if source_node:
@@ -319,10 +328,11 @@ def extract_wrapper_providers(kg: dict, service_name: str) -> list[dict]:
 
     provides_by_name: dict[str, dict] = {}
     for edge in kg.get("edges", []):
-        if edge["type"] == "provides_rpc":
-            source_id = edge["source"]
+        if edge.get("type", "") == "provides_rpc":
+            source_id = edge.get("source")
             source_node = nodes_by_id.get(source_id)
-            target_name = nodes_by_id.get(edge["target"], {}).get("name") or edge["target"].split(":")[-1]
+            target_id = edge.get("target", "")
+            target_name = nodes_by_id.get(target_id, {}).get("name") or target_id.split(":")[-1]
             if source_node:
                 provides_by_name[target_name] = {
                     "node": source_node,
@@ -334,7 +344,7 @@ def extract_wrapper_providers(kg: dict, service_name: str) -> list[dict]:
         provider_info = provides_by_name.get(iface_name)
         wrappers.append({
             "service": service_name,
-            "wrapper_class": consumer_info["node"]["name"],
+            "wrapper_class": _node_name(consumer_info["node"]),
             "wrapper_id": consumer_id,
             "wrapper_file": consumer_info["node"].get("filePath", ""),
             "rpc_interface": iface_name,
@@ -354,17 +364,17 @@ def extract_injects(kg: dict, service_name: str) -> list[dict]:
     nodes_by_id = build_nodes_index(kg)
 
     for edge in kg.get("edges", []):
-        if edge["type"] == "injects":
-            source_node = nodes_by_id.get(edge["source"])
-            target_node = nodes_by_id.get(edge["target"])
+        if edge.get("type", "") == "injects":
+            source_node = nodes_by_id.get(edge.get("source"))
+            target_node = nodes_by_id.get(edge.get("target"))
             if source_node and target_node:
                 injects.append({
                     "service": service_name,
-                    "injector_id": edge["source"],
-                    "injector_class": source_node["name"],
+                    "injector_id": edge.get("source", ""),
+                    "injector_class": _node_name(source_node),
                     "injector_file": source_node.get("filePath", ""),
-                    "injected_id": edge["target"],
-                    "injected_class": target_node["name"],
+                    "injected_id": edge.get("target", ""),
+                    "injected_class": _node_name(target_node),
                 })
 
     return injects

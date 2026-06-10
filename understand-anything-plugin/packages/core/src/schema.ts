@@ -210,6 +210,21 @@ export function autoFixGraph(data: Record<string, unknown>): {
     result.nodes = (data.nodes as Record<string, unknown>[]).map((node, i) => {
       if (typeof node !== "object" || node === null) return node;
       const n = { ...node };
+
+      // Missing name: derive from id (e.g. "class:path/File.java:ClassName" → "ClassName")
+      if (!n.name || typeof n.name !== "string") {
+        const id = (n.id as string) || "";
+        const lastColon = id.lastIndexOf(":");
+        const derived = lastColon > 0 ? id.slice(lastColon + 1) : id;
+        n.name = derived || `node_${i}`;
+        issues.push({
+          level: "auto-corrected",
+          category: "missing-field",
+          message: `nodes[${i}] ("${n.name}"): missing "name" — derived from id`,
+          path: `nodes[${i}].name`,
+        });
+      }
+
       const name = (n.name as string) || (n.id as string) || `index ${i}`;
 
       // Missing or empty type
@@ -361,7 +376,7 @@ const DomainMetaSchema = z.object({
   businessRules: z.array(z.string()).optional(),
   crossDomainInteractions: z.array(z.string()).optional(),
   entryPoint: z.string().optional(),
-  entryType: z.enum(["http", "cli", "event", "cron", "manual"]).optional(),
+  entryType: z.enum(["http", "cli", "event", "cron", "manual", "api", "service", "internal", "rpc", "moa"]).optional(),
 }).passthrough();
 
 const KnowledgeMetaSchema = z.object({

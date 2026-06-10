@@ -8,6 +8,56 @@ argument-hint: ["<subcommand> [--server URL] [--format json|md] [--verbose] [sub
 
 Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the shared Understand-Anything API server. Use six progressive layers — from service discovery and business landscape down to source-level knowledge graphs — to answer questions without loading entire graphs into context.
 
+## Golden Rule for Agents (Read FIRST)
+
+For ANY "How does X work?" or "Where is X implemented?" question, use `trace` as your **first and often only** call:
+
+```bash
+trace --service SERVICE --query "中文关键词,EnglishName,Synonym" --source --business
+```
+
+This single command searches KG, retrieves neighbors, reads source code, and includes business context — replacing 5-7 individual calls. **Always include `--source --business`.**
+
+**Multi-service questions?** Run trace once per relevant service in a **single Shell call**:
+
+```bash
+python ua_query.py trace --service svc-a --query "keyword" --source --business && \
+python ua_query.py trace --service svc-b --query "keyword" --source
+```
+
+**Supports Chinese domain names directly** (no slug conversion needed):
+
+```bash
+python ua_query.py business --domain "挚友关系建立（端到端）"
+python ua_query.py wiki --service ultron-relation --domain "亲密度"
+```
+
+**Token efficiency**: Use `--format md` to reduce output size by 30-50%:
+
+```bash
+python ua_query.py --format md trace --service S --query "keyword" --source --business
+```
+
+---
+
+## Agent Efficiency Rules
+
+1. **Batch CLI calls**: Combine multiple CLI commands into ONE Shell call using `&&`:
+   ```bash
+   python ua_query.py business --search "keyword" && \
+   python ua_query.py trace --service svc --query "keyword" --source --business
+   ```
+
+2. **Expand keywords before trace**: Always provide 2-4 comma-separated variants (original + English + synonym). This searches all in parallel — no retry needed.
+
+3. **Use `--format md`** when the output will be read by an agent (not parsed as JSON).
+
+4. **Use `--business` with trace** to include business landscape context (saves a separate `business --search` call).
+
+5. **Use `kg --file --toc` before `kg --file`** to see method index first, then batch-read consecutive methods in one range.
+
+---
+
 ## Options
 
 `$ARGUMENTS` must contain one subcommand followed by its flags.
@@ -33,7 +83,22 @@ Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the
 
 ---
 
-## Known Limits
+## Known Limits & Fixes
+
+### Recently Fixed (2026-06-10)
+
+| Issue | Fix | Impact |
+|-------|-----|--------|
+| `/api/search` crashed Vite server on large codebases | Per-service try-catch in `search.ts` + Vite/Express middleware safety net | Search no longer crashes server |
+| `business --search "A,B"` returned empty results | API splits comma-separated keywords with OR logic | Multi-keyword business search works |
+| `business --domain slug` returned 404 for valid slugs | API fallback: tries `domain-${slug}.json` if `${slug}.json` not found | Unprefixed slugs resolve correctly |
+| `business --domain "中文名"` returned 404 | API fallback: looks up domain by name/id in `domains.json` | Chinese domain names work directly |
+| `wiki --domain "中文名"` returned 404 | `getServiceDomain` falls back to index name matching when `sanitizeSlug` rejects non-ASCII | Chinese wiki domain names work |
+| `cmd_wiki` double URL encoding | Removed redundant `quote()` calls; `build_url` handles encoding | Chinese parameters no longer double-encoded |
+| Slug validation only checked `..` | Now also rejects `/` and `\` characters | Path traversal hardened |
+| KG shape errors crashed search indexing | Pre-emptive `Array.isArray()` guards in `pushKgItems`/`pushDomainItems` | Malformed KG data skipped gracefully |
+
+### Current Limits
 
 | Constraint | Detail |
 |------------|--------|
@@ -116,7 +181,16 @@ python ua_query.py kg --service backend-service --file "FeatureServiceImpl.java"
 
 ## Prerequisites
 
-1. **API Server must be running.** This CLI queries the shared API server (same backend as the Dashboard):
+1. **Python 3.9+** is required. On macOS, use `python3` (system `python` may not exist):
+
+```bash
+python3 ua_query.py --help        # macOS / Linux
+python ua_query.py --help          # Windows or if python → python3
+```
+
+All examples in this document use `python`; substitute `python3` if needed.
+
+2. **API Server must be running.** This CLI queries the shared API server (same backend as the Dashboard):
 
 ```bash
 cd understand-anything-plugin/packages/dashboard && pnpm run serve
@@ -128,13 +202,13 @@ The server prints startup info:
 🚀 API Server running at http://localhost:3001
 ```
 
-2. **Optionally set the server URL** (if not using default):
+3. **Optionally set the server URL** (if not using default):
 
 ```bash
 export UNDERSTAND_SERVER=http://localhost:3001   # optional, this is the default
 ```
 
-3. **Data must be generated.** The API serves data from `.understand-anything/` directories. Ensure relevant skills have been run:
+4. **Data must be generated.** The API serves data from `.understand-anything/` directories. Ensure relevant skills have been run:
 
 | Skill | Generates |
 |-------|-----------|
@@ -421,11 +495,12 @@ Query cross-facet business-landscape data generated by `/understand-business`.
 # List all domains
 python ua_query.py business --list
 
-# Search for checkout-related domains
-python ua_query.py business --search checkout
+# Search for checkout-related domains (comma-separated for OR match)
+python ua_query.py business --search "checkout,下单"
 
-# Domain interactions
+# Domain interactions (supports Chinese domain names directly)
 python ua_query.py business --domain order --type interactions
+python ua_query.py business --domain "挚友关系建立（端到端）" --type interactions
 
 # Business rules only
 python ua_query.py business --domain payment --type rules
@@ -466,8 +541,9 @@ Query wiki pages generated by `/understand-wiki`. Some flags are global (no `--s
 # Service wiki index
 python ua_query.py wiki --service order-service
 
-# Domain implementation page
+# Domain implementation page (supports Chinese domain names)
 python ua_query.py wiki --service order-service --domain order
+python ua_query.py wiki --service ultron-relation --domain "亲密度"
 
 # Endpoint documentation
 python ua_query.py wiki --service order-service --type endpoint
@@ -661,7 +737,7 @@ python ua_query.py trace --service my-service --query "Validator,OrderValidator"
 }
 ```
 
-**Agent usage:** For "How does X work?" questions, use `trace --source --business` as the first and often only call needed. If trace returns empty, follow the hint: grep workspace or try a different service.
+**Agent usage:** For "How does X work?" questions, use `trace --source --business` as the **first and often only** call needed. If trace returns empty, follow the hint: grep workspace or try a different service. **Always include `--business` — it adds business context at zero extra API cost.**
 
 ---
 
@@ -795,7 +871,7 @@ python understand-anything-plugin/skills/understand-query/ua_query.py [global-fl
 Or with `uv`:
 
 ```bash
-uv run understand-anything-plugin/skills/understand-query/ua_query.py [global-flags] <subcommand> [subcommand-flags]
+python understand-anything-plugin/skills/understand-query/ua_query.py [global-flags] <subcommand> [subcommand-flags]
 ```
 
 **Dependencies:** Python 3.10+ stdlib only. No external packages required.

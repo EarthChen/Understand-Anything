@@ -101,16 +101,23 @@ export default defineConfig({
         }
 
         server.middlewares.use(async (req, res, next) => {
-          const url = new URL(req.url ?? "/", "http://127.0.0.1:5173");
-          const apiRes = await router.handle(
-            { pathname: url.pathname, searchParams: url.searchParams },
-            { getWikiService },
-          );
-          if (apiRes === null) {
-            next();
-            return;
+          try {
+            const url = new URL(req.url ?? "/", "http://127.0.0.1:5173");
+            const apiRes = await router.handle(
+              { pathname: url.pathname, searchParams: url.searchParams },
+              { getWikiService },
+            );
+            if (apiRes === null) {
+              next();
+              return;
+            }
+            writeApiResponse(res, apiRes);
+          } catch (error) {
+            console.error(error);
+            res.statusCode = 500;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Internal server error" }));
           }
-          writeApiResponse(res, apiRes);
         });
       },
     },

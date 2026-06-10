@@ -9,7 +9,13 @@ interface DomainsIndex {
 }
 
 function searchDomains(blDir: string, query: string): Array<{ id: string; name: string; match: string }> {
-  const q = query.toLowerCase()
+  const keywords = query
+    .split(",")
+    .map((k) => k.trim())
+    .filter(Boolean)
+    .map((k) => k.toLowerCase())
+  if (keywords.length === 0) return []
+
   const results: Array<{ id: string; name: string; match: string }> = []
   const domainsDir = path.join(blDir, "domains")
   if (!fs.existsSync(domainsDir)) return results
@@ -19,8 +25,9 @@ function searchDomains(blDir: string, query: string): Array<{ id: string; name: 
     )
     if (!detail) continue
     const haystack = [detail.name, detail.summary, ...(detail.interactions?.map((i) => i.name) ?? [])].join(" ").toLowerCase()
-    if (haystack.includes(q)) {
-      results.push({ id: detail.id, name: detail.name, match: detail.summary.slice(0, 120) })
+    const matchedKeyword = keywords.find((k) => haystack.includes(k))
+    if (matchedKeyword) {
+      results.push({ id: detail.id, name: detail.name, match: matchedKeyword })
     }
   }
   return results
@@ -32,7 +39,7 @@ export async function handleBusinessRequest(req: ApiRequest, _ctx: ApiContext): 
 
   const blDir = businessLandscapeDir(resolveProjectRoot())
   if (!fs.existsSync(blDir)) {
-    return { statusCode: 404, body: { error: "business-landscape not found. Run /understand-business first." } }
+    return { statusCode: 404, body: { error: "business-landscape not found. Run /understand-business first.", code: "BUSINESS_LANDSCAPE_NOT_FOUND" } }
   }
 
   if (pathname === "/api/business/domains") {
@@ -50,7 +57,7 @@ export async function handleBusinessRequest(req: ApiRequest, _ctx: ApiContext): 
     if (domain) {
       return {
         statusCode: 200,
-        body: { ...data, links: data.links.filter((link) => link.domain.includes(domain)) },
+        body: { ...data, links: data.links.filter((link) => link.domain === domain || link.domain === `domain:${domain}`) },
       }
     }
     return { statusCode: 200, body: data }
@@ -97,12 +104,27 @@ export async function handleBusinessRequest(req: ApiRequest, _ctx: ApiContext): 
   const slugMatch = pathname.match(/^\/api\/business\/domains\/([^/]+)$/)
   if (slugMatch) {
     const slug = decodeURIComponent(slugMatch[1])
-    // Reject path traversal: decoded slug must not contain ".." segments
-    if (slug.includes("..")) {
-      return { statusCode: 400, body: { error: "Invalid slug: path traversal detected" } }
+    if (slug.includes("..") || slug.includes("/") || slug.includes("\\")) {
+      return { statusCode: 400, body: { error: "Invalid slug: path traversal detected", code: "PATH_TRAVERSAL" } }
     }
-    const detailPath = path.join(blDir, "domains", `${slug}.json`)
-    const detail = readJsonFile(detailPath)
+    const domainsDir = path.join(blDir, "domains")
+    const detailPath = path.join(domainsDir, `${slug}.json`)
+    let detail = readJsonFile(detailPath)
+    if (!detail && !slug.startsWith("domain-")) {
+      detail = readJsonFile(path.join(domainsDir, `domain-${slug}.json`))
+    }
+    if (!detail) {
+      const indexData = readJsonFile<DomainsIndex>(path.join(blDir, "domains.json"))
+      const matched = indexData?.domains.find(
+        (d) => d.name === slug || d.id === slug || d.id === `domain:${slug}`,
+      )
+      if (matched?.detailRef) {
+        const filename = path.basename(matched.detailRef)
+        if (!filename.includes("..") && !filename.includes("/") && !filename.includes("\\")) {
+          detail = readJsonFile(path.join(domainsDir, filename))
+        }
+      }
+    }
     if (!detail) return { statusCode: 404, body: { error: `Domain not found: ${slug}` } }
     return { statusCode: 200, body: detail }
   }

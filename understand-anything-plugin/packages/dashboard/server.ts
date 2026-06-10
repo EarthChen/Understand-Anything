@@ -36,17 +36,22 @@ export function createApp(opts: ServerOptions = {}) {
     },
   }))
   app.use(async (req, res, next) => {
-    const url = new URL(req.url, `http://127.0.0.1`)
-    const apiRes = await router.handle(
-      { pathname: url.pathname, searchParams: url.searchParams },
-      { getWikiService },
-    )
-    if (apiRes === null) { next(); return }
-    res.status(apiRes.statusCode)
-    if (apiRes.headers) {
-      for (const [k, v] of Object.entries(apiRes.headers)) res.setHeader(k, v)
+    try {
+      const url = new URL(req.url, `http://127.0.0.1`)
+      const apiRes = await router.handle(
+        { pathname: url.pathname, searchParams: url.searchParams },
+        { getWikiService },
+      )
+      if (apiRes === null) { next(); return }
+      res.status(apiRes.statusCode)
+      if (apiRes.headers) {
+        for (const [k, v] of Object.entries(apiRes.headers)) res.setHeader(k, v)
+      }
+      res.json(apiRes.body)
+    } catch (error) {
+      console.error(error)
+      res.status(500).json({ error: "Internal server error" })
     }
-    res.json(apiRes.body)
   })
   return app
 }

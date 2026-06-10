@@ -23,3 +23,9 @@ export type ApiHandler = (
 export interface ApiRouter {
   handle(req: ApiRequest, ctx: ApiContext): Promise<ApiResponse | null>
 }
+
+export interface ApiErrorBody {
+  error: string
+  code?: string
+  suggestions?: Array<{ id: string; name: string; type: string }>
+}

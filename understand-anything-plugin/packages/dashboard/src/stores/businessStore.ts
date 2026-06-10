@@ -16,7 +16,7 @@ export interface CrossFacetLink {
   source: string;
   target: string;
   label: string;
-  facet: string;
+  domain: string;
 }
 
 export interface BusinessOverview {
@@ -93,12 +93,16 @@ function toBusinessDomain(raw: Record<string, unknown>, slugOverride?: string): 
     slugFromDetailRef(raw.detailRef) ??
     slugFromId(id);
 
-  const facets =
-    raw.facets != null &&
-    typeof raw.facets === "object" &&
-    !Array.isArray(raw.facets)
-      ? (raw.facets as Record<string, unknown>)
-      : {};
+  let facets: Record<string, unknown> = {};
+  if (raw.facets != null) {
+    if (Array.isArray(raw.facets)) {
+      for (const f of raw.facets) {
+        if (typeof f === "string") facets[f] = true;
+      }
+    } else if (typeof raw.facets === "object") {
+      facets = raw.facets as Record<string, unknown>;
+    }
+  }
 
   return {
     id,
@@ -113,14 +117,45 @@ function toBusinessDomain(raw: Record<string, unknown>, slugOverride?: string): 
 
 function toCrossFacetLinks(raw: unknown): CrossFacetLink[] {
   if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((item): item is Record<string, unknown> => item != null && typeof item === "object")
-    .map((item) => ({
-      source: String(item.source ?? item.domain ?? ""),
-      target: String(item.target ?? ""),
-      label: String(item.label ?? ""),
-      facet: String(item.facet ?? ""),
-    }));
+  const links: CrossFacetLink[] = [];
+  for (const item of raw) {
+    if (item == null || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    if (rec.domain && (Array.isArray(rec.serverEndpoints) || Array.isArray(rec.clientApiCalls))) {
+      const domain = String(rec.domain);
+      const serverEps = Array.isArray(rec.serverEndpoints) ? rec.serverEndpoints : [];
+      const clientCalls = Array.isArray(rec.clientApiCalls) ? rec.clientApiCalls : [];
+      for (const ep of serverEps) {
+        const epName =
+          typeof ep === "object" && ep !== null
+            ? String((ep as Record<string, unknown>).path ?? (ep as Record<string, unknown>).name ?? ep)
+            : String(ep);
+        for (const call of clientCalls) {
+          const callName =
+            typeof call === "object" && call !== null
+              ? String((call as Record<string, unknown>).path ?? (call as Record<string, unknown>).name ?? call)
+              : String(call);
+          links.push({
+            source: `server:${epName}`,
+            target: `client:${callName}`,
+            label: `${epName} ↔ ${callName}`,
+            domain,
+          });
+        }
+      }
+      if (serverEps.length === 0 && clientCalls.length === 0) {
+        links.push({ source: domain, target: domain, label: domain, domain });
+      }
+    } else {
+      links.push({
+        source: String(rec.source ?? rec.domain ?? ""),
+        target: String(rec.target ?? ""),
+        label: String(rec.label ?? ""),
+        domain: String(rec.domain ?? rec.facet ?? ""),
+      });
+    }
+  }
+  return links;
 }
 
 function toOverview(data: Record<string, unknown>): BusinessOverview {
@@ -224,6 +259,7 @@ export const useBusinessStore = create<BusinessState>()((set) => ({
       };
       set((s) => ({
         selectedDomain: domain,
+        selectedDomainId: domain.id,
         domainDetail: { ...s.domainDetail, [domain.id]: detail },
         isLoading: false,
       }));

@@ -63,6 +63,8 @@ mkdir -p "$PROJECT_ROOT/.understand-anything/wiki/domains"
 **Files to generate:**
 
 1. **`overview.json`** — System overview:
+
+**Single-facet projects** (backend-only or mobile-only):
 ```json
 {
   "name": "<project/system name>",
@@ -74,6 +76,38 @@ mkdir -p "$PROJECT_ROOT/.understand-anything/wiki/domains"
   "techStack": ["Java", "Spring Boot", "MOA RPC", "MySQL", "Kafka"]
 }
 ```
+
+**Multi-facet projects** (server + mobile, etc.) — use `facets[]` with `services` as **object arrays** (NOT strings):
+```json
+{
+  "name": "<project name>",
+  "description": "<what this system does>",
+  "facets": [
+    {
+      "name": "server",
+      "label": "<display label, e.g. 后端微服务>",
+      "services": [
+        { "name": "svc-a", "description": "<from facet overview>", "domains": ["domain-1", "domain-2"] }
+      ],
+      "description": "<facet-level description>"
+    },
+    {
+      "name": "mobile",
+      "label": "<display label, e.g. 移动客户端>",
+      "services": [
+        { "name": "app-a", "description": "<from facet overview>", "domains": ["domain-3"] }
+      ],
+      "description": "<facet-level description>"
+    }
+  ],
+  "techStack": ["Java", "Kotlin", "Flutter"]
+}
+```
+
+> **CRITICAL — `facets[].services[]` must be object arrays**, not string arrays.
+> Each service entry MUST have `{ "name": "...", "description": "...", "domains": [...] }`.
+> String-only entries like `"svc-name"` will cause the dashboard to render empty service tables.
+> When generating multi-facet overview, merge service details from each facet's own `overview.json`.
 
 2. **`architecture.json`** — Cross-service architecture:
 ```json

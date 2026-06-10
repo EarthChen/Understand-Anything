@@ -1,70 +1,27 @@
-import path from "path"
-import fs from "fs"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
-import { graphFileCandidates, readJsonFile } from "../utils"
+import { tokenize } from "./search"
+import { readJsonFile } from "../utils"
+import {
+  resolveServiceDataPath,
+  validateServiceNameRequired,
+  isApiResponse,
+} from "../service-resolver"
 import type {
   KnowledgeGraph,
   GraphNode,
   GraphEdge,
   TourStep,
-  SystemGraph,
 } from "@understand-anything/core"
 
 type GraphKind = "kg" | "domain"
 type NeighborDirection = "inbound" | "outbound" | "both"
 
-let cachedSystemGraph: SystemGraph | null = null
-let systemGraphMtime = 0
-
-function resolveServiceBasePath(serviceName: string): string | null {
-  const sgCandidates = graphFileCandidates("system-graph.json")
-  for (const candidate of sgCandidates) {
-    if (!fs.existsSync(candidate)) continue
-    try {
-      const mtime = fs.statSync(candidate).mtimeMs
-      if (!cachedSystemGraph || mtime !== systemGraphMtime) {
-        cachedSystemGraph = JSON.parse(fs.readFileSync(candidate, "utf-8")) as SystemGraph
-        systemGraphMtime = mtime
-      }
-      const entry = cachedSystemGraph.serviceIndex?.[serviceName]
-      if (entry?.basePath) return entry.basePath
-    } catch {
-      // fall through
-    }
-    break
-  }
-  return null
-}
-
 function graphFileName(kind: GraphKind): string {
   return kind === "kg" ? "knowledge-graph.json" : "domain-graph.json"
 }
 
-function resolveServiceGraphPath(serviceName: string, kind: GraphKind): string | null {
-  const fileName = graphFileName(kind)
-  const graphDir = process.env.GRAPH_DIR
-  const candidates: string[] = []
-
-  const resolvedBasePath = resolveServiceBasePath(serviceName)
-  if (resolvedBasePath) {
-    if (graphDir) candidates.push(path.resolve(graphDir, resolvedBasePath, ".understand-anything", fileName))
-    candidates.push(path.resolve(process.cwd(), resolvedBasePath, ".understand-anything", fileName))
-  }
-
-  if (!serviceName.includes("/")) {
-    if (graphDir) candidates.push(path.resolve(graphDir, serviceName, ".understand-anything", fileName))
-    candidates.push(path.resolve(process.cwd(), serviceName, ".understand-anything", fileName))
-    candidates.push(path.resolve(process.cwd(), "../../..", serviceName, ".understand-anything", fileName))
-  }
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate
-  }
-  return null
-}
-
 function loadServiceGraph(serviceName: string, kind: GraphKind): KnowledgeGraph | ApiResponse {
-  const graphPath = resolveServiceGraphPath(serviceName, kind)
+  const graphPath = resolveServiceDataPath(serviceName, graphFileName(kind))
   if (!graphPath) {
     return {
       statusCode: 404,
@@ -78,14 +35,6 @@ function loadServiceGraph(serviceName: string, kind: GraphKind): KnowledgeGraph 
   return graph
 }
 
-function validateServiceName(serviceName: string | null): ApiResponse | null {
-  if (!serviceName) return { statusCode: 400, body: { error: "service parameter required" } }
-  if (serviceName.includes("\\") || serviceName.includes("..")) {
-    return { statusCode: 400, body: { error: "invalid service name" } }
-  }
-  return null
-}
-
 function parseGraphKind(graph: string | null): GraphKind | ApiResponse {
   if (!graph) return { statusCode: 400, body: { error: "graph parameter required" } }
   if (graph !== "kg" && graph !== "domain") {
@@ -94,18 +43,10 @@ function parseGraphKind(graph: string | null): GraphKind | ApiResponse {
   return graph
 }
 
-function isApiResponse(value: unknown): value is ApiResponse {
-  return typeof value === "object" && value !== null && "statusCode" in value && "body" in value
-}
-
 function findNodeByIdOrName(graph: KnowledgeGraph, nodeRef: string): GraphNode | null {
   const byId = graph.nodes.find((n) => n.id === nodeRef)
   if (byId) return byId
   return graph.nodes.find((n) => n.name === nodeRef) ?? null
-}
-
-function tokenize(s: string): string[] {
-  return s.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_\-./]/g, " ").toLowerCase().split(/\s+/).filter(Boolean)
 }
 
 function fuzzyMatchNodes(graph: KnowledgeGraph, query: string, limit = 10): GraphNode[] {
@@ -220,7 +161,7 @@ function traverseNeighbors(
 }
 
 function handleNeighbors(searchParams: URLSearchParams): ApiResponse {
-  const serviceErr = validateServiceName(searchParams.get("service"))
+  const serviceErr = validateServiceNameRequired(searchParams.get("service"))
   if (serviceErr) return serviceErr
 
   const graphKind = parseGraphKind(searchParams.get("graph"))
@@ -242,7 +183,7 @@ function handleNeighbors(searchParams: URLSearchParams): ApiResponse {
   const center = findNodeByIdOrName(loaded, nodeRef)
   if (!center) {
     const suggestions = fuzzyMatchNodes(loaded, nodeRef)
-    return { statusCode: 404, body: { error: "node not found", query: nodeRef, suggestions: suggestions.map((n) => ({ id: n.id, name: n.name, type: n.type })) } }
+    return { statusCode: 404, body: { error: "node not found", code: "NODE_NOT_FOUND", query: nodeRef, suggestions: suggestions.map((n) => ({ id: n.id, name: n.name, type: n.type })) } }
   }
 
   const edgeType = searchParams.get("edgeType") ?? undefined
@@ -259,7 +200,7 @@ function handleNeighbors(searchParams: URLSearchParams): ApiResponse {
 }
 
 function handleEdges(searchParams: URLSearchParams): ApiResponse {
-  const serviceErr = validateServiceName(searchParams.get("service"))
+  const serviceErr = validateServiceNameRequired(searchParams.get("service"))
   if (serviceErr) return serviceErr
 
   const graphKind = parseGraphKind(searchParams.get("graph"))
@@ -332,7 +273,7 @@ function handleEdges(searchParams: URLSearchParams): ApiResponse {
 }
 
 function handleLayers(searchParams: URLSearchParams): ApiResponse {
-  const serviceErr = validateServiceName(searchParams.get("service"))
+  const serviceErr = validateServiceNameRequired(searchParams.get("service"))
   if (serviceErr) return serviceErr
 
   const serviceName = searchParams.get("service")!
@@ -350,7 +291,7 @@ function handleLayers(searchParams: URLSearchParams): ApiResponse {
 }
 
 function handleTour(searchParams: URLSearchParams): ApiResponse {
-  const serviceErr = validateServiceName(searchParams.get("service"))
+  const serviceErr = validateServiceNameRequired(searchParams.get("service"))
   if (serviceErr) return serviceErr
 
   const serviceName = searchParams.get("service")!

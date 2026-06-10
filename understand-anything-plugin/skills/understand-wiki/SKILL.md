@@ -85,6 +85,13 @@ Resolve execution mode, plugin root, language/RPC config, and service list.
 
 After wiki-worker writes content to `intermediate/wiki/`, run the deterministic pipeline to validate, index, and assemble the final wiki.
 
+**CRITICAL — Pipeline has 5 sequential scripts. Do NOT skip any:**
+1. `extract-endpoints.py` — endpoint extraction (optional output, but MUST run)
+2. `enrich-endpoint-descriptions.py` — LLM description enrichment (conditional on Script 0 success)
+3. `validate-wiki-schema.mjs` — schema validation + auto-fix (MUST run)
+4. `build-wiki-index.py` — generates `index.json` (MUST run)
+5. `assemble-wiki.py` — final assembly (MUST run)
+
 **Checkpoint:** After successful assembly, write `$PROJECT_ROOT/.understand-anything/tmp/ua-wiki-${WIKI_SESSION_ID}-checkpoint-phase2.json` with `{"_checkpoint": {"status": "complete", "phase": 2}}`. On re-run (non-`--full`), if this checkpoint exists and is valid, skip Phase 2 and proceed directly to the Quality Gate.
 
 **Detailed implementation:** See [Phase 2 — Assembly Pipeline](docs/wiki-phase2-assembly.md)
@@ -98,6 +105,13 @@ Structural validation (always) and optional `wiki-reviewer` when `--review` is s
 ### Phase 3 — Cross-Service + Parent Wiki
 
 Identify cross-service relationships, LLM review/organize flows, generate parent `overview.json`, `architecture.json`, and cross-domain pages.
+
+**CRITICAL — Phase 3 has 5 steps. Do NOT skip the LLM layer:**
+1. Collect integrated services (scan for `wiki/meta.json`)
+2. `cross-service-matcher.py` — deterministic RPC/Event/DB matching (Layer 1)
+3. **LLM Review + Supplement + Organize** — verify matches, discover missed relationships, organize into business flows (Layer 2, **always execute**)
+4. **Generate Parent Wiki** — `overview.json`, `architecture.json`, `domains/<cross-domain>.json` (**always generate**)
+5. Repo-type specific: `build-client-graph.py` (mobile) or `build-system-graph.py` (backend)
 
 **Incremental mode:** Before running the cross-service LLM analysis, compute content hashes (SHA-256) of each service's `wiki/meta.json`. Compare against the previous run's hashes stored in `$PROJECT_ROOT/.understand-anything/wiki/service-hashes.json`. If all service hashes match, skip Phase 3 entirely. If only some changed, pass the unchanged service wikis as read-only context and focus the LLM analysis on changed services only. After completion, update `service-hashes.json`.
 
@@ -115,12 +129,25 @@ Build parent-level `index.json` and `meta.json` for navigation and metadata.
 
 Report: `[Phase 5/5] Finalizing...`
 
-1. Clean up temp files:
+1. **MANDATORY — Completeness verification** (run BEFORE cleanup):
+```bash
+# Single-service mode:
+python3 "$SKILL_DIR/verify-wiki-completeness.py" "$SERVICE_ROOT" \
+  --mode=single --repo-type="$REPO_TYPE"
+
+# Batch mode:
+python3 "$SKILL_DIR/verify-wiki-completeness.py" "$PROJECT_ROOT" \
+  --mode=batch --repo-type="$REPO_TYPE" --parent-root="$PROJECT_ROOT"
+```
+
+If the verifier reports **ERROR**, do NOT proceed to cleanup. Fix the missing outputs by re-running the corresponding Phase/Script, then re-verify. Only **WARN** results are acceptable to continue.
+
+2. Clean up temp files:
 ```bash
 rm -rf "$PROJECT_ROOT/.understand-anything/tmp/ua-wiki-${WIKI_SESSION_ID}-"*
 ```
 
-2. Print final summary:
+3. Print final summary:
 ```
 ╔══════════════════════════════════════════════════╗
 ║              /understand-wiki Complete            ║
@@ -137,7 +164,7 @@ rm -rf "$PROJECT_ROOT/.understand-anything/tmp/ua-wiki-${WIKI_SESSION_ID}-"*
 ╚══════════════════════════════════════════════════╝
 ```
 
-3. If `--review` was used, include reviewer results:
+4. If `--review` was used, include reviewer results:
 ```
 Review: <pass|warn|fail> (<N issues, M warnings>)
 ```

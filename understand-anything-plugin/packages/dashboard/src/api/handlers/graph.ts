@@ -3,7 +3,7 @@ import fs from "fs"
 import { execSync } from "child_process"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
 import { graphFileCandidates, projectRootFromGraphFile, readJsonFile, resolveProjectRoot } from "../utils"
-import type { SystemGraph } from "@understand-anything/core"
+import { resolveServiceBasePath } from "../service-resolver"
 
 const STATIC_GRAPH_PATHS = new Set([
   "/knowledge-graph.json",
@@ -39,9 +39,9 @@ export async function handleGraphRequest(
   if (pathname === "/api/graph") {
     const serviceName = searchParams.get("service")
     const fileName = searchParams.get("file") || "knowledge-graph.json"
-    if (!serviceName) return { statusCode: 400, body: { error: "service parameter required" } }
+    if (!serviceName) return { statusCode: 400, body: { error: "service parameter required", code: "SERVICE_REQUIRED" } }
     if (serviceName.includes("\\") || serviceName.includes("..")) {
-      return { statusCode: 400, body: { error: "invalid service name" } }
+      return { statusCode: 400, body: { error: "invalid service name", code: "INVALID_SERVICE_NAME" } }
     }
     const allowedFiles = ["knowledge-graph.json", "domain-graph.json", "meta.json", "config.json"]
     if (!allowedFiles.includes(fileName)) {
@@ -75,7 +75,7 @@ export async function handleGraphRequest(
     return { statusCode: 404, body: { error: `${fileName} not found for service ${serviceName}` } }
   }
 
-  if (pathname === "/api/meta") {
+  if (pathname === "/api/layers/freshness" || pathname === "/api/meta") {
     return buildMetaResponse()
   }
 
@@ -199,27 +199,4 @@ function buildMetaResponse(): ApiResponse {
       freshness: { currentCommit, stale },
     },
   }
-}
-
-let cachedSystemGraph: SystemGraph | null = null
-let systemGraphMtime = 0
-
-function resolveServiceBasePath(serviceName: string): string | null {
-  const sgCandidates = graphFileCandidates("system-graph.json")
-  for (const candidate of sgCandidates) {
-    if (!fs.existsSync(candidate)) continue
-    try {
-      const mtime = fs.statSync(candidate).mtimeMs
-      if (!cachedSystemGraph || mtime !== systemGraphMtime) {
-        cachedSystemGraph = JSON.parse(fs.readFileSync(candidate, "utf-8")) as SystemGraph
-        systemGraphMtime = mtime
-      }
-      const entry = cachedSystemGraph.serviceIndex?.[serviceName]
-      if (entry?.basePath) return entry.basePath
-    } catch {
-      // fall through
-    }
-    break
-  }
-  return null
 }

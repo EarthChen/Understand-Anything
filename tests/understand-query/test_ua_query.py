@@ -57,9 +57,8 @@ class TestOutputFormatting:
 
 class TestArgParsing:
     def test_parses_global_flags(self):
-        args = ua_query.parse_args(["--server", "http://x:9", "--token", "tok", "kg", "--service", "s"])
+        args = ua_query.parse_args(["--server", "http://x:9", "kg", "--service", "s"])
         assert args.server == "http://x:9"
-        assert args.token == "tok"
         assert args.command == "kg"
 
 
@@ -69,7 +68,7 @@ class TestUrlEncoding:
     @patch.object(ua_query, "fetch_json")
     def test_wiki_service_with_slash_is_encoded(self, mock_fetch):
         mock_fetch.return_value = {}
-        ua_query.main(["--token", "t", "wiki", "--service", "a/b", "--type", "domain"])
+        ua_query.main(["wiki", "--service", "a/b", "--type", "domain"])
         url = mock_fetch.call_args[0][0]
         # "a/b" must be encoded as "a%2Fb" in the path, not left as raw "a/b"
         assert "a%2Fb" in url
@@ -80,6 +79,6 @@ class TestUrlEncoding:
     @patch.object(ua_query, "fetch_json")
     def test_wiki_domain_with_question_mark_is_encoded(self, mock_fetch):
         mock_fetch.return_value = {}
-        ua_query.main(["--token", "t", "wiki", "--service", "svc", "--domain", "what?"])
+        ua_query.main(["wiki", "--service", "svc", "--domain", "what?"])
         url = mock_fetch.call_args[0][0]
         assert "what%3F" in url

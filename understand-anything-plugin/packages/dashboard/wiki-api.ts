@@ -337,14 +337,44 @@ export class WikiDataService {
   }
 
   getServiceDomain(serviceName: string, domainId: string): WikiDomainPage | null {
-    const slug = sanitizeSlug(domainId);
-    if (!slug) return null;
-    const svcSlug = sanitizeSlug(serviceName);
-    if (!svcSlug) return null;
     const topo = this.discoverWikis();
-    const svc = topo.services.find((s) => s.name === svcSlug);
+
+    let svc = topo.services.find((s) => s.name === serviceName);
+    if (!svc) {
+      const svcSlug = sanitizeSlug(serviceName);
+      if (svcSlug) {
+        svc = topo.services.find((s) => s.name === svcSlug);
+      }
+    }
+    if (!svc) {
+      const query = serviceName.toLowerCase();
+      svc = topo.services.find((s) => s.name.toLowerCase().includes(query));
+    }
     if (!svc) return null;
-    return this.readJson<WikiDomainPage>(path.join(svc.wikiDir, "domains", `${slug}.json`));
+
+    const slug = sanitizeSlug(domainId);
+    if (slug) {
+      return this.readJson<WikiDomainPage>(path.join(svc.wikiDir, "domains", `${slug}.json`));
+    }
+
+    const index = this.readJson<WikiIndex>(path.join(svc.wikiDir, "index.json"));
+    if (!index?.entries) return null;
+
+    const domainQuery = domainId.toLowerCase();
+    for (const entry of index.entries) {
+      if (entry.type !== "domain") continue;
+
+      const entrySlug = sanitizeSlug(entry.id);
+      const nameMatch = entry.name.toLowerCase().includes(domainQuery);
+      const idMatch = entry.id === domainId;
+
+      if (nameMatch || idMatch) {
+        if (!entrySlug) continue;
+        return this.readJson<WikiDomainPage>(path.join(svc.wikiDir, "domains", `${entrySlug}.json`));
+      }
+    }
+
+    return null;
   }
 
   getEndpointDoc(serviceName: string): ServiceEndpointDoc | null {

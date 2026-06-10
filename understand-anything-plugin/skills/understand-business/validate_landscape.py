@@ -67,6 +67,12 @@ def validate_landscape(project_root_str: str) -> list[str]:
     domains_dir = bl_dir / 'domains'
     if domains_dir.exists():
         for f in domains_dir.glob('*.json'):
+            if not f.stem.startswith('domain-'):
+                errors.append(f'domains/{f.name}: filename must start with "domain-" prefix')
+            if not f.name.isascii():
+                errors.append(f'domains/{f.name}: filename must be ASCII kebab-case (no CJK characters)')
+            if '（' in f.name or '）' in f.name:
+                errors.append(f'domains/{f.name}: filename must not contain full-width parentheses')
             try:
                 doc = json.loads(f.read_text())
                 doc_errors = validate_domain_doc(doc)

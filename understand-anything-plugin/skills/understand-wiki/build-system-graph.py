@@ -57,13 +57,43 @@ def _apply_system_metadata(
     return graph
 
 
+def _discover_from_facets(
+    root: Path,
+    system_config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Discover services from system.json facets (supports nested layouts like backend/svc1)."""
+    services: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for facet in system_config.get("facets", []):
+        facet_path = facet.get("path", "")
+        facet_type = facet.get("type", "")
+        facet_dir = root / facet_path
+        if not facet_dir.is_dir():
+            continue
+        for sub in facet.get("subPaths", []):
+            svc_dir = facet_dir / sub
+            kg_path = svc_dir / ".understand-anything" / "knowledge-graph.json"
+            if kg_path.is_file() and sub not in seen:
+                seen.add(sub)
+                services.append({
+                    "name": sub,
+                    "path": str(svc_dir),
+                    "kg_path": str(kg_path),
+                    "facet": facet_type,
+                    "basePath": f"{facet_path}/{sub}",
+                })
+    return services
+
+
 def discover_services(
     project_root: str,
     exclude: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Discover child services that have a knowledge graph.
 
-    Returns list of dicts: {name, path, kg_path}
+    Returns list of dicts: {name, path, kg_path, facet?, basePath?}
+    Supports both flat layout (services as direct children) and faceted layout
+    (services nested under facet directories defined in system.json).
     """
     root = Path(project_root)
     exclude_set = set(exclude or [])
@@ -78,6 +108,13 @@ def discover_services(
             pass
 
     system_config = _load_system_config(root)
+
+    # Faceted layout: discover from system.json facets first
+    if system_config and system_config.get("facets"):
+        facet_services = _discover_from_facets(root, system_config)
+        if facet_services:
+            return facet_services
+
     if system_config:
         discovery = system_config.get("discovery", {})
         for pattern in discovery.get("exclude", []):
@@ -122,9 +159,12 @@ def extract_service_info(service_name: str, kg: dict[str, Any]) -> dict[str, Any
     rpc_consumes = [e for e in edges if e.get("type") == "consumes_rpc"]
     file_count = sum(1 for n in nodes if n.get("type") in FILE_NODE_TYPES)
 
+    project_name = project.get("description") or project.get("name") or service_name
+    if not project_name or project_name == "Unknown Project":
+        project_name = service_name
     return {
         "name": service_name,
-        "project_name": project.get("description", service_name),
+        "project_name": project_name,
         "languages": project.get("languages", []),
         "frameworks": project.get("frameworks", []),
         "stats": {
@@ -224,6 +264,9 @@ def build_system_graph(
             "serviceIndex": {},
         }, system_config)
 
+    # Build svc_name → original service dict lookup for facet/basePath info
+    svc_meta: dict[str, dict[str, Any]] = {svc["name"]: svc for svc in services}
+
     service_infos: list[dict[str, Any]] = []
     for svc in services:
         try:
@@ -239,9 +282,27 @@ def build_system_graph(
     total_nodes = 0
     total_edges = 0
 
+    # Generate facet group nodes from system.json
+    facet_ids: dict[str, str] = {}  # facet_type → facet node id
+    if system_config:
+        for facet in system_config.get("facets", []):
+            facet_type = facet.get("type", "")
+            facet_id = f"facet:{facet_type}"
+            facet_ids[facet_type] = facet_id
+            nodes.append({
+                "id": facet_id,
+                "type": "facet",
+                "name": facet.get("name", facet_type),
+                "summary": "",
+                "facetType": facet_type if facet_type in ("server", "mobile", "frontend") else "server",
+                "path": facet.get("path", ""),
+            })
+
     for info in service_infos:
         svc_id = f"microservice:{info['name']}"
-        svc_path = str(Path(project_root) / info["name"])
+        meta = svc_meta.get(info["name"], {})
+        base_path = meta.get("basePath", info["name"])
+        svc_path = str(Path(project_root) / base_path)
         ua_path = os.path.join(svc_path, ".understand-anything")
 
         nodes.append({
@@ -252,10 +313,20 @@ def build_system_graph(
             "languages": info["languages"],
             "frameworks": info["frameworks"],
             "stats": info["stats"],
-            "kgPath": f"{info['name']}/.understand-anything/knowledge-graph.json",
-            "wikiPath": f"{info['name']}/.understand-anything/wiki/",
-            "domainPath": f"{info['name']}/.understand-anything/domain-graph.json",
+            "kgPath": f"{base_path}/.understand-anything/knowledge-graph.json",
+            "wikiPath": f"{base_path}/.understand-anything/wiki/",
+            "domainPath": f"{base_path}/.understand-anything/domain-graph.json",
         })
+
+        # Add facet → service contains edge
+        svc_facet = meta.get("facet", "")
+        if svc_facet and svc_facet in facet_ids:
+            edges.append({
+                "source": facet_ids[svc_facet],
+                "target": svc_id,
+                "type": "contains",
+                "weight": 1.0,
+            })
 
         for ep in info["endpoints"][:5]:
             ep_id = f"endpoint:{info['name']}:{ep.get('name', ep['id'])}"
@@ -276,12 +347,17 @@ def build_system_graph(
         total_nodes += info["stats"]["nodes"]
         total_edges += info["stats"]["edges"]
 
-        service_index[info["name"]] = {
+        idx_entry: dict[str, Any] = {
             "hasKg": True,
             "hasWiki": os.path.exists(os.path.join(ua_path, "wiki", "meta.json")),
             "hasDomain": os.path.exists(os.path.join(ua_path, "domain-graph.json")),
             "kgCommit": info["kg_commit"],
+            "basePath": base_path,
         }
+        svc_facet_val = meta.get("facet")
+        if svc_facet_val:
+            idx_entry["facet"] = svc_facet_val
+        service_index[info["name"]] = idx_entry
 
     edges.extend(_match_rpc_edges(service_infos))
 

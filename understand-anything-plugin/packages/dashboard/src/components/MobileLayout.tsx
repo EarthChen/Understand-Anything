@@ -44,6 +44,7 @@ export default function MobileLayout({
   const closeCodeViewer = useDashboardStore((s) => s.closeCodeViewer);
   const pathFinderOpen = useDashboardStore((s) => s.pathFinderOpen);
   const togglePathFinder = useDashboardStore((s) => s.togglePathFinder);
+  const freshness = useDashboardStore((s) => s.freshness);
   const { t } = useI18n();
 
   const [activeTab, setActiveTab] = useState<MobileTab>("graph");
@@ -128,6 +129,12 @@ export default function MobileLayout({
 
       {/* Search (collapsible) */}
       {searchOpen && <SearchBar />}
+
+      {freshness?.stale?.length ? (
+        <div className="bg-yellow-500/10 text-yellow-600 text-xs px-4 py-2 border-b border-yellow-500/20">
+          ⚠ Stale layers detected: {freshness.stale.join(", ")}. Consider re-running /understand to update.
+        </div>
+      ) : null}
 
       {/* Validation warnings */}
       {allIssues.length > 0 && !loadError && <WarningBanner issues={allIssues} />}

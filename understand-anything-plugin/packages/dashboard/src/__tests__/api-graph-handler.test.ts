@@ -80,7 +80,7 @@ describe("handleGraphRequest", () => {
     expect(res?.body).toEqual({ autoUpdate: false, outputLanguage: "en" })
   })
 
-  it("/api/meta returns 200 with proper shape", async () => {
+  it("/api/layers/freshness returns 200 with proper shape", async () => {
     writeJson(path.join(dir, ".understand-anything", "meta.json"), {
       lastAnalyzedAt: "2026-01-01T00:00:00Z",
       gitCommitHash: "abc123",
@@ -111,7 +111,7 @@ describe("handleGraphRequest", () => {
     })
 
     const res = await handleGraphRequest(
-      { pathname: "/api/meta", searchParams: new URLSearchParams() },
+      { pathname: "/api/layers/freshness", searchParams: new URLSearchParams() },
       ctx,
     )
     expect(res?.statusCode).toBe(200)
@@ -144,9 +144,19 @@ describe("handleGraphRequest", () => {
     expect(Array.isArray(body.freshness.stale)).toBe(true)
   })
 
-  it("/api/meta does not crash in non-git environment", async () => {
+  it("/api/meta remains supported for backward compatibility", async () => {
     const res = await handleGraphRequest(
       { pathname: "/api/meta", searchParams: new URLSearchParams() },
+      ctx,
+    )
+    expect(res?.statusCode).toBe(200)
+    const body = res?.body as { freshness: { currentCommit: string; stale: string[] } }
+    expect(body.freshness).toBeDefined()
+  })
+
+  it("/api/layers/freshness does not crash in non-git environment", async () => {
+    const res = await handleGraphRequest(
+      { pathname: "/api/layers/freshness", searchParams: new URLSearchParams() },
       ctx,
     )
     expect(res?.statusCode).toBe(200)

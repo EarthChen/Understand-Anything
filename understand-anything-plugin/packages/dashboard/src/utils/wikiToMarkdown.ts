@@ -391,23 +391,33 @@ export function overviewToMarkdown(data: WikiOverview, labels: WikiLabels = defa
     lines.push("");
   }
 
+  // Normalize a service entry: handles both string ("svc-name") and object ({ name, description, domains }) formats
+  const normalizeSvc = (svc: unknown): { name: string; description: string; domains: string[] } => {
+    if (typeof svc === "string") return { name: svc, description: "", domains: [] };
+    const obj = svc as Record<string, unknown> | null;
+    return {
+      name: (obj?.name as string) ?? "",
+      description: (obj?.description as string) ?? "",
+      domains: Array.isArray(obj?.domains) ? (obj.domains as string[]) : [],
+    };
+  };
+
   // Handle both flat services[] and facets[].services[] structures
-  const facets = Array.isArray((data as Record<string, unknown>).facets) ? (data as Record<string, unknown>).facets as Array<{ type?: string; name: string; path?: string; services?: Array<{ name: string; description?: string; domains?: string[] }>; techStack?: string[] }> : null;
+  const facets = Array.isArray((data as Record<string, unknown>).facets) ? (data as Record<string, unknown>).facets as Array<{ type?: string; name: string; label?: string; path?: string; services?: unknown[]; techStack?: string[] }> : null;
   const services = Array.isArray(data?.services) ? data.services : [];
 
   if (facets && facets.length > 0) {
     for (const facet of facets) {
-      const icon = facet.type === "server" ? "🖥️" : facet.type === "mobile" ? "📱" : "🌐";
-      lines.push(`## ${icon} ${facet.name}`);
+      const icon = facet.type === "server" || facet.name === "server" ? "🖥️" : facet.type === "mobile" || facet.name === "mobile" ? "📱" : "🌐";
+      lines.push(`## ${icon} ${facet.label ?? facet.name}`);
       lines.push("");
-      const fSvcs = Array.isArray(facet.services) ? facet.services : [];
+      const fSvcs = Array.isArray(facet.services) ? facet.services.map(normalizeSvc) : [];
       if (fSvcs.length > 0) {
         lines.push("| Service | Description | Domains |");
         lines.push("|---|---|---|");
         for (const svc of fSvcs) {
-          const domains = Array.isArray(svc?.domains) ? svc.domains.join(", ") : "";
-          const name = svc?.name ? svcLink(svc.name) : "";
-          lines.push(`| ${name} | ${svc?.description ?? ""} | ${domains} |`);
+          const name = svc.name ? svcLink(svc.name) : "";
+          lines.push(`| ${name} | ${svc.description} | ${svc.domains.join(", ")} |`);
         }
         lines.push("");
       }
@@ -422,10 +432,10 @@ export function overviewToMarkdown(data: WikiOverview, labels: WikiLabels = defa
     lines.push("");
     lines.push("| Service | Description | Domains |");
     lines.push("|---|---|---|");
-    for (const svc of services) {
-      const domains = Array.isArray(svc?.domains) ? svc.domains.join(", ") : "";
-      const name = svc?.name ? svcLink(svc.name) : "";
-      lines.push(`| ${name} | ${svc?.description ?? ""} | ${domains} |`);
+    for (const raw of services) {
+      const svc = normalizeSvc(raw);
+      const name = svc.name ? svcLink(svc.name) : "";
+      lines.push(`| ${name} | ${svc.description} | ${svc.domains.join(", ")} |`);
     }
     lines.push("");
   }

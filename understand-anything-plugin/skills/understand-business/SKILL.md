@@ -179,6 +179,17 @@ Read output files:
 - `intermediate/cross-facet-links.json` — cross-facet API endpoint mappings
 - `domain-mapping.json` — updated at project root for future runs
 
+#### Domain File Naming Convention (MANDATORY)
+
+All domain files under `business-landscape/domains/` MUST follow this format:
+- **Prefix**: Always `domain-` (e.g. `domain-user-profile.json`)
+- **Slug**: English kebab-case only (e.g. `domain-user-profile.json`, NOT `domain-用户资料.json`)
+- **`--language` controls content only**: The `--language` flag determines the language of JSON content (name, summary, steps), NOT filenames
+- **No CJK in filenames**: Filenames must be ASCII kebab-case for cross-platform compatibility
+- **No duplicates**: Each domain ID maps to exactly one file
+
+`validate_landscape.py` enforces these rules in Phase 5.
+
 Report: `Phase 3 complete. <N> domains mapped (<coverage>% coverage), <M> unmapped.`
 
 ### Phase 4 — Cross-Facet Interaction Document Generation
@@ -187,7 +198,7 @@ Report: `[Phase 4/5] Generating interaction documents...`
 
 For each domain in `intermediate/domains.json.domains[]`:
 
-1. Check checkpoint: `intermediate/domain-{id}.json`
+1. Check checkpoint: `intermediate/domain-{name}.json` (use domain `name` field, not raw `id`; apply the naming convention from Phase 3)
    - If exists and `_checkpoint.status == "complete"` → skip
    - If exists and `_checkpoint.status == "degraded"` or `"failed"` → re-generate
 

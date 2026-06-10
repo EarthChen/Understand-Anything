@@ -112,7 +112,6 @@ function BusinessEmptyState() {
 
 function BusinessGraphViewInner() {
   const domains = useBusinessStore((s) => s.domains)
-  const links = useBusinessStore((s) => s.crossFacetLinks)
   const selectedDomainId = useBusinessStore((s) => s.selectedDomainId)
   const selectDomain = useBusinessStore((s) => s.selectDomain)
   const fetchCrossFacetLinks = useBusinessStore((s) => s.fetchCrossFacetLinks)
@@ -161,26 +160,18 @@ function BusinessGraphViewInner() {
         summary: d.summary,
         facets: Object.keys(d.facets),
         domainId: d.id,
+        slug: d.slug,
       },
     }))
 
-    const domainIdSet = new Set(filteredDomains.map((d) => d.id))
-    const rfEdges: Edge[] = links
-      .filter((l) => domainIdSet.has(l.source) || domainIdSet.has(`domain:${l.source}`))
-      .map((l, i) => ({
-        id: `cfe-${i}`,
-        source: l.source.startsWith("domain:") ? l.source : `domain:${l.source}`,
-        target: l.target.startsWith("domain:") ? l.target : `domain:${l.target}`,
-        type: "cross-facet",
-        data: { apiPath: l.label, method: "HTTP" },
-      }))
-      .filter((e) => domainIdSet.has(e.source) && domainIdSet.has(e.target))
+    const rfEdges: Edge[] = []
 
     return { nodes: rfNodes, edges: rfEdges }
-  }, [filteredDomains, links])
+  }, [filteredDomains])
 
   const onNodeClick = useCallback((_e: React.MouseEvent, node: Node) => {
-    void selectDomain(slugFromId(node.id))
+    const slug = (node.data as { slug?: string })?.slug ?? slugFromId(node.id)
+    void selectDomain(slug)
   }, [selectDomain])
 
   return (

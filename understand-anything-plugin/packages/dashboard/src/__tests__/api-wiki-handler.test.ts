@@ -188,6 +188,51 @@ describe("wiki flow direct access", () => {
     )
     expect(res).toBeNull()
   })
+
+  it("returns domain page when domain segment is Chinese", async () => {
+    writeJson(path.join(dir, "ultron-relation/.understand-anything/wiki/meta.json"), {
+      gitCommitHash: "a", generatedAt: "t", version: "1", outputLanguage: "zh",
+    })
+    writeJson(path.join(dir, "ultron-relation/.understand-anything/wiki/index.json"), {
+      entries: [
+        {
+          id: "wiki:domain:closed-friend-relation",
+          name: "挚友关系管理",
+          type: "domain",
+          summary: "Closed friend relation management",
+        },
+      ],
+    })
+    writeJson(path.join(dir, "ultron-relation/.understand-anything/wiki/service.json"), {
+      name: "ultron-relation",
+      description: "Relation service",
+      techStack: [],
+      modules: [],
+      entryPoints: [],
+    })
+    writeJson(
+      path.join(dir, "ultron-relation/.understand-anything/wiki/domains/closed-friend-relation.json"),
+      {
+        id: "domain:closed-friend-relation",
+        name: "挚友关系管理",
+        summary: "Manages closed friend relationships",
+        entities: [],
+        flows: [],
+      },
+    )
+
+    const res = await handleWikiRequest(
+      {
+        pathname: `/api/wiki/service/ultron-relation/domain/${encodeURIComponent("挚友关系")}`,
+        searchParams: new URLSearchParams(),
+      },
+      ctx,
+    )
+    expect(res).not.toBeNull()
+    expect(res!.statusCode).toBe(200)
+    expect((res!.body as { id: string; name: string }).id).toBe("domain:closed-friend-relation")
+    expect((res!.body as { name: string }).name).toBe("挚友关系管理")
+  })
 })
 
 describe("source handler", () => {

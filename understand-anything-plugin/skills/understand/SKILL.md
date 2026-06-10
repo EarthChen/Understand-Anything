@@ -201,10 +201,10 @@ Set up and verify the `.understandignore` file before scanning.
      const fs = require('fs');
      const path = require('path');
      const root = process.cwd();
-     const defaults = ['node_modules/','node_modules','.git/','vendor/','venv/','.venv/','__pycache__/','dist/','dist','build/','build','out/','coverage/','coverage','.next/','.cache/','.turbo/','target/','obj/','*.lock','package-lock.json','yarn.lock','pnpm-lock.yaml','*.png','*.jpg','*.jpeg','*.gif','*.svg','*.ico','*.woff','*.woff2','*.ttf','*.eot','*.mp3','*.mp4','*.pdf','*.zip','*.tar','*.gz','*.min.js','*.min.css','*.map','*.generated.*','.idea/','.vscode/','LICENSE','.gitignore','.editorconfig','.prettierrc','.eslintrc*','*.log'];
+     const defaults = ['node_modules/','node_modules','.git/','vendor/','venv/','.venv/','__pycache__/','dist/','dist','build/','build','out/','coverage/','coverage','.next/','.cache/','.turbo/','target/','obj/','*.lock','package-lock.json','yarn.lock','pnpm-lock.yaml','*.png','*.jpg','*.jpeg','*.gif','*.svg','*.ico','*.woff','*.woff2','*.ttf','*.eot','*.mp3','*.mp4','*.pdf','*.zip','*.tar','*.gz','*.min.js','*.min.css','*.map','*.generated.*','.idea/','.vscode/','.vs/','.fleet/','*.swp','*.swo','*~','.cursor/','.claude/','.copilot/','.github/copilot/','.aider*','.continue/','.codeium/','.tabnine/','.sourcegraph/','.understand-anything/','LICENSE','.gitignore','.editorconfig','.prettierrc','.eslintrc*','*.log'];
      const norm = p => p.replace(/\/+$/, '');
      const defaultSet = new Set(defaults.map(norm));
-     const header = '# .understandignore — patterns for files/dirs to exclude from analysis\n# Syntax: same as .gitignore (globs, # comments, ! negation, trailing / for dirs)\n# Lines below are suggestions — uncomment to activate.\n# Use ! prefix to force-include something excluded by defaults.\n#\n# Built-in defaults (always excluded unless negated):\n#   node_modules/, .git/, dist/, build/, obj/, *.lock, *.min.js, etc.\n#\n';
+     const header = '# .understandignore — patterns for files/dirs to exclude from analysis\n# Syntax: same as .gitignore (globs, # comments, ! negation, trailing / for dirs)\n# Lines below are suggestions — uncomment to activate.\n# Use ! prefix to force-include something excluded by defaults.\n#\n# Built-in defaults (always excluded unless negated):\n#   node_modules/, .git/, dist/, build/, obj/, .understand-anything/,\n#   .idea/, .vscode/, .vs/, .fleet/, .cursor/, .claude/, .copilot/,\n#   .continue/, .codeium/, .tabnine/, .sourcegraph/, .aider*,\n#   *.lock, *.min.js, *.swp, *.swo, *~, etc.\n#\n';
      let body = '';
      const gitignorePath = path.join(root, '.gitignore');
      if (fs.existsSync(gitignorePath)) {
@@ -717,7 +717,9 @@ All four fields (`id`, `name`, `description`, `nodeIds`) are required.
 >
 > Maintain the same layer names and IDs where possible. Only add/remove layers if the file structure has materially changed.
 
-**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-4-layers.json` with the normalized layers array and `_checkpoint: { status: "complete" }`. On resume (non-`--full` runs), if this checkpoint exists and is valid, skip Phase 4 and load layers from the checkpoint.
+**Non-empty guard:** After normalization, verify `layers.length > 0`. If the subagent produced zero layers (empty file, parse failure, or subagent timeout), **retry Phase 4 once**. If the retry also produces zero layers, halt with a clear error message: `"Phase 4 failed: no layers produced after retry. Cannot continue — dashboard requires at least 1 layer."` Do NOT proceed to Phase 5 with empty layers.
+
+**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-4-layers.json` with the normalized layers array and `_checkpoint: { status: "complete" }`. On resume (non-`--full` runs), if this checkpoint exists and is valid **and contains at least 1 layer**, skip Phase 4 and load layers from the checkpoint. If the checkpoint exists but contains zero layers, treat it as invalid and re-run Phase 4.
 
 ---
 
@@ -792,7 +794,9 @@ Each element of the final `tour` array MUST have this shape:
 
 Required fields: `order`, `title`, `description`, `nodeIds`. Preserve optional `languageLesson` when present.
 
-**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-5-tour.json` with the normalized tour array and `_checkpoint: { status: "complete" }`. On resume (non-`--full` runs), if this checkpoint exists and is valid, skip Phase 5 and load the tour from the checkpoint.
+**Non-empty guard:** After normalization, verify `tour.length > 0`. If the subagent produced zero tour steps, **retry Phase 5 once**. If the retry also produces zero steps, log a warning: `"Phase 5 warning: no tour steps produced. Dashboard tour feature will be unavailable."` — proceed to Phase 6 but mark the issue for the final report.
+
+**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-5-tour.json` with the normalized tour array and `_checkpoint: { status: "complete" }`. On resume (non-`--full` runs), if this checkpoint exists and is valid **and contains at least 1 tour step**, skip Phase 5 and load the tour from the checkpoint. If the checkpoint exists but contains zero steps, treat it as invalid and re-run Phase 5.
 
 ---
 
@@ -822,12 +826,16 @@ Assemble the full KnowledgeGraph JSON object:
 
 1. Before writing the assembled graph, validate that:
    - `layers` is an array of objects with these required fields: `id`, `name`, `description`, `nodeIds`
+   - `layers` is **NOT empty** — at least 1 layer MUST exist. If `layers` is empty (`[]`), this means Phase 4 failed or was skipped. **You MUST re-run Phase 4 before continuing.** Do NOT save a knowledge graph with zero layers — the dashboard's structural view requires layers to render and will show a blank canvas without them.
    - `tour` is an array of objects with these required fields: `order`, `title`, `description`, `nodeIds`
+   - `tour` is **NOT empty** — at least 1 tour step MUST exist. If `tour` is empty (`[]`), this means Phase 5 failed or was skipped. **You MUST re-run Phase 5 before continuing.** Do NOT save a knowledge graph with zero tour steps.
    - `tour[*].languageLesson` is allowed as an optional string field
    - Every `layers[*].nodeIds` entry exists in the merged node set
    - Every `tour[*].nodeIds` entry exists in the merged node set
 
-   If validation fails, automatically normalize and rewrite the graph into this shape before saving. If the graph still fails final validation after the normalization pass, save it with warnings but mark dashboard auto-launch as skipped.
+   If structural validation fails (missing fields, dangling refs), automatically normalize and rewrite the graph into this shape before saving. If the graph still fails final validation after the normalization pass, save it with warnings but mark dashboard auto-launch as skipped.
+
+   **CRITICAL:** If `layers` or `tour` is empty after Phase 4/5, this is a **blocking error**, not a warning. Re-run the missing phase(s) before proceeding to Phase 7.
 
 2. Write the assembled graph to `$PROJECT_ROOT/.understand-anything/intermediate/assembled-graph.json`.
 
@@ -899,11 +907,16 @@ Report to the user: `[Phase 7/7] Saving knowledge graph...`
 
 1. Write the final knowledge graph to `$PROJECT_ROOT/.understand-anything/knowledge-graph.json`.
 
-   **Include provenance in the `project` object:**
+   **Include ALL required `project` fields (must match `ProjectMetaSchema` from `@understand-anything/core`):**
    ```json
    {
      "project": {
        "name": "...",
+       "description": "...",
+       "languages": ["java", "kotlin", ...],
+       "frameworks": ["Spring Boot", ...],
+       "analyzedAt": "<ISO 8601 timestamp>",
+       "gitCommitHash": "<current commit hash>",
        "provenance": {
          "generationMode": "full",
          "completedStages": ["scan", "batch", "extract", "analyze", "merge", "validate"],
@@ -915,6 +928,7 @@ Report to the user: `[Phase 7/7] Saving knowledge graph...`
      }
    }
    ```
+   **CRITICAL**: `analyzedAt` and `gitCommitHash` must be present at BOTH the `project` top level AND inside `provenance`. The dashboard's `validateGraph()` will reject the KG with `"Missing or invalid project metadata"` if any of these top-level fields are missing: `name`, `description`, `languages`, `frameworks`, `analyzedAt`, `gitCommitHash`.
    - Use `generationMode: "incremental"` when running with `--changed-files` (incremental update).
    - Use `generationMode: "standalone"` when the graph was built without full extraction.
    - Set `degraded: true` only if Phase 6 checkpoint status was "degraded".
@@ -953,7 +967,15 @@ Report to the user: `[Phase 7/7] Saving knowledge graph...`
    }
    ```
 
-4. Clean up intermediate files, **preserving `scan-result.json`** so future incremental runs can skip Phase 1 SCAN (see issue #293):
+4. **MANDATORY — Schema validation** (run BEFORE cleanup):
+   ```bash
+   node <SKILL_DIR>/validate-artifact.mjs \
+     $PROJECT_ROOT/.understand-anything/knowledge-graph.json \
+     knowledge-graph:complete
+   ```
+   If validation fails, DO NOT proceed. Fix the missing fields and re-write `knowledge-graph.json`, then re-validate.
+
+5. Clean up intermediate files, **preserving `scan-result.json`** so future incremental runs can skip Phase 1 SCAN (see issue #293):
    ```bash
    # Preserve scan-result.json — Phase 1's deterministic file inventory.
    # Future incremental runs (Phase 2 compute-batches.mjs --changed-files=…)
@@ -966,7 +988,7 @@ Report to the user: `[Phase 7/7] Saving knowledge graph...`
    rm -rf $PROJECT_ROOT/.understand-anything/tmp
    ```
 
-5. Report a summary to the user containing:
+6. Report a summary to the user containing:
    - Project name and description
    - Files analyzed / total files (with breakdown by fileCategory: code, config, docs, infra, data, script, markup)
    - Nodes created (broken down by type: file, function, class, config, document, service, table, endpoint, pipeline, schema, resource)
@@ -976,8 +998,11 @@ Report to the user: `[Phase 7/7] Saving knowledge graph...`
    - Any warnings from the reviewer
    - Path to the output file: `$PROJECT_ROOT/.understand-anything/knowledge-graph.json`
 
-6. Only automatically launch the dashboard by invoking the `/understand-dashboard` skill if final graph validation passed after normalization/review fixes.
-   If final validation did not pass, report that the graph was saved with warnings and dashboard launch was skipped.
+7. Do NOT automatically launch the dashboard. Instead, report the manual launch command to the user:
+   ```
+   cd <PLUGIN_ROOT>/packages/dashboard && GRAPH_DIR=$PROJECT_ROOT npx vite --host 0.0.0.0
+   ```
+   Or instruct the user to run `/understand-dashboard $PROJECT_ROOT`.
 
 ---
 

@@ -98,6 +98,7 @@ describe("useBusinessStore", () => {
     expect(state.domains).toHaveLength(1);
     expect(state.domains[0].id).toBe("domain:order");
     expect(state.domains[0].slug).toBe("order");
+    expect(state.domains[0].facets).toEqual({ server: true, client: true });
     expect(state.available).toBe(true);
     expect(state.isLoading).toBe(false);
     expect(state.error).toBeNull();
@@ -137,6 +138,33 @@ describe("useBusinessStore", () => {
     expect(state.error).toBeTruthy();
     expect(state.isLoading).toBe(false);
     expect(state.domains).toEqual([]);
+  });
+
+  it("fetchCrossFacetLinks converts serverEndpoints/clientApiCalls schema to pairwise links", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        links: [
+          {
+            domain: "domain:order",
+            serverEndpoints: [{ path: "/api/orders" }],
+            clientApiCalls: [{ path: "/orders/create" }],
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await useBusinessStore.getState().fetchCrossFacetLinks();
+
+    const links = useBusinessStore.getState().crossFacetLinks;
+    expect(links).toHaveLength(1);
+    expect(links[0]).toEqual({
+      source: "server:/api/orders",
+      target: "client:/orders/create",
+      label: "/api/orders ↔ /orders/create",
+      domain: "domain:order",
+    });
   });
 
   it("search updates searchQuery and searchResults without token", async () => {

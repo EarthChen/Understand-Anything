@@ -91,7 +91,7 @@ Example for domain `domain:order-management` → write to `intermediate/flows-or
       "complexity": "simple|moderate|complex",
       "domainMeta": {
         "entryPoint": "<trigger, e.g. POST /api/orders>",
-        "entryType": "http|cli|event|cron|manual"
+        "entryType": "http|cli|event|cron|manual|api|service|internal|rpc|moa"
       },
       "steps": [
         {

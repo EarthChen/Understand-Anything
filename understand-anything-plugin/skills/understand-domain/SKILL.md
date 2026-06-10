@@ -212,7 +212,7 @@ This phase uses different strategies depending on Path:
    ```
 2. Verify one `domain-<name>.json` file exists in `intermediate/` for each domain in the discovery.
 
-#### Phase 4c: Flow Extraction (parallel, up to 3 concurrent)
+#### Phase 4c: Flow Extraction (parallel, up to 5 concurrent)
 
 1. Read the `domain-flow-extractor` agent prompt from `$PLUGIN_ROOT/agents/domain-flow-extractor.md`
 2. **Domain-level incremental detection:** For each domain in `domain-discovery.json`, compute a content fingerprint of the domain's KG subset (`intermediate/domain-<name>.json`). Store fingerprints in `$PROJECT_ROOT/.understand-anything/intermediate/domain-fingerprints.json`. Compare against the previous run's fingerprints (if file exists). Domains with unchanged fingerprints are eligible for skip.

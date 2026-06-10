@@ -65,6 +65,7 @@ def merge_domain_results(
         domain_id = domain_info["id"]
         nodes.append({
             "id": domain_id,
+            "kind": "domain",
             "type": "domain",
             "name": domain_info.get("name", ""),
             "summary": domain_info.get("summary", ""),
@@ -82,6 +83,7 @@ def merge_domain_results(
             flow_id = flow["id"]
             nodes.append({
                 "id": flow_id,
+                "kind": "flow",
                 "type": "flow",
                 "name": flow.get("name", ""),
                 "summary": flow.get("summary", ""),
@@ -102,6 +104,7 @@ def merge_domain_results(
             for i, step in enumerate(steps):
                 step_node: dict[str, Any] = {
                     "id": step["id"],
+                    "kind": "step",
                     "type": "step",
                     "name": step.get("name", ""),
                     "summary": step.get("summary", ""),

@@ -6,8 +6,15 @@ import {
   readJsonFile,
   resolveProjectRoot,
   businessLandscapeDir,
+  normalizeGraphPath,
 } from "../utils"
-import type { KnowledgeGraph, SystemGraph, WikiIndex } from "@understand-anything/core"
+import {
+  resolveServiceDataPath,
+  listServiceNames,
+  validateServiceName,
+  isApiResponse,
+} from "../service-resolver"
+import type { KnowledgeGraph, WikiIndex } from "@understand-anything/core"
 
 export interface UnifiedSearchResult {
   id: string
@@ -45,9 +52,19 @@ interface SearchIndexCache {
 
 const DOMAIN_NODE_TYPES = new Set(["flow", "step", "domain"])
 
-let cachedSystemGraph: SystemGraph | null = null
-let systemGraphMtime = 0
 let cachedSearchIndex: SearchIndexCache | null = null
+
+const TYPE_BOOST: Record<string, number> = {
+  class: 2,
+  function: 1.5,
+  interface: 2,
+  module: 1,
+  endpoint: 2,
+  service: 2.5,
+  file: 0.5,
+  flow: 1,
+  domain: 1,
+}
 
 export function tokenize(text: string): string[] {
   const tokens: string[] = []
@@ -97,60 +114,6 @@ function buildBm25Stats(items: SearchIndexItem[]): {
   return { tokenizedDocs, avgDl, df }
 }
 
-export function bm25Search(
-  items: SearchIndexItem[],
-  query: string,
-  limit = 50,
-  k1 = 1.5,
-  b = 0.75,
-): UnifiedSearchResult[] {
-  const queryTokens = tokenize(query)
-  if (queryTokens.length === 0 || items.length === 0) return []
-
-  const { tokenizedDocs, avgDl, df } = buildBm25Stats(items)
-  const N = items.length
-  const qLower = query.toLowerCase()
-  const scored: UnifiedSearchResult[] = []
-
-  for (let i = 0; i < N; i++) {
-    const doc = tokenizedDocs[i]
-    const dl = doc.length
-    const tf = new Map<string, number>()
-    for (const term of doc) {
-      tf.set(term, (tf.get(term) ?? 0) + 1)
-    }
-
-    let score = 0
-    for (const qt of queryTokens) {
-      const termFreq = tf.get(qt)
-      if (!termFreq) continue
-      const docFreq = df.get(qt) ?? 0
-      const idf = Math.log((N - docFreq + 0.5) / (docFreq + 0.5) + 1)
-      score += idf * (termFreq * (k1 + 1)) / (termFreq + k1 * (1 - b + b * dl / avgDl))
-    }
-
-    const nameLower = items[i].meta.name.toLowerCase()
-    if (nameLower === qLower) score += 15
-    else if (nameLower.includes(qLower)) score += 5
-
-    const nodeType = items[i].meta.type
-    const TYPE_BOOST: Record<string, number> = {
-      class: 2, function: 1.5, interface: 2, module: 1, endpoint: 2, service: 2.5,
-      file: 0.5, flow: 1, domain: 1,
-    }
-    score += TYPE_BOOST[nodeType] ?? 0
-
-    if (items[i].meta.filePath) score += 1.5
-    if (items[i].meta.lineRange) score += 1
-
-    if (score > 0) {
-      scored.push({ id: items[i].id, score, ...items[i].meta })
-    }
-  }
-
-  return scored.sort((a, b) => b.score - a.score).slice(0, limit)
-}
-
 function bm25SearchIndexed(
   state: SearchIndexState,
   query: string,
@@ -185,16 +148,11 @@ function bm25SearchIndexed(
       score += idf * (termFreq * (k1 + 1)) / (termFreq + k1 * (1 - b + b * dl / avgDl))
     }
 
-    const nameLower = items[i].meta.name.toLowerCase()
+    const nameLower = (items[i].meta.name ?? "").toLowerCase()
     if (nameLower === qLower) score += 15
     else if (nameLower.includes(qLower)) score += 5
 
-    // Structural signals (language-agnostic)
     const nodeType = items[i].meta.type
-    const TYPE_BOOST: Record<string, number> = {
-      class: 2, function: 1.5, interface: 2, module: 1, endpoint: 2, service: 2.5,
-      file: 0.5, flow: 1, domain: 1,
-    }
     score += TYPE_BOOST[nodeType] ?? 0
 
     if (items[i].meta.filePath) score += 1.5
@@ -218,57 +176,6 @@ function getFileMtime(filePath: string | null): number {
   }
 }
 
-function loadSystemGraph(): SystemGraph | null {
-  const sgCandidates = graphFileCandidates("system-graph.json")
-  for (const candidate of sgCandidates) {
-    if (!fs.existsSync(candidate)) continue
-    try {
-      const mtime = fs.statSync(candidate).mtimeMs
-      if (!cachedSystemGraph || mtime !== systemGraphMtime) {
-        cachedSystemGraph = JSON.parse(fs.readFileSync(candidate, "utf-8")) as SystemGraph
-        systemGraphMtime = mtime
-      }
-      return cachedSystemGraph
-    } catch {
-      return null
-    }
-  }
-  return null
-}
-
-function resolveServiceBasePath(serviceName: string): string | null {
-  const sg = loadSystemGraph()
-  return sg?.serviceIndex?.[serviceName]?.basePath ?? null
-}
-
-function resolveServiceDataPath(serviceName: string, relativePath: string): string | null {
-  const candidates: string[] = []
-  const graphDir = process.env.GRAPH_DIR
-  const resolvedBasePath = resolveServiceBasePath(serviceName)
-
-  if (resolvedBasePath) {
-    if (graphDir) {
-      candidates.push(path.resolve(graphDir, resolvedBasePath, ".understand-anything", relativePath))
-    }
-    candidates.push(path.resolve(process.cwd(), resolvedBasePath, ".understand-anything", relativePath))
-  }
-
-  if (!serviceName.includes("/")) {
-    if (graphDir) {
-      candidates.push(path.resolve(graphDir, serviceName, ".understand-anything", relativePath))
-    }
-    candidates.push(path.resolve(process.cwd(), serviceName, ".understand-anything", relativePath))
-    candidates.push(
-      path.resolve(process.cwd(), "../../..", serviceName, ".understand-anything", relativePath),
-    )
-  }
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate
-  }
-  return null
-}
-
 function resolveProjectDataPath(projectRoot: string, relativePath: string): string | null {
   const candidates = [
     path.join(projectRoot, ".understand-anything", relativePath),
@@ -280,15 +187,20 @@ function resolveProjectDataPath(projectRoot: string, relativePath: string): stri
   return null
 }
 
-function listServiceNames(serviceFilter: string | null): string[] {
-  if (serviceFilter) return [serviceFilter]
-  const sg = loadSystemGraph()
-  if (!sg?.serviceIndex) return []
-  return Object.keys(sg.serviceIndex)
-}
-
-function pushKgItems(items: SearchIndexItem[], graph: KnowledgeGraph, serviceName: string): void {
+function pushKgItems(
+  items: SearchIndexItem[],
+  graph: KnowledgeGraph,
+  serviceName: string,
+  projectRoot: string,
+): void {
+  if (!Array.isArray(graph?.nodes)) {
+    console.warn(`[search] KG data missing nodes array for service "${serviceName}"`)
+    return
+  }
   for (const node of graph.nodes) {
+    const fp = node.filePath
+      ? normalizeGraphPath(node.filePath, projectRoot) ?? undefined
+      : undefined
     items.push({
       id: node.id,
       text: [node.name, node.summary, node.type, ...(node.tags ?? [])].join(" "),
@@ -298,7 +210,7 @@ function pushKgItems(items: SearchIndexItem[], graph: KnowledgeGraph, serviceNam
         layer: "kg",
         summary: node.summary,
         service: serviceName,
-        filePath: node.filePath,
+        filePath: fp,
         lineRange: node.lineRange,
       },
     })
@@ -322,6 +234,10 @@ function pushWikiItems(items: SearchIndexItem[], index: WikiIndex, serviceName?:
 }
 
 function pushDomainItems(items: SearchIndexItem[], graph: KnowledgeGraph, serviceName: string): void {
+  if (!Array.isArray(graph?.nodes)) {
+    console.warn(`[search] Domain graph data missing nodes array for service "${serviceName}"`)
+    return
+  }
   for (const node of graph.nodes) {
     if (!DOMAIN_NODE_TYPES.has(node.type)) continue
     items.push({
@@ -397,17 +313,21 @@ function buildSearchIndex(projectRoot: string, serviceFilter: string | null): Se
   if (parentWiki) pushWikiItems(items, parentWiki)
 
   for (const serviceName of listServiceNames(serviceFilter)) {
-    const kgPath = resolveServiceDataPath(serviceName, "knowledge-graph.json")
-    const kg = kgPath ? readJsonFile<KnowledgeGraph>(kgPath) : null
-    if (kg) pushKgItems(items, kg, serviceName)
+    try {
+      const kgPath = resolveServiceDataPath(serviceName, "knowledge-graph.json")
+      const kg = kgPath ? readJsonFile<KnowledgeGraph>(kgPath) : null
+      if (kg) pushKgItems(items, kg, serviceName, projectRoot)
 
-    const wikiPath = resolveServiceDataPath(serviceName, "wiki/index.json")
-    const wiki = wikiPath ? readJsonFile<WikiIndex>(wikiPath) : null
-    if (wiki) pushWikiItems(items, wiki, serviceName)
+      const wikiPath = resolveServiceDataPath(serviceName, "wiki/index.json")
+      const wiki = wikiPath ? readJsonFile<WikiIndex>(wikiPath) : null
+      if (wiki) pushWikiItems(items, wiki, serviceName)
 
-    const domainPath = resolveServiceDataPath(serviceName, "domain-graph.json")
-    const domainGraph = domainPath ? readJsonFile<KnowledgeGraph>(domainPath) : null
-    if (domainGraph) pushDomainItems(items, domainGraph, serviceName)
+      const domainPath = resolveServiceDataPath(serviceName, "domain-graph.json")
+      const domainGraph = domainPath ? readJsonFile<KnowledgeGraph>(domainPath) : null
+      if (domainGraph) pushDomainItems(items, domainGraph, serviceName)
+    } catch (err) {
+      console.warn(`[search] Failed to load index data for service "${serviceName}":`, err)
+    }
   }
 
   const blDir = businessLandscapeDir(projectRoot)
@@ -449,18 +369,6 @@ function parseLimit(value: string | null): number | ApiResponse {
     return { statusCode: 400, body: { error: "limit must be between 1 and 200" } }
   }
   return limit
-}
-
-function validateServiceName(serviceName: string | null): ApiResponse | null {
-  if (!serviceName) return null
-  if (serviceName.includes("\\") || serviceName.includes("..")) {
-    return { statusCode: 400, body: { error: "invalid service name" } }
-  }
-  return null
-}
-
-function isApiResponse(value: unknown): value is ApiResponse {
-  return typeof value === "object" && value !== null && "statusCode" in value && "body" in value
 }
 
 function filterByScope(items: SearchIndexItem[], scope: SearchScope): SearchIndexItem[] {

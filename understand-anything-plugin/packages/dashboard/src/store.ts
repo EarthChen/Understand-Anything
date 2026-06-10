@@ -156,6 +156,10 @@ interface DashboardStore {
   showFunctionsInClassView: boolean;
   toggleShowFunctionsInClassView: () => void;
 
+  // Layer freshness (cross-layer metadata)
+  freshness: { stale: string[]; currentCommit: string } | null
+  fetchFreshness: () => Promise<void>
+
   setGraph: (graph: KnowledgeGraph) => void;
   selectNode: (nodeId: string | null) => void;
   navigateToNode: (nodeId: string) => void;
@@ -855,5 +859,17 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
       return { layoutIssues: [...state.layoutIssues, ...fresh] };
     }),
   clearLayoutIssues: () => set({ layoutIssues: [] }),
+
+  freshness: null,
+  fetchFreshness: async () => {
+    try {
+      const res = await fetch("/api/layers/freshness")
+      if (!res.ok) return
+      const data = await res.json() as { freshness?: { stale: string[]; currentCommit: string } }
+      set({ freshness: data.freshness ?? null })
+    } catch {
+      // ignore network errors
+    }
+  },
 }));
 

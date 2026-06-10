@@ -15,7 +15,11 @@ function resolveServiceRoot(baseRoot: string, serviceName: string): string | nul
       const serviceIndex: Record<string, { basePath?: string }> = sg.serviceIndex ?? {}
       const entry = serviceIndex[serviceName]
       if (entry?.basePath) {
-        const resolved = path.join(baseRoot, entry.basePath)
+        const resolved = path.resolve(baseRoot, entry.basePath)
+        const rel = path.relative(baseRoot, resolved)
+        if (rel.startsWith("..") || path.isAbsolute(rel)) {
+          return null
+        }
         if (fs.existsSync(path.join(resolved, ".understand-anything"))) return resolved
       }
     } catch { /* ignore parse errors */ }
@@ -49,6 +53,9 @@ export async function handleSourceRequest(
 
   let projectRoot = baseRoot
   if (service) {
+    if (service.includes("\\") || service.includes("..") || service.includes("\0")) {
+      return { statusCode: 400, body: { error: "invalid service name", code: "INVALID_SERVICE_NAME" } }
+    }
     const serviceRoot = resolveServiceRoot(baseRoot, service)
     if (serviceRoot) {
       projectRoot = serviceRoot

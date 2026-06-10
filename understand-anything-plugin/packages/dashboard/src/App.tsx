@@ -196,6 +196,11 @@ function Dashboard() {
   }, [setWikiAvailable]);
 
   const fetchBusinessDomains = useBusinessStore((s) => s.fetchDomains);
+  const fetchFreshness = useDashboardStore((s) => s.fetchFreshness);
+
+  useEffect(() => {
+    void fetchFreshness();
+  }, [fetchFreshness]);
 
   useEffect(() => {
     void detectBusinessAvailability().then((ok) => {
@@ -298,6 +303,7 @@ function DashboardContent({
   const systemGraph = useDashboardStore((s) => s.systemGraph);
   const activeService = useDashboardStore((s) => s.activeService);
   const layoutIssues = useDashboardStore((s) => s.layoutIssues);
+  const freshness = useDashboardStore((s) => s.freshness);
   const isMobile = useIsMobile();
   const { t } = useI18n();
   const allIssues = useMemo(
@@ -733,6 +739,13 @@ function DashboardContent({
 
       {/* Search */}
       <SearchBar />
+
+      {/* Stale layer warning */}
+      {freshness?.stale?.length ? (
+        <div className="bg-yellow-500/10 text-yellow-600 text-xs px-4 py-2 border-b border-yellow-500/20">
+          ⚠ Stale layers detected: {freshness.stale.join(", ")}. Consider re-running /understand to update.
+        </div>
+      ) : null}
 
       {/* Validation warning banner */}
       {allIssues.length > 0 && !loadError && (

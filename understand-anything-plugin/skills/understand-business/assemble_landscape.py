@@ -13,8 +13,19 @@ Output:
     .understand-anything/domain-mapping.json (updated)
 """
 import json
+import re
 import sys
 from pathlib import Path
+
+
+def _to_slug(name: str) -> str:
+    """Convert domain name to ASCII kebab-case slug for filenames."""
+    slug = name.lower().strip()
+    slug = re.sub(r'[（(].+?[)）]', '', slug).strip()
+    slug = re.sub(r'[\s_]+', '-', slug)
+    slug = re.sub(r'[^a-z0-9\-]', '', slug)
+    slug = re.sub(r'-+', '-', slug).strip('-')
+    return slug or 'unnamed'
 
 
 def _deduplicate_domains(domains: list[dict]) -> list[dict]:
@@ -99,14 +110,17 @@ def assemble_landscape(project_root_str: str) -> dict | None:
 
     domains_list = []
     for m in all_matched:
+        canonical = m['canonical']
+        slug = _to_slug(canonical)
         domain_entry = {
-            'id': f"domain:{m['canonical']}",
-            'name': m['canonical'],
+            'id': f"domain:{canonical}",
+            'name': canonical,
+            'slug': slug,
             'summary': '',
             'facets': ['server', 'client'],
             'matchType': m.get('matchType', 'unknown'),
             'matchConfidence': m.get('confidence', 1.0),
-            'detailRef': f"business-landscape/domains/{m['canonical']}.json",
+            'detailRef': f"business-landscape/domains/domain-{slug}.json",
         }
         domains_list.append(domain_entry)
 

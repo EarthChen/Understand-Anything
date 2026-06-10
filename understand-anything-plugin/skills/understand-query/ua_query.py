@@ -3,14 +3,18 @@
 import argparse
 import json
 import os
+import re
 import sys
 from typing import Any
 import urllib.request
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote as url_quote, urlencode
 
 DEFAULT_SERVER = "http://localhost:3001"
 DEFAULT_TIMEOUT = 30
+
+_IMPL_SUFFIXES = ("ServiceImpl", "WebServiceImpl", "WebService", "Service", "Controller", "Handler", "Manager", "Facade")
+_CONFIG_SUFFIXES = ("Properties", "Config", "Configuration", "Constants", "Enum", "DTO", "BO", "VO", "Request", "Response", "Param")
 
 
 class ServerUnavailableError(RuntimeError):
@@ -45,10 +49,9 @@ def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT) -> Any:
 
 def build_url(server: str, path: str, params: dict[str, str] | None = None) -> str:
     base = server.rstrip("/")
-    encoded_path = quote(path, safe="/:@")
     if params:
-        return f"{base}{encoded_path}?{urlencode(params)}"
-    return f"{base}{encoded_path}"
+        return f"{base}{path}?{urlencode(params)}"
+    return f"{base}{path}"
 
 
 def format_output(data: Any, fmt: str) -> str:
@@ -264,8 +267,8 @@ def cmd_wiki(args: argparse.Namespace) -> Any:
     if args.architecture:
         return fetch_json(build_url(args.server, "/api/wiki/architecture", {}))
     if args.cross_domain:
-        slug = quote(args.cross_domain, safe="")
-        return fetch_json(build_url(args.server, f"/api/wiki/domain/{slug}", {}))
+        cross_domain = url_quote(args.cross_domain or "", safe="")
+        return fetch_json(build_url(args.server, f"/api/wiki/domain/{cross_domain}", {}))
     if args.endpoint_index:
         data = fetch_json(build_url(args.server, "/api/wiki/endpoints/index", {}))
         if args.protocol:
@@ -274,19 +277,20 @@ def cmd_wiki(args: argparse.Namespace) -> Any:
         return data
     if not args.service:
         raise SystemExit("wiki requires --service (or use --overview/--architecture/--cross-domain/--endpoint-index)")
-    svc = quote(args.service, safe="")
+    svc = url_quote(args.service or "", safe="")
     if args.flow:
-        flow_id = quote(args.flow, safe="")
-        return fetch_json(build_url(args.server, f"/api/wiki/service/{svc}/flow/{flow_id}", {}))
+        flow = url_quote(args.flow or "", safe="")
+        return fetch_json(build_url(args.server, f"/api/wiki/service/{svc}/flow/{flow}", {}))
     if args.related:
         if not args.domain:
             raise SystemExit("--related requires --domain")
-        domain_id = quote(args.domain, safe="")
-        return fetch_json(build_url(args.server, f"/api/wiki/{domain_id}/related", {}))
+        domain = url_quote(args.domain or "", safe="")
+        return fetch_json(build_url(args.server, f"/api/wiki/{domain}/related", {}))
     if args.search:
         return fetch_json(build_url(args.server, "/api/wiki/search", {"q": args.search, "limit": "20"}))
     if args.domain:
-        return fetch_json(build_url(args.server, f"/api/wiki/service/{svc}/domain/{quote(args.domain, safe='')}", {}))
+        domain = url_quote(args.domain or "", safe="")
+        return fetch_json(build_url(args.server, f"/api/wiki/service/{svc}/domain/{domain}", {}))
     if args.type == "endpoint":
         return fetch_json(build_url(args.server, f"/api/wiki/endpoints/{svc}", {}))
     return fetch_json(build_url(args.server, f"/api/wiki/service/{svc}", {}))
@@ -308,6 +312,7 @@ def cmd_business(args: argparse.Namespace) -> Any:
         return fetch_json(build_url(args.server, "/api/business/search", {"q": args.search}))
     if args.domain:
         slug = args.domain.replace("domain:", "").replace(" ", "-").lower()
+        slug = url_quote(slug, safe="")
         data = fetch_json(build_url(args.server, f"/api/business/domains/{slug}", {}))
         if args.type == "interactions":
             return {"interactions": data.get("interactions", [])}
@@ -329,7 +334,7 @@ def cmd_services(args: argparse.Namespace) -> Any:
 
 
 def cmd_meta(args: argparse.Namespace) -> Any:
-    data = fetch_json(build_url(args.server, "/api/meta", {}))
+    data = fetch_json(build_url(args.server, "/api/layers/freshness", {}))
     if args.stale:
         return {"stale": data.get("freshness", {}).get("stale", [])}
     return data
@@ -354,13 +359,18 @@ def _score_node_relevance(node: dict[str, Any], query: str) -> float:
         score += 1.5
     if node.get("lineRange"):
         score += 1.0
+
+    raw_name = node.get("name", "")
+    if any(raw_name.endswith(s) for s in _IMPL_SUFFIXES):
+        score += 3.0
+    elif any(raw_name.endswith(s) for s in _CONFIG_SUFFIXES):
+        score -= 2.0
     return score
 
 
 def _extract_code_keywords(flow_name: str) -> list[str]:
     """Extract PascalCase/camelCase keywords from a flow name like 'Bind Closed Friend' or 'bind-closed-friend'.
     Order: full pascal → individual long words → suffixes."""
-    import re
     parts = re.split(r"[-_:.\s]+", flow_name)
     parts = [p for p in parts if p and p.lower() not in ("flow", "domain", "step")]
     if parts:
@@ -451,7 +461,18 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     score_query = result.get("discoveryKeyword", best_keyword)
     matched.sort(key=lambda n: _score_node_relevance(n, score_query), reverse=True)
     matched = matched[:args.limit]
-    result["matchedNodes"] = [{"id": n["id"], "name": n["name"], "type": n.get("type", ""), "summary": n.get("summary", ""), "filePath": n.get("filePath", ""), "lineRange": n.get("lineRange"), "relevance": round(_score_node_relevance(n, score_query), 1)} for n in matched]
+    result["matchedNodes"] = [
+        {
+            "id": n.get("id", ""),
+            "name": n.get("name", ""),
+            "type": n.get("type", ""),
+            "summary": n.get("summary", ""),
+            "filePath": n.get("filePath", ""),
+            "lineRange": n.get("lineRange"),
+            "relevance": round(_score_node_relevance(n, score_query), 1),
+        }
+        for n in matched
+    ]
 
     # Empty result guidance
     if not matched:
@@ -474,10 +495,19 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     try:
         nbr_params: dict[str, str] = {"service": args.service, "graph": "kg", "node": top["id"], "direction": "both", "depth": "1"}
         nbr_data = fetch_json(build_url(args.server, "/api/graph-query/neighbors", nbr_params))
+        center = nbr_data.get("center") or {}
         result["neighbors"] = {
-            "center": {"id": nbr_data["center"]["id"], "name": nbr_data["center"]["name"], "type": nbr_data["center"].get("type", "")},
+            "center": {"id": center.get("id", ""), "name": center.get("name", ""), "type": center.get("type", "")},
             "totalEdges": nbr_data.get("totalEdges", 0),
-            "neighbors": [{"direction": n["direction"], "name": n["node"]["name"], "type": n["node"]["type"], "edgeType": n["edge"]["type"]} for n in nbr_data.get("neighbors", [])[:20]],
+            "neighbors": [
+                {
+                    "direction": n.get("direction", ""),
+                    "name": (n.get("node") or {}).get("name", n.get("node", {}).get("id", "?")),
+                    "type": (n.get("node") or {}).get("type", ""),
+                    "edgeType": (n.get("edge") or {}).get("type", ""),
+                }
+                for n in nbr_data.get("neighbors", [])[:20]
+            ],
         }
     except RuntimeError:
         result["neighbors"] = None

@@ -492,7 +492,29 @@ async function main() {
   const files = scan.files || [];
   const codeFiles = files.filter(f => f.fileCategory === 'code');
   const nonCodeFiles = files.filter(f => f.fileCategory !== 'code');
-  const importMap = scan.importMap || {};
+
+  // Prefer importMap embedded in scan-result.json; fall back to separate
+  // import-map.json produced by extract-import-map.mjs (the deterministic
+  // extractor writes its output to a standalone file).
+  let importMap = scan.importMap || {};
+  if (Object.keys(importMap).length === 0) {
+    const importMapPath = join(projectRoot, '.understand-anything', 'intermediate', 'import-map.json');
+    if (existsSync(importMapPath)) {
+      try {
+        const imData = JSON.parse(readFileSync(importMapPath, 'utf-8'));
+        importMap = imData.importMap || {};
+        process.stderr.write(
+          `Info: compute-batches: loaded importMap from import-map.json ` +
+          `(${Object.keys(importMap).length} entries)\n`,
+        );
+      } catch (err) {
+        process.stderr.write(
+          `Warning: compute-batches: failed to read import-map.json ` +
+          `(${err.message}) — proceeding without import edges\n`,
+        );
+      }
+    }
+  }
 
   process.stderr.write(
     `Config: maxCommunitySize=${config.maxCommunitySize}, ` +

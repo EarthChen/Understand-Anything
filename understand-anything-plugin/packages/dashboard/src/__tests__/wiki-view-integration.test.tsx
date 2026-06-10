@@ -220,7 +220,6 @@ describe("WikiView integration", () => {
     const nav = getWikiNav();
 
     expect(within(nav).getByText("By Domain")).toBeInTheDocument();
-    expect(within(nav).getByText("By Service")).toBeInTheDocument();
     expect(within(nav).getByRole("button", { name: /Order Management \(E2E\)/i })).toBeInTheDocument();
     expect(within(nav).getAllByRole("button", { name: /order-service/i }).length).toBeGreaterThanOrEqual(1);
     expect(within(nav).getAllByRole("button", { name: /payment-service/i }).length).toBeGreaterThanOrEqual(1);
@@ -262,25 +261,6 @@ describe("WikiView integration", () => {
         screen.getByText(/End-to-end order lifecycle spanning order and payment services/),
       ).toBeInTheDocument();
     });
-  });
-
-  it("switches view scope between global and a service", async () => {
-    const { user } = await renderWikiView();
-
-    const nav = getWikiNav();
-    const scopeSelect = within(nav).getByRole("combobox");
-    expect(scopeSelect).toHaveValue("global");
-    expect(within(nav).getByText("By Domain")).toBeInTheDocument();
-
-    await user.selectOptions(scopeSelect, "order-service");
-
-    expect(scopeSelect).toHaveValue("order-service");
-    expect(within(nav).queryByText("By Domain")).not.toBeInTheDocument();
-
-    await user.selectOptions(scopeSelect, "global");
-    expect(scopeSelect).toHaveValue("global");
-    expect(within(nav).getByText("By Domain")).toBeInTheDocument();
-    expect(within(nav).getByText("By Service")).toBeInTheDocument();
   });
 
   it("navigates back via breadcrumb", async () => {

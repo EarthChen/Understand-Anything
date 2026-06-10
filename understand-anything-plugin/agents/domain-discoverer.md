@@ -63,11 +63,21 @@ Write JSON to: `<project-root>/.understand-anything/intermediate/domain-discover
       "entities": ["<key domain objects>"],
       "businessRules": ["<important constraints/invariants>"],
       "crossDomainInteractions": ["<how this domain interacts with others>"],
-      "modules": ["src/order", "src/cart"]
+      "modules": ["src/order", "src/cart"],
+      "nodePatterns": ["Order", "Cart"]
     }
   ]
 }
 ```
+
+### `nodePatterns` field (important for monolithic modules)
+
+When a single code module (e.g. `src/main/java/...`) contains code for multiple business domains, `modules` alone cannot split nodes correctly. Use `nodePatterns` to specify **case-sensitive substrings** that match node IDs and names belonging to this domain.
+
+- `nodePatterns` is used by `split_kg_by_domain.py` as a fallback when `modules` is empty or insufficient
+- Patterns match against node `id` and `name` fields (e.g., `"Vip"` matches `class:...VipServiceImpl`, `function:...queryVipLevel`)
+- Choose patterns that are specific enough to avoid false positives (prefer `"Vip"` over `"V"`)
+- **Always set `nodePatterns`** when entity nouns are clear, even if `modules` is also set — it improves split precision for shared modules
 
 ## Constraints
 

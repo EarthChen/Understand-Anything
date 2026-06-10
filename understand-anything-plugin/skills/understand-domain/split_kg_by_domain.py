@@ -19,6 +19,14 @@ def _file_matches_modules(file_path: str, modules: list[str]) -> bool:
     return any(normalized.startswith(m.rstrip("/") + "/") or normalized == m for m in modules)
 
 
+def _node_matches_patterns(node: dict, patterns: list[str]) -> bool:
+    """Check if a node's ID or name contains any of the domain's nodePatterns (case-sensitive)."""
+    node_id = node.get("id", "")
+    node_name = node.get("name", "")
+    searchable = node_id + " " + node_name
+    return any(p in searchable for p in patterns)
+
+
 def _node_module(node: dict) -> str:
     fp = node.get("filePath") or ""
     if not fp:
@@ -41,6 +49,7 @@ def split_kg_by_domain(
     nodes = kg.get("nodes", [])
     edges = kg.get("edges", [])
 
+    # Pass 1: module-path matching (existing logic)
     node_to_domain: dict[str, str] = {}
     for node in nodes:
         fp = _node_module(node)
@@ -56,6 +65,19 @@ def split_kg_by_domain(
             )
         if matching_domains:
             node_to_domain[node["id"]] = matching_domains[-1]
+
+    # Pass 2: nodePatterns matching for ALL domains with nodePatterns set.
+    # More specific nodePatterns override broad module-path assignments.
+    pattern_domains = [d for d in domains if d.get("nodePatterns")]
+    if pattern_domains:
+        for node in nodes:
+            for domain in pattern_domains:
+                if _node_matches_patterns(node, domain["nodePatterns"]):
+                    node_to_domain[node["id"]] = domain["id"]
+                    break
+
+        reassigned = sum(1 for d in pattern_domains for n in nodes if node_to_domain.get(n["id"]) == d["id"])
+        print(f"[split-kg] nodePatterns pass: {len(pattern_domains)} pattern domains, {reassigned} nodes reassigned", file=sys.stderr)
 
     result: dict[str, dict[str, Any]] = {}
     for domain in domains:
