@@ -47,8 +47,10 @@ class TestBusinessSubcommand:
         mock_fetch.return_value = {"results": [{"id": "domain:friend", "name": "ClosedFriend", "match": "挚友"}]}
         ua_query.main(["--server", SERVER, "business", "--search", "挚友,ClosedFriend"])
         url = mock_fetch.call_args[0][0]
-        assert "/api/business/search" in url
-        assert parse_qs(urlparse(url).query)["q"] == ["挚友,ClosedFriend"]
+        assert "/api/search" in url
+        qs = parse_qs(urlparse(url).query)
+        assert qs["q"] == ["挚友,ClosedFriend"]
+        assert qs["scope"] == ["business"]
 
 
 class TestWikiSubcommand:

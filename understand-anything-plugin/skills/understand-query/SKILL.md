@@ -56,6 +56,8 @@ python ua_query.py --format md trace --service S --query "keyword" --source --bu
 
 5. **Use `kg --file --toc` before `kg --file`** to see method index first, then batch-read consecutive methods in one range.
 
+6. **RRF is default for trace** — `trace` uses `fusion=rrf` automatically. Connected nodes are surfaced alongside text matches. Use `--fusion none` only when you want strict text-only results.
+
 ---
 
 ## Options
@@ -97,6 +99,7 @@ python ua_query.py --format md trace --service S --query "keyword" --source --bu
 | `cmd_wiki` double URL encoding | Removed redundant `quote()` calls; `build_url` handles encoding | Chinese parameters no longer double-encoded |
 | Slug validation only checked `..` | Now also rejects `/` and `\` characters | Path traversal hardened |
 | KG shape errors crashed search indexing | Pre-emptive `Array.isArray()` guards in `pushKgItems`/`pushDomainItems` | Malformed KG data skipped gracefully |
+| Search upgraded to LumoSearch + RRF | BM25F with trigram fuzzy matching, prefix search, and RRF fusion for graph-aware results | Typos tolerated, structurally related nodes surfaced |
 
 ### Current Limits
 
@@ -109,23 +112,34 @@ python ua_query.py --format md trace --service S --query "keyword" --source --bu
 
 ## Search Algorithm & Cross-Language Matching
 
-### BM25 Search
-All `--search` and `trace --query` use BM25 (TF-IDF based) with intelligent tokenization:
+All search endpoints (wiki, kg, domain, business) forward to unified `/api/search?scope=...` with consistent LumoSearch scoring.
+
+### LumoSearch (BM25F + Trigram Fuzzy)
+All `--search` and `trace --query` use LumoSearch (BM25F) with intelligent tokenization:
 - **PascalCase/camelCase splitting**: `OrderPaymentService` → [order, payment, service]
 - **Multi-word queries**: `"sendInvite acceptInvite"` matches nodes containing either term
-- **CJK bigrams**: `"订单支付"` → [订单, 单支, 支付] for matching against non-English summaries
+- **Trigram fuzzy matching**: typos tolerated — e.g. `"Authentcation"` finds `AuthenticationService` via trigram Jaccard similarity
+- **Prefix matching**: `"Auth"` finds `AuthenticationService`
+- **Field-weighted scoring**: name (3×), summary (2×), content (1×), type (0.5×)
+- **CJK bigrams** (fallback layer): `"订单支付"` → [订单, 单支, 支付] for matching against non-English summaries
 - **Mixed queries**: `"Order创建"` → [order] + CJK bigrams
+
+### RRF Fusion (trace default)
+`trace` defaults to `fusion=rrf`, combining LumoSearch text relevance with KG graph traversal signals:
+- Surfaces structurally related nodes even without text match — e.g. searching `"AuthService"` also boosts `UserRepository` connected via KG edges
+- Standard formula: score = Σ 1/(60 + rank_i)
+- Disable with `--fusion none` for pure text search
 
 ### Domain-Flow Auto-Fallback
 When non-English keywords have no KG match, `trace` automatically:
-1. Searches domain graph flows via BM25 (flow summaries often contain non-English text)
+1. Searches domain graph flows via LumoSearch (flow summaries often contain non-English text)
 2. Extracts English code keywords from the matching flow name (e.g., "Create Order Flow" → "CreateOrder")
 3. Re-searches KG with extracted English keyword → success!
 
 ```
 trace --query "非英文关键词"
-  → KG BM25: 0 matches (KG nodes are English-named)
-  → Domain flow BM25: finds flow whose summary matches
+  → KG LumoSearch: 0 matches (KG nodes are English-named)
+  → Domain flow LumoSearch: finds flow whose summary matches
   → Extract keyword from flow name: "EnglishCodeKeyword"
   → KG re-search: ServiceImpl, ManagerClass, ...
   → Response: discoveredVia: "domain-flow:<flow-name>"
@@ -150,7 +164,7 @@ The ideal flow:
 
 **Fallback**: Even if you can't guess the English name, `trace` has automatic domain-flow fallback that searches flow summaries (which may contain non-English text) and extracts English code keywords from flow names.
 
-**Key insight:** `trace` with multi-keyword does parallel BM25 on all keywords — it automatically picks the best results from whichever keyword matched best. Never search one keyword at a time.
+**Key insight:** `trace` with multi-keyword does parallel LumoSearch on all keywords — it automatically picks the best results from whichever keyword matched best. Never search one keyword at a time.
 
 ## Cross-Platform Query Recipe
 
@@ -405,6 +419,7 @@ Keep agent context small by choosing the right operation:
 | `services --list` | 200 | Always safe |
 | `meta` / `meta --stale` | 150 | Always safe |
 | `business --search Q` | 300 | Prefer over `--list` |
+| `kg --search Q` (fuzzy) | 500–1500 | Typo-tolerant, try first |
 | `wiki --service S --domain D` | 1000–3000 | On demand |
 | `kg --neighbors X` (depth=1) | 500–1500 | Primary traversal |
 | `kg --node X --verbose` | 800–2000 | When edges needed |
@@ -680,13 +695,15 @@ python ua_query.py kg --service order-service --file OrderController.java --star
 | `--query KEYWORDS` | string | Search keywords — **comma-separated for multi-keyword parallel search** (required) |
 | `--type TYPE` | string | Filter matches by node type (class, function, file) |
 | `--limit N` | int | Max matched nodes (default: 5) |
+| `--fusion MODE` | string | Search fusion: `rrf` (default) or `none` |
 | `--source` | boolean | Include source code of top match's file |
 | `--symbol NAME` | string | Extract specific method/class from source (with `--source`) |
 | `--business` | boolean | Include business landscape context search |
 
 **Key behaviors:**
 
-- **Multi-keyword parallel search:** `--query "原词,EnglishName,Synonym"` searches ALL keywords via BM25 in one call, merges results, and ranks by best relevance. **This eliminates retry loops — always provide 2-4 variants.**
+- **Multi-keyword parallel search:** `--query "原词,EnglishName,Synonym"` searches ALL keywords via LumoSearch in one call, merges results, and ranks by best relevance. **This eliminates retry loops — always provide 2-4 variants.**
+- **RRF fusion (default):** Combines text relevance (BM25F) with KG graph structure — nodes connected to top matches via edges are boosted even if they don't match the query text. Disable with `--fusion none` for pure text search.
 - **Domain-flow fallback:** When ALL keywords have no KG matches, automatically searches domain graph flows, extracts English code keywords, and re-searches KG. Response includes `discoveredVia` and `discoveryKeyword` fields.
 - **Relevance ranking:** Matches are sorted by name similarity + type priority (Service/Impl > class > function > DTO/PO)
 - **Rich matchedNodes:** Each matched node includes `filePath` and `lineRange` so you can directly read specific methods without extra calls

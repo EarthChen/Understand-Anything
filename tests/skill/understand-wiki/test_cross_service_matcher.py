@@ -409,7 +409,7 @@ class TestExtractWrapperProviders(unittest.TestCase):
                 {
                     "source": "class:src/OrderService.java:OrderService",
                     "target": "class:src/PaymentFacade.java:PaymentFacade",
-                    "type": "consumes_rpc",
+                    "type": "calls",
                     "direction": "forward",
                     "weight": 0.8,
                 },

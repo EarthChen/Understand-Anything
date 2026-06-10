@@ -39,7 +39,7 @@ class TestValidateLandscape:
     def test_valid_landscape(self, tmp_landscape):
         root, bl = tmp_landscape
         (bl / 'domains.json').write_text(json.dumps({
-            'domains': [{'id': 'domain:order', 'name': 'order', 'summary': 'test', 'facets': ['server'], 'matchType': 'auto-api', 'matchConfidence': 1.0, 'detailRef': 'business-landscape/domains/order.json'}],
+            'domains': [{'id': 'domain:order', 'name': 'order', 'summary': 'test', 'facets': ['server'], 'matchType': 'auto-api', 'matchConfidence': 1.0, 'detailRef': 'business-landscape/domains/domain-order.json'}],
             'unmapped': [],
             'stats': {'totalDomains': 1, 'mappedDomains': 1, 'unmappedDomains': 0, 'coverageRate': 1.0}
         }))
@@ -47,7 +47,7 @@ class TestValidateLandscape:
             'links': [{'domain': 'domain:order', 'serverEndpoints': [], 'clientApiCalls': [], 'matchDetails': []}],
             'unmatchedEndpoints': {'server': [], 'client': []}
         }))
-        (bl / 'domains' / 'order.json').write_text(json.dumps({
+        (bl / 'domains' / 'domain-order.json').write_text(json.dumps({
             'id': 'domain:order', 'name': 'order', 'summary': 'test',
             'interactions': [{'id': 'flow:create', 'name': 'create', 'steps': [
                 {'id': 'step:1', 'facet': 'server', 'description': 'test', 'after': [], 'terminal': True}

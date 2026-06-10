@@ -152,6 +152,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     trace.add_argument("--source", action="store_true", help="Include source code of top match")
     trace.add_argument("--symbol", help="Extract specific method/class from source (use with --source)")
     trace.add_argument("--business", action="store_true", help="Include business context search")
+    trace.add_argument("--fusion", choices=["none", "rrf"], default="rrf", help="Search fusion strategy (default: rrf)")
 
     return parser.parse_args(argv)
 
@@ -287,7 +288,7 @@ def cmd_wiki(args: argparse.Namespace) -> Any:
         domain = url_quote(args.domain or "", safe="")
         return fetch_json(build_url(args.server, f"/api/wiki/{domain}/related", {}))
     if args.search:
-        return fetch_json(build_url(args.server, "/api/wiki/search", {"q": args.search, "limit": "20"}))
+        return _search_api(args.server, args.search, scope="wiki", limit=20)
     if args.domain:
         domain = url_quote(args.domain or "", safe="")
         return fetch_json(build_url(args.server, f"/api/wiki/service/{svc}/domain/{domain}", {}))
@@ -309,7 +310,7 @@ def cmd_business(args: argparse.Namespace) -> Any:
     if args.list:
         return fetch_json(build_url(args.server, "/api/business/domains", {}))
     if args.search:
-        return fetch_json(build_url(args.server, "/api/business/search", {"q": args.search}))
+        return {"results": _search_api(args.server, args.search, scope="business")}
     if args.domain:
         slug = args.domain.replace("domain:", "").replace(" ", "-").lower()
         slug = url_quote(slug, safe="")
@@ -388,11 +389,13 @@ def _extract_code_keywords(flow_name: str) -> list[str]:
     return []
 
 
-def _search_api(server: str, query: str, service: str | None = None, scope: str = "kg", limit: int = 50) -> list[dict]:
+def _search_api(server: str, query: str, service: str | None = None, scope: str = "kg", limit: int = 50, fusion: str = "none") -> list[dict]:
     """Call the unified /api/search endpoint and return results."""
     params: dict[str, str] = {"q": query, "scope": scope, "limit": str(limit)}
     if service:
         params["service"] = service
+    if fusion != "none":
+        params["fusion"] = fusion
     data = fetch_json(build_url(server, "/api/search", params))
     return data.get("results", [])
 
@@ -410,7 +413,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     # Step 1: Search KG via server-side BM25 with ALL keywords
     seen_ids: dict[str, tuple[dict, float, str]] = {}  # id -> (node, best_score, best_keyword)
     for kw in keywords:
-        kw_matched = _search_api(args.server, kw, service=args.service, scope="kg", limit=50)
+        kw_matched = _search_api(args.server, kw, service=args.service, scope="kg", limit=50, fusion=args.fusion)
         if args.type:
             kw_matched = [n for n in kw_matched if n.get("type") == args.type]
         for node in kw_matched:
@@ -432,7 +435,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
                 code_keywords = _extract_code_keywords(best_flow.get("name", ""))
                 best_kw, best_matched, best_top_score = "", [], 0.0
                 for kw in code_keywords:
-                    re_matched = _search_api(args.server, kw, service=args.service, scope="kg", limit=50)
+                    re_matched = _search_api(args.server, kw, service=args.service, scope="kg", limit=50, fusion=args.fusion)
                     if re_matched:
                         top_score = max(_score_node_relevance(n, kw) for n in re_matched[:10])
                         specificity = len(kw) / 10.0
@@ -484,8 +487,8 @@ def cmd_trace(args: argparse.Namespace) -> Any:
         )
         if args.business:
             try:
-                biz_data = fetch_json(build_url(args.server, "/api/business/search", {"q": args.query}))
-                result["businessContext"] = biz_data.get("results", [])[:5]
+                biz_results = _search_api(args.server, args.query, scope="business", limit=5)
+                result["businessContext"] = biz_results[:5]
             except RuntimeError:
                 result["businessContext"] = None
         return result
@@ -559,8 +562,8 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     # Step 4: Business context
     if args.business:
         try:
-            biz_data = fetch_json(build_url(args.server, "/api/business/search", {"q": args.query}))
-            result["businessContext"] = biz_data.get("results", [])[:5]
+            biz_results = _search_api(args.server, args.query, scope="business", limit=5)
+            result["businessContext"] = biz_results[:5]
         except RuntimeError:
             result["businessContext"] = None
 
