@@ -16,6 +16,28 @@ from typing import Any
 KEY_NODE_TYPES = frozenset({"endpoint", "service", "pipeline", "table", "schema"})
 MAX_SUMMARIES_PER_MODULE = 3
 MAX_EDGE_SAMPLES = 3
+
+_TEST_DIR_SEGMENTS = frozenset({
+    "/test/", "/tests/", "/__tests__/", "/spec/", "/specs/",
+    "/androidTest/", "/testDebug/", "/testRelease/",
+})
+_TEST_FILE_SUFFIXES = ("_test.go", "_test.py", "_test.dart", ".test.ts", ".test.js",
+                       ".test.tsx", ".test.jsx", ".spec.ts", ".spec.js", ".spec.tsx",
+                       ".spec.jsx", "Test.java", "Test.kt", "Tests.swift", "Test.m")
+_TEST_FILE_PREFIXES = ("test_",)
+
+
+def _is_test_path(file_path: str) -> bool:
+    """Return True if file_path belongs to a test directory or matches test file naming."""
+    normalized = "/" + file_path.replace("\\", "/")
+    if any(seg in normalized for seg in _TEST_DIR_SEGMENTS):
+        return True
+    basename = normalized.rsplit("/", 1)[-1]
+    if any(basename.endswith(s) for s in _TEST_FILE_SUFFIXES):
+        return True
+    if any(basename.startswith(p) for p in _TEST_FILE_PREFIXES):
+        return True
+    return False
 _VERB_PREFIXES = frozenset({
     "get", "create", "update", "delete", "find", "list", "save",
     "load", "remove", "add", "set", "check", "validate", "build",
@@ -88,10 +110,24 @@ def _build_capability_clusters(modules: list[dict], key_nodes: list[dict]) -> li
 
 def condense_kg(kg: dict[str, Any]) -> dict[str, Any]:
     """Condense a full KG into a module-level summary."""
-    nodes = kg.get("nodes", [])
-    edges = kg.get("edges", [])
+    raw_nodes = kg.get("nodes", [])
+    raw_edges = kg.get("edges", [])
     project = kg.get("project", {})
     layers = kg.get("layers", [])
+
+    # Filter out test nodes and their edges
+    test_node_ids: set[str] = set()
+    nodes: list[dict] = []
+    for node in raw_nodes:
+        fp = node.get("filePath") or ""
+        if _is_test_path(fp):
+            test_node_ids.add(node.get("id", ""))
+        else:
+            nodes.append(node)
+    edges = [
+        e for e in raw_edges
+        if e.get("source") not in test_node_ids and e.get("target") not in test_node_ids
+    ]
 
     # Group nodes by module
     module_data: dict[str, dict] = defaultdict(lambda: {

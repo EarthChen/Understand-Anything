@@ -112,5 +112,127 @@ class TestCondenseKg(unittest.TestCase):
         self.assertEqual(result["stats"]["totalNodes"], 1)
 
 
+class TestTestNodeExclusion(unittest.TestCase):
+    """Test nodes from test directories should be excluded from domain condensation."""
+
+    def test_java_test_dir_excluded(self):
+        from condense_kg_for_domain import condense_kg
+
+        nodes = [
+            _make_node("file:src/main/java/OrderService.java", "file", "OrderService",
+                        "Manages orders", ["order"], "src/main/java/OrderService.java"),
+            _make_node("file:src/test/java/OrderServiceTest.java", "file", "OrderServiceTest",
+                        "Test class", ["test"], "src/test/java/OrderServiceTest.java"),
+        ]
+        kg = _make_kg(nodes, [])
+
+        result = condense_kg(kg)
+
+        self.assertEqual(result["stats"]["totalNodes"], 1)
+
+    def test_js_tests_dir_excluded(self):
+        from condense_kg_for_domain import condense_kg
+
+        nodes = [
+            _make_node("file:src/utils.ts", "file", "utils", "Utils", ["ts"], "src/utils.ts"),
+            _make_node("file:src/__tests__/utils.test.ts", "file", "utils.test",
+                        "Test", ["test"], "src/__tests__/utils.test.ts"),
+        ]
+        kg = _make_kg(nodes, [])
+
+        result = condense_kg(kg)
+
+        self.assertEqual(result["stats"]["totalNodes"], 1)
+
+    def test_non_test_path_with_test_in_name_included(self):
+        from condense_kg_for_domain import condense_kg
+
+        nodes = [
+            _make_node("file:src/main/java/ContestService.java", "file", "ContestService",
+                        "Contest logic", ["contest"], "src/main/java/ContestService.java"),
+        ]
+        kg = _make_kg(nodes, [])
+
+        result = condense_kg(kg)
+
+        self.assertEqual(result["stats"]["totalNodes"], 1)
+
+    def test_go_test_file_excluded(self):
+        from condense_kg_for_domain import condense_kg
+
+        nodes = [
+            _make_node("file:pkg/order/service.go", "file", "service", "Service", ["go"], "pkg/order/service.go"),
+            _make_node("file:pkg/order/service_test.go", "file", "service_test", "Test", ["go"], "pkg/order/service_test.go"),
+        ]
+        kg = _make_kg(nodes, [])
+        result = condense_kg(kg)
+        self.assertEqual(result["stats"]["totalNodes"], 1)
+
+    def test_python_test_file_excluded(self):
+        from condense_kg_for_domain import condense_kg
+
+        nodes = [
+            _make_node("file:src/service.py", "file", "service", "Service", ["py"], "src/service.py"),
+            _make_node("file:src/test_service.py", "file", "test_service", "Test", ["py"], "src/test_service.py"),
+        ]
+        kg = _make_kg(nodes, [])
+        result = condense_kg(kg)
+        self.assertEqual(result["stats"]["totalNodes"], 1)
+
+    def test_kotlin_test_excluded(self):
+        from condense_kg_for_domain import condense_kg
+
+        nodes = [
+            _make_node("file:src/main/kotlin/OrderService.kt", "file", "OrderService", "Service", ["kt"], "src/main/kotlin/OrderService.kt"),
+            _make_node("file:src/test/kotlin/OrderServiceTest.kt", "file", "OrderServiceTest", "Test", ["kt"], "src/test/kotlin/OrderServiceTest.kt"),
+        ]
+        kg = _make_kg(nodes, [])
+        result = condense_kg(kg)
+        self.assertEqual(result["stats"]["totalNodes"], 1)
+
+    def test_dart_test_file_excluded(self):
+        from condense_kg_for_domain import condense_kg
+
+        nodes = [
+            _make_node("file:lib/service.dart", "file", "service", "Service", ["dart"], "lib/service.dart"),
+            _make_node("file:test/service_test.dart", "file", "service_test", "Test", ["dart"], "test/service_test.dart"),
+        ]
+        kg = _make_kg(nodes, [])
+        result = condense_kg(kg)
+        self.assertEqual(result["stats"]["totalNodes"], 1)
+
+    def test_android_test_dir_excluded(self):
+        from condense_kg_for_domain import condense_kg
+
+        nodes = [
+            _make_node("file:src/main/java/App.kt", "file", "App", "Main", ["kt"], "src/main/java/App.kt"),
+            _make_node("file:src/androidTest/java/AppTest.kt", "file", "AppTest", "Test", ["kt"], "src/androidTest/java/AppTest.kt"),
+        ]
+        kg = _make_kg(nodes, [])
+        result = condense_kg(kg)
+        self.assertEqual(result["stats"]["totalNodes"], 1)
+
+    def test_cross_module_edges_exclude_test_nodes(self):
+        from condense_kg_for_domain import condense_kg
+
+        nodes = [
+            _make_node("file:src/order/OrderService.java", "file", "OrderService",
+                        "Orders", ["order"], "src/order/OrderService.java"),
+            _make_node("file:src/test/java/OrderServiceTest.java", "file", "OrderServiceTest",
+                        "Test", ["test"], "src/test/java/OrderServiceTest.java"),
+        ]
+        edges = [
+            {"source": "file:src/test/java/OrderServiceTest.java",
+             "target": "file:src/order/OrderService.java",
+             "type": "tested_by", "direction": "forward", "weight": 0.5,
+             "description": "test edge"},
+        ]
+        kg = _make_kg(nodes, edges)
+
+        result = condense_kg(kg)
+
+        self.assertEqual(len(result["crossModuleEdges"]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

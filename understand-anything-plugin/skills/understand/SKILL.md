@@ -975,15 +975,56 @@ Report to the user: `[Phase 7/7] Saving knowledge graph...`
    ```
    If validation fails, DO NOT proceed. Fix the missing fields and re-write `knowledge-graph.json`, then re-validate.
 
-5. Clean up intermediate files, **preserving `scan-result.json`** so future incremental runs can skip Phase 1 SCAN (see issue #293):
+5. Clean up intermediate files, **preserving `scan-result.json`** and **`extraction/`** for downstream skill reuse:
    ```bash
    # Preserve scan-result.json — Phase 1's deterministic file inventory.
    # Future incremental runs (Phase 2 compute-batches.mjs --changed-files=…)
    # need this inventory; without it, Phase 1 must re-dispatch and pay ~157k
    # tokens / ~158s per incremental run.
+   #
+   # Preserve extraction results — contain function signatures, params,
+   # returnType, and annotations that the KG summary nodes do not retain.
+   # Downstream skills (wiki, query) can use these for richer code analysis.
    INTER="$PROJECT_ROOT/.understand-anything/intermediate"
+   mkdir -p "$INTER/extraction"
+   cp $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-*.json \
+      "$INTER/extraction/" 2>/dev/null || true
+
+   # Merge per-batch extraction files into a single file-path-indexed JSON
+   # for easy lookup by downstream tools (wiki, query).
+   python3 -c "
+   import json, glob, os
+   extraction_dir = os.path.join('$INTER', 'extraction')
+   files = sorted(glob.glob(os.path.join(extraction_dir, 'ua-file-extract-results-*.json')))
+   merged = {}
+   for f in files:
+       data = json.load(open(f))
+       for r in data.get('results', []):
+           path = r.get('path', '')
+           if path:
+               merged[path] = {
+                   'language': r.get('language'),
+                   'fileCategory': r.get('fileCategory'),
+                   'totalLines': r.get('totalLines'),
+                   'functions': r.get('functions', []),
+                   'classes': r.get('classes', []),
+                   'imports': r.get('imports', []),
+                   'exports': r.get('exports', []),
+               }
+   out = os.path.join(extraction_dir, 'structural-analysis.json')
+   with open(out, 'w', encoding='utf-8') as f:
+       json.dump(merged, f, indent=2, ensure_ascii=False)
+   # Remove per-batch files after merging
+   for f in files:
+       os.remove(f)
+   print(f'[extraction] Merged {len(files)} batches → {len(merged)} files in structural-analysis.json')
+   "
+
    if [ -d "$INTER" ]; then
-     find "$INTER" -mindepth 1 -maxdepth 1 -not -name 'scan-result.json' -exec rm -rf {} +
+     find "$INTER" -mindepth 1 -maxdepth 1 \
+       -not -name 'scan-result.json' \
+       -not -name 'extraction' \
+       -exec rm -rf {} +
    fi
    rm -rf $PROJECT_ROOT/.understand-anything/tmp
    ```

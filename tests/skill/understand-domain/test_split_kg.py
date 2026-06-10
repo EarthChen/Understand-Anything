@@ -99,5 +99,55 @@ class TestSplitKgByDomain(unittest.TestCase):
         self.assertEqual(len(result["domain:order"]["nodes"]), 1)
 
 
+class TestTestNodeExclusion(unittest.TestCase):
+    """Test nodes from test directories should be excluded from domain splitting."""
+
+    def test_test_nodes_excluded_from_domain(self):
+        from split_kg_by_domain import split_kg_by_domain
+
+        kg = {
+            "nodes": [
+                _make_node("file:src/order/Order.java", "src/order/Order.java"),
+                _make_node("file:src/test/java/com/order/OrderTest.java",
+                           "src/test/java/com/order/OrderTest.java"),
+            ],
+            "edges": [],
+        }
+        discovery = {
+            "domains": [
+                {"id": "domain:order", "name": "Order", "modules": ["src/order", "src/test"]},
+            ]
+        }
+
+        result = split_kg_by_domain(kg, discovery)
+
+        self.assertEqual(len(result["domain:order"]["nodes"]), 1)
+        self.assertEqual(result["domain:order"]["nodes"][0]["id"], "file:src/order/Order.java")
+
+    def test_edges_referencing_test_nodes_excluded(self):
+        from split_kg_by_domain import split_kg_by_domain
+
+        kg = {
+            "nodes": [
+                _make_node("file:src/order/Order.java", "src/order/Order.java"),
+                _make_node("file:src/test/java/OrderTest.java",
+                           "src/test/java/OrderTest.java"),
+            ],
+            "edges": [
+                _make_edge("file:src/test/java/OrderTest.java",
+                           "file:src/order/Order.java", "tested_by"),
+            ],
+        }
+        discovery = {
+            "domains": [
+                {"id": "domain:order", "name": "Order", "modules": ["src/order", "src/test"]},
+            ]
+        }
+
+        result = split_kg_by_domain(kg, discovery)
+
+        self.assertEqual(len(result["domain:order"]["edges"]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

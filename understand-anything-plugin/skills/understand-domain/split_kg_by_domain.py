@@ -13,6 +13,29 @@ from pathlib import Path
 from typing import Any
 
 
+_TEST_DIR_SEGMENTS = frozenset({
+    "/test/", "/tests/", "/__tests__/", "/spec/", "/specs/",
+    "/androidTest/", "/testDebug/", "/testRelease/",
+})
+_TEST_FILE_SUFFIXES = ("_test.go", "_test.py", "_test.dart", ".test.ts", ".test.js",
+                       ".test.tsx", ".test.jsx", ".spec.ts", ".spec.js", ".spec.tsx",
+                       ".spec.jsx", "Test.java", "Test.kt", "Tests.swift", "Test.m")
+_TEST_FILE_PREFIXES = ("test_",)
+
+
+def _is_test_path(file_path: str) -> bool:
+    """Return True if file_path belongs to a test directory or matches test file naming."""
+    normalized = "/" + file_path.replace("\\", "/")
+    if any(seg in normalized for seg in _TEST_DIR_SEGMENTS):
+        return True
+    basename = normalized.rsplit("/", 1)[-1]
+    if any(basename.endswith(s) for s in _TEST_FILE_SUFFIXES):
+        return True
+    if any(basename.startswith(p) for p in _TEST_FILE_PREFIXES):
+        return True
+    return False
+
+
 def _file_matches_modules(file_path: str, modules: list[str]) -> bool:
     """Check if a file path starts with any of the domain's modules."""
     normalized = file_path.replace("\\", "/")
@@ -46,8 +69,22 @@ def split_kg_by_domain(
 ) -> dict[str, dict[str, Any]]:
     """Split KG nodes and edges by domain. Returns {domain_id: {domain, nodes, edges, stats}}."""
     domains = discovery.get("domains", [])
-    nodes = kg.get("nodes", [])
-    edges = kg.get("edges", [])
+    raw_nodes = kg.get("nodes", [])
+    raw_edges = kg.get("edges", [])
+
+    # Filter out test nodes and their edges
+    test_node_ids: set[str] = set()
+    nodes: list[dict] = []
+    for node in raw_nodes:
+        fp = _node_module(node)
+        if _is_test_path(fp):
+            test_node_ids.add(node.get("id", ""))
+        else:
+            nodes.append(node)
+    edges = [
+        e for e in raw_edges
+        if e.get("source") not in test_node_ids and e.get("target") not in test_node_ids
+    ]
 
     # Pass 1: module-path matching (existing logic)
     node_to_domain: dict[str, str] = {}

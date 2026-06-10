@@ -82,3 +82,63 @@ class TestUrlEncoding:
         ua_query.main(["wiki", "--service", "svc", "--domain", "what?"])
         url = mock_fetch.call_args[0][0]
         assert "what%3F" in url
+
+
+class TestStructureSubcommand:
+    """Tests for the 'structure' subcommand."""
+
+    @patch.object(ua_query, "fetch_json")
+    def test_structure_files(self, mock_fetch):
+        mock_fetch.return_value = {"files": ["a.java", "b.java"], "total": 2}
+        ua_query.main(["structure", "--service", "my-svc", "--files"])
+        url = mock_fetch.call_args[0][0]
+        assert "/api/structure/files" in url
+        assert "service=my-svc" in url
+
+    @patch.object(ua_query, "fetch_json")
+    def test_structure_file(self, mock_fetch):
+        mock_fetch.return_value = {"filePath": "src/A.java", "language": "java"}
+        ua_query.main(["structure", "--service", "my-svc", "--file", "src/A.java"])
+        url = mock_fetch.call_args[0][0]
+        assert "/api/structure/file" in url
+        assert "path=src" in url
+
+    @patch.object(ua_query, "fetch_json")
+    def test_structure_search_annotation(self, mock_fetch):
+        mock_fetch.return_value = {"results": [], "total": 0}
+        ua_query.main(["structure", "--service", "my-svc", "--annotation", "MoaProvider"])
+        url = mock_fetch.call_args[0][0]
+        assert "/api/structure/search" in url
+        assert "annotation=MoaProvider" in url
+
+    @patch.object(ua_query, "fetch_json")
+    def test_structure_search_param_type(self, mock_fetch):
+        mock_fetch.return_value = {"results": [], "total": 0}
+        ua_query.main(["structure", "--service", "my-svc", "--param-type", "UserDTO"])
+        url = mock_fetch.call_args[0][0]
+        assert "paramType=UserDTO" in url
+
+    @patch.object(ua_query, "fetch_json")
+    def test_structure_search_return_type(self, mock_fetch):
+        mock_fetch.return_value = {"results": [], "total": 0}
+        ua_query.main(["structure", "--service", "my-svc", "--return-type", "OrderResponse"])
+        url = mock_fetch.call_args[0][0]
+        assert "returnType=OrderResponse" in url
+
+    @patch.object(ua_query, "fetch_json")
+    def test_structure_search_interface(self, mock_fetch):
+        mock_fetch.return_value = {"results": [], "total": 0}
+        ua_query.main(["structure", "--service", "my-svc", "--interface", "Serializable"])
+        url = mock_fetch.call_args[0][0]
+        assert "interface=Serializable" in url
+
+    @patch.object(ua_query, "fetch_json")
+    def test_structure_search_with_path_filter(self, mock_fetch):
+        mock_fetch.return_value = {"results": [], "total": 0}
+        ua_query.main(["structure", "--service", "my-svc", "--annotation", "Service", "--path", "user/"])
+        url = mock_fetch.call_args[0][0]
+        assert "pathPattern=user" in url
+
+    def test_structure_search_requires_filter(self):
+        with pytest.raises(SystemExit):
+            ua_query.main(["structure", "--service", "my-svc"])

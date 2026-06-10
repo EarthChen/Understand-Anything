@@ -16,6 +16,27 @@ from pathlib import Path
 
 RPC_EDGE_TYPES = frozenset({"provides_rpc", "consumes_rpc"})
 CONNECTED_NODE_TYPES = frozenset({"endpoint", "service"})
+_TEST_DIR_SEGMENTS = frozenset({
+    "/test/", "/tests/", "/__tests__/", "/spec/", "/specs/",
+    "/androidTest/", "/testDebug/", "/testRelease/",
+})
+_TEST_FILE_SUFFIXES = ("_test.go", "_test.py", "_test.dart", ".test.ts", ".test.js",
+                       ".test.tsx", ".test.jsx", ".spec.ts", ".spec.js", ".spec.tsx",
+                       ".spec.jsx", "Test.java", "Test.kt", "Tests.swift", "Test.m")
+_TEST_FILE_PREFIXES = ("test_",)
+
+
+def _is_test_path(file_path: str) -> bool:
+    """Return True if file_path belongs to a test directory or matches test file naming."""
+    normalized = "/" + file_path.replace("\\", "/")
+    if any(seg in normalized for seg in _TEST_DIR_SEGMENTS):
+        return True
+    basename = normalized.rsplit("/", 1)[-1]
+    if any(basename.endswith(s) for s in _TEST_FILE_SUFFIXES):
+        return True
+    if any(basename.startswith(p) for p in _TEST_FILE_PREFIXES):
+        return True
+    return False
 
 
 def _extract_domain_steps(dg: dict, domain_id: str) -> set[str]:
@@ -53,7 +74,7 @@ def _nodes_for_file_paths(kg: dict, file_paths: set[str]) -> set[str]:
         if not node_id:
             continue
         fp = node.get("filePath")
-        if fp and fp in file_paths:
+        if fp and fp in file_paths and not _is_test_path(fp):
             ids.add(node_id)
     return ids
 

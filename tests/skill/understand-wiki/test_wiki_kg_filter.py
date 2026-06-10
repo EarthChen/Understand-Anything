@@ -112,6 +112,62 @@ class TestFilterKgForDomain(unittest.TestCase):
         self.assertIn("endpoint:POST /api/orders", ids)
 
 
+class TestTestNodeExclusion(unittest.TestCase):
+    """Test nodes from test directories should be excluded from wiki KG filtering."""
+
+    def _make_kg(self, nodes, edges):
+        return {
+            "version": "1.0.0",
+            "project": {"name": "test", "languages": ["java"], "frameworks": [],
+                        "description": "Test", "analyzedAt": "2026-01-01T00:00:00Z",
+                        "gitCommitHash": "abc"},
+            "nodes": nodes,
+            "edges": edges,
+            "layers": [],
+            "tour": [],
+        }
+
+    def _make_dg(self, domains, flows, steps, edges):
+        return {
+            "version": "1.0.0",
+            "project": {"name": "test"},
+            "nodes": domains + flows + steps,
+            "edges": edges,
+        }
+
+    def test_test_nodes_excluded_from_filtered_kg(self):
+        kg = self._make_kg(
+            nodes=[
+                {"id": "file:src/order/OrderService.java", "type": "file",
+                 "name": "OrderService", "filePath": "src/order/OrderService.java",
+                 "summary": "Orders", "tags": ["java"], "complexity": "simple"},
+                {"id": "file:src/test/java/OrderServiceTest.java", "type": "file",
+                 "name": "OrderServiceTest", "filePath": "src/test/java/OrderServiceTest.java",
+                 "summary": "Test", "tags": ["java", "test"], "complexity": "simple"},
+            ],
+            edges=[],
+        )
+        dg = self._make_dg(
+            domains=[{"id": "domain:order", "type": "domain", "name": "Order"}],
+            flows=[{"id": "flow:order-create", "type": "flow", "name": "Create Order"}],
+            steps=[{"id": "step:order-1", "type": "step", "name": "Step 1",
+                    "filePath": "src/order/OrderService.java"},
+                   {"id": "step:order-test", "type": "step", "name": "Test Step",
+                    "filePath": "src/test/java/OrderServiceTest.java"}],
+            edges=[
+                {"source": "domain:order", "target": "flow:order-create", "type": "contains_flow"},
+                {"source": "flow:order-create", "target": "step:order-1", "type": "flow_step"},
+                {"source": "flow:order-create", "target": "step:order-test", "type": "flow_step"},
+            ],
+        )
+
+        result = filter_kg_for_domain(kg, dg, "domain:order")
+        ids = _node_ids(result)
+
+        self.assertIn("file:src/order/OrderService.java", ids)
+        self.assertNotIn("file:src/test/java/OrderServiceTest.java", ids)
+
+
 class TestFilterKgCli(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

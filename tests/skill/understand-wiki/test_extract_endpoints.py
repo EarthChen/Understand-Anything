@@ -227,5 +227,259 @@ class TestMatchMethodsToClass(unittest.TestCase):
         self.assertEqual(bar_methods[0]["name"], "barMethod")
 
 
+class TestExtractRpcEndpointsFromKg(unittest.TestCase):
+    """Test KG-based RPC endpoint extraction — provides_rpc/consumes_rpc/publishes/subscribes."""
+
+    def _make_kg(self, nodes: list, edges: list) -> Path:
+        kg = {"version": "1.0.0", "nodes": nodes, "edges": edges}
+        p = Path(tempfile.mktemp(suffix=".json"))
+        p.write_text(json.dumps(kg), encoding="utf-8")
+        return p
+
+    def test_provides_rpc_extracted(self):
+        kg_path = self._make_kg(
+            nodes=[
+                {"id": "class:OrderServiceImpl", "type": "class", "filePath": "src/OrderServiceImpl.java",
+                 "tags": ["java", "rpc-provider", "moa"], "name": "OrderServiceImpl"},
+                {"id": "class:OrderService", "type": "class", "filePath": "src/OrderService.java",
+                 "tags": ["java", "api-handler", "moa"], "name": "OrderService"},
+            ],
+            edges=[
+                {"source": "class:OrderServiceImpl", "target": "class:OrderService",
+                 "type": "provides_rpc"},
+            ],
+        )
+        result = extract_endpoints.extract_rpc_endpoints_from_kg(kg_path)
+        self.assertEqual(len(result["providers"]), 1)
+        prov = result["providers"][0]
+        self.assertEqual(prov["identifier"], "OrderService")
+        self.assertEqual(prov["implementor"], "OrderServiceImpl")
+        self.assertEqual(prov["sourceRef"]["file"], "src/OrderServiceImpl.java")
+
+    def test_consumes_rpc_extracted(self):
+        kg_path = self._make_kg(
+            nodes=[
+                {"id": "class:OrderHandler", "type": "class", "filePath": "src/OrderHandler.java",
+                 "tags": ["java", "rpc-consumer", "moa"], "name": "OrderHandler"},
+                {"id": "class:OrderService", "type": "class", "filePath": "src/OrderService.java",
+                 "tags": ["java"], "name": "OrderService"},
+            ],
+            edges=[
+                {"source": "class:OrderHandler", "target": "class:OrderService",
+                 "type": "consumes_rpc"},
+            ],
+        )
+        result = extract_endpoints.extract_rpc_endpoints_from_kg(kg_path)
+        self.assertEqual(len(result["consumers"]), 1)
+        cons = result["consumers"][0]
+        self.assertEqual(cons["identifier"], "OrderService")
+        self.assertEqual(cons["callerClass"], "OrderHandler")
+
+    def test_publishes_edge_extracted(self):
+        kg_path = self._make_kg(
+            nodes=[
+                {"id": "class:EventProducer", "type": "class", "filePath": "src/EventProducer.java",
+                 "tags": ["java", "kafka"], "name": "EventProducer"},
+            ],
+            edges=[
+                {"source": "class:EventProducer", "target": "topic:order.created",
+                 "type": "publishes"},
+            ],
+        )
+        result = extract_endpoints.extract_rpc_endpoints_from_kg(kg_path)
+        self.assertEqual(len(result["kafkaTopics"]), 1)
+        topic = result["kafkaTopics"][0]
+        self.assertEqual(topic["topic"], "order.created")
+        self.assertEqual(topic["role"], "publisher")
+        self.assertEqual(topic["sourceClass"], "EventProducer")
+
+    def test_subscribes_edge_extracted(self):
+        kg_path = self._make_kg(
+            nodes=[
+                {"id": "class:EventHandler", "type": "class", "filePath": "src/EventHandler.java",
+                 "tags": ["java", "kafka"], "name": "EventHandler"},
+            ],
+            edges=[
+                {"source": "class:EventHandler", "target": "topic:order.created",
+                 "type": "subscribes"},
+            ],
+        )
+        result = extract_endpoints.extract_rpc_endpoints_from_kg(kg_path)
+        self.assertEqual(len(result["kafkaTopics"]), 1)
+        topic = result["kafkaTopics"][0]
+        self.assertEqual(topic["topic"], "order.created")
+        self.assertEqual(topic["role"], "subscriber")
+
+    def test_synthetic_endpoint_target(self):
+        """provides_rpc to endpoint:__synthetic__:... should still extract."""
+        kg_path = self._make_kg(
+            nodes=[
+                {"id": "class:GobackServiceImpl", "type": "class", "filePath": "src/GobackServiceImpl.java",
+                 "tags": ["java", "rpc-provider", "moa"], "name": "GobackServiceImpl"},
+                {"id": "endpoint:__synthetic__:GobackMoaService", "type": "endpoint",
+                 "name": "GobackMoaService"},
+            ],
+            edges=[
+                {"source": "class:GobackServiceImpl", "target": "endpoint:__synthetic__:GobackMoaService",
+                 "type": "provides_rpc"},
+            ],
+        )
+        result = extract_endpoints.extract_rpc_endpoints_from_kg(kg_path)
+        self.assertEqual(len(result["providers"]), 1)
+        self.assertEqual(result["providers"][0]["identifier"], "GobackMoaService")
+
+    def test_empty_kg_returns_empty(self):
+        kg_path = self._make_kg(nodes=[], edges=[])
+        result = extract_endpoints.extract_rpc_endpoints_from_kg(kg_path)
+        self.assertEqual(result["providers"], [])
+        self.assertEqual(result["consumers"], [])
+        self.assertEqual(result["kafkaTopics"], [])
+
+    def test_deduplication(self):
+        """Duplicate edges should not produce duplicate entries."""
+        kg_path = self._make_kg(
+            nodes=[
+                {"id": "class:Impl", "type": "class", "filePath": "src/Impl.java",
+                 "tags": ["java"], "name": "Impl"},
+                {"id": "class:Iface", "type": "class", "filePath": "src/Iface.java",
+                 "tags": ["java"], "name": "Iface"},
+            ],
+            edges=[
+                {"source": "class:Impl", "target": "class:Iface", "type": "provides_rpc"},
+                {"source": "class:Impl", "target": "class:Iface", "type": "provides_rpc"},
+            ],
+        )
+        result = extract_endpoints.extract_rpc_endpoints_from_kg(kg_path)
+        self.assertEqual(len(result["providers"]), 1)
+
+
+class TestExtractImplicitConsumersFromKg(unittest.TestCase):
+    """Test implicit RPC consumer detection via injects edges + naming heuristics."""
+
+    def _make_kg(self, nodes: list, edges: list) -> Path:
+        kg = {"version": "1.0.0", "nodes": nodes, "edges": edges}
+        p = Path(tempfile.mktemp(suffix=".json"))
+        p.write_text(json.dumps(kg), encoding="utf-8")
+        return p
+
+    def test_resource_injected_moa_service_detected(self):
+        """@Resource injecting a *MoaService interface should be detected as implicit consumer."""
+        kg_path = self._make_kg(
+            nodes=[
+                {"id": "class:WrapperService", "type": "class",
+                 "filePath": "src/dependency/WrapperService.java",
+                 "tags": ["java", "service"], "name": "WrapperService"},
+                {"id": "class:ExternalMoaService", "type": "class",
+                 "filePath": "src/interfaces/ExternalMoaService.java",
+                 "tags": ["java", "api-handler", "moa"], "name": "ExternalMoaService"},
+            ],
+            edges=[
+                {"source": "class:WrapperService", "target": "class:ExternalMoaService",
+                 "type": "injects"},
+            ],
+        )
+        result = extract_endpoints.extract_implicit_consumers_from_kg(kg_path)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["identifier"], "ExternalMoaService")
+        self.assertEqual(result[0]["callerClass"], "WrapperService")
+        self.assertEqual(result[0]["evidence"], "implicit-inject")
+
+    def test_local_provider_not_detected_as_implicit_consumer(self):
+        """Injecting a local service (which is also a provides_rpc target) should be filtered out."""
+        kg_path = self._make_kg(
+            nodes=[
+                {"id": "class:Handler", "type": "class",
+                 "filePath": "src/Handler.java",
+                 "tags": ["java"], "name": "Handler"},
+                {"id": "class:LocalMoaService", "type": "class",
+                 "filePath": "src/LocalMoaService.java",
+                 "tags": ["java", "api-handler", "moa"], "name": "LocalMoaService"},
+                {"id": "class:LocalMoaServiceImpl", "type": "class",
+                 "filePath": "src/LocalMoaServiceImpl.java",
+                 "tags": ["java", "rpc-provider", "moa"], "name": "LocalMoaServiceImpl"},
+            ],
+            edges=[
+                {"source": "class:Handler", "target": "class:LocalMoaService", "type": "injects"},
+                {"source": "class:LocalMoaServiceImpl", "target": "class:LocalMoaService",
+                 "type": "provides_rpc"},
+            ],
+        )
+        result = extract_endpoints.extract_implicit_consumers_from_kg(kg_path)
+        self.assertEqual(len(result), 0)
+
+    def test_non_moa_service_injection_ignored(self):
+        """Injecting a regular service (no MoaService/WrapperService name) should be ignored."""
+        kg_path = self._make_kg(
+            nodes=[
+                {"id": "class:Handler", "type": "class",
+                 "filePath": "src/Handler.java",
+                 "tags": ["java"], "name": "Handler"},
+                {"id": "class:UtilService", "type": "class",
+                 "filePath": "src/UtilService.java",
+                 "tags": ["java", "service"], "name": "UtilService"},
+            ],
+            edges=[
+                {"source": "class:Handler", "target": "class:UtilService", "type": "injects"},
+            ],
+        )
+        result = extract_endpoints.extract_implicit_consumers_from_kg(kg_path)
+        self.assertEqual(len(result), 0)
+
+    def test_rpc_consumer_tagged_injection_detected(self):
+        """Target with 'rpc-consumer' tag should be detected regardless of name."""
+        kg_path = self._make_kg(
+            nodes=[
+                {"id": "class:Caller", "type": "class",
+                 "filePath": "src/Caller.java",
+                 "tags": ["java"], "name": "Caller"},
+                {"id": "class:SomeRemoteApi", "type": "class",
+                 "filePath": "src/SomeRemoteApi.java",
+                 "tags": ["java", "rpc-consumer"], "name": "SomeRemoteApi"},
+            ],
+            edges=[
+                {"source": "class:Caller", "target": "class:SomeRemoteApi", "type": "injects"},
+            ],
+        )
+        result = extract_endpoints.extract_implicit_consumers_from_kg(kg_path)
+        self.assertEqual(len(result), 1)
+
+    def test_internal_class_with_moa_tag_not_detected(self):
+        """Classes with moa tag but also data-access/redis/config tags should be excluded."""
+        kg_path = self._make_kg(
+            nodes=[
+                {"id": "class:Service", "type": "class",
+                 "filePath": "src/Service.java",
+                 "tags": ["java"], "name": "Service"},
+                {"id": "class:SomeRedisDao", "type": "class",
+                 "filePath": "src/SomeRedisDao.java",
+                 "tags": ["java", "moa", "data-access", "redis"], "name": "SomeRedisDao"},
+            ],
+            edges=[
+                {"source": "class:Service", "target": "class:SomeRedisDao", "type": "injects"},
+            ],
+        )
+        result = extract_endpoints.extract_implicit_consumers_from_kg(kg_path)
+        self.assertEqual(len(result), 0)
+
+    def test_already_explicit_consumer_not_duplicated(self):
+        """If an edge is already consumes_rpc, the implicit detection should not duplicate it."""
+        kg_path = self._make_kg(
+            nodes=[
+                {"id": "class:Wrapper", "type": "class",
+                 "filePath": "src/Wrapper.java",
+                 "tags": ["java", "rpc-consumer"], "name": "Wrapper"},
+                {"id": "class:RemoteMoaService", "type": "class",
+                 "filePath": "src/RemoteMoaService.java",
+                 "tags": ["java", "moa"], "name": "RemoteMoaService"},
+            ],
+            edges=[
+                {"source": "class:Wrapper", "target": "class:RemoteMoaService", "type": "injects"},
+                {"source": "class:Wrapper", "target": "class:RemoteMoaService", "type": "consumes_rpc"},
+            ],
+        )
+        result = extract_endpoints.extract_implicit_consumers_from_kg(kg_path)
+        self.assertEqual(len(result), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

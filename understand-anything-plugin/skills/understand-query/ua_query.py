@@ -154,6 +154,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     trace.add_argument("--business", action="store_true", help="Include business context search")
     trace.add_argument("--fusion", choices=["none", "rrf"], default="rrf", help="Search fusion strategy (default: rrf)")
 
+    struct = sub.add_parser("structure", help="Code structure: signatures, annotations, types")
+    struct.add_argument("--service", required=True)
+    struct.add_argument("--file", help="Get structure for a specific file path (exact or suffix match)")
+    struct.add_argument("--files", action="store_true", help="List all indexed file paths")
+    struct.add_argument("--annotation", help="Search by class/function annotation name")
+    struct.add_argument("--param-type", help="Search by function parameter type")
+    struct.add_argument("--return-type", help="Search by function return type")
+    struct.add_argument("--interface", help="Search by implemented interface")
+    struct.add_argument("--property-type", help="Search by class property type")
+    struct.add_argument("--path", help="Filter results by path pattern (substring match)")
+    struct.add_argument("--limit", type=int, default=50, help="Max results to return")
+
     return parser.parse_args(argv)
 
 
@@ -570,6 +582,32 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     return result
 
 
+def cmd_structure(args: argparse.Namespace) -> Any:
+    if not args.service:
+        raise SystemExit("structure requires --service")
+    if args.files:
+        return fetch_json(build_url(args.server, "/api/structure/files", {"service": args.service}))
+    if args.file:
+        params: dict[str, str] = {"service": args.service, "path": args.file}
+        return fetch_json(build_url(args.server, "/api/structure/file", params))
+    search_params: dict[str, str] = {"service": args.service, "limit": str(args.limit)}
+    if args.annotation:
+        search_params["annotation"] = args.annotation
+    if args.param_type:
+        search_params["paramType"] = args.param_type
+    if args.return_type:
+        search_params["returnType"] = args.return_type
+    if args.interface:
+        search_params["interface"] = args.interface
+    if args.property_type:
+        search_params["propertyType"] = args.property_type
+    if args.path:
+        search_params["pathPattern"] = args.path
+    if len(search_params) <= 2:
+        raise SystemExit("structure search requires at least one filter: --annotation, --param-type, --return-type, --interface, --property-type")
+    return fetch_json(build_url(args.server, "/api/structure/search", search_params))
+
+
 def _extract_symbol(content: str, symbol: str) -> str | None:
     """Extract a method/class block from source content by symbol name."""
     lines = content.split("\n")
@@ -603,7 +641,7 @@ def _extract_symbol(content: str, symbol: str) -> str | None:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        handlers = {"kg": cmd_kg, "domain": cmd_domain, "wiki": cmd_wiki, "business": cmd_business, "services": cmd_services, "meta": cmd_meta, "trace": cmd_trace}
+        handlers = {"kg": cmd_kg, "domain": cmd_domain, "wiki": cmd_wiki, "business": cmd_business, "services": cmd_services, "meta": cmd_meta, "trace": cmd_trace, "structure": cmd_structure}
         data = handlers[args.command](args)
         print(format_output(data, args.format))
         return 0

@@ -459,6 +459,182 @@ def extract_http_endpoints_from_kg(kg_path: Path) -> list[dict[str, Any]]:
     return http_endpoints
 
 
+_RPC_EDGE_TYPES = frozenset({"provides_rpc", "consumes_rpc"})
+_EVENT_EDGE_TYPES = frozenset({"publishes", "subscribes"})
+
+_IMPLICIT_CONSUMER_NAME_PATTERNS = re.compile(
+    r"(MoaService|WrapperService|WrapperMoaService|MoaWrapperService)$",
+    re.IGNORECASE,
+)
+_IMPLICIT_CONSUMER_TAGS = frozenset({"rpc-consumer"})
+_INTERNAL_CLASS_TAGS = frozenset({
+    "data-access", "redis", "configuration", "business-logic",
+    "event-handler", "callback", "ultron-composite",
+})
+
+
+def extract_rpc_endpoints_from_kg(kg_path: Path) -> dict[str, Any]:
+    """Extract RPC providers/consumers and Kafka topics from KG edges.
+
+    Reads provides_rpc, consumes_rpc, publishes, and subscribes edges
+    to build endpoint records directly from the knowledge graph,
+    without requiring intermediate extraction files.
+    """
+    try:
+        kg = json.loads(kg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"providers": [], "consumers": [], "kafkaTopics": []}
+
+    nodes_by_id: dict[str, dict] = {}
+    for n in kg.get("nodes", []):
+        if isinstance(n, dict) and n.get("id"):
+            nodes_by_id[n["id"]] = n
+
+    providers: list[dict] = []
+    consumers: list[dict] = []
+    kafka_topics: list[dict] = []
+    seen_edges: set[tuple[str, str, str]] = set()
+
+    for edge in kg.get("edges", []):
+        if not isinstance(edge, dict):
+            continue
+        etype = edge.get("type", "")
+        src_id = edge.get("source", "")
+        tgt_id = edge.get("target", "")
+        edge_key = (src_id, tgt_id, etype)
+        if edge_key in seen_edges:
+            continue
+        seen_edges.add(edge_key)
+
+        src_node = nodes_by_id.get(src_id, {})
+        tgt_node = nodes_by_id.get(tgt_id, {})
+
+        if etype == "provides_rpc":
+            tgt_name = tgt_node.get("name", tgt_id.split(":")[-1])
+            src_name = src_node.get("name", src_id.split(":")[-1])
+            providers.append({
+                "identifier": tgt_name,
+                "implementor": src_name,
+                "protocol": _detect_protocol_from_tags(src_node.get("tags", [])),
+                "sourceRef": {"file": src_node.get("filePath", "")},
+            })
+        elif etype == "consumes_rpc":
+            tgt_name = tgt_node.get("name", tgt_id.split(":")[-1])
+            src_name = src_node.get("name", src_id.split(":")[-1])
+            consumers.append({
+                "identifier": tgt_name,
+                "callerClass": src_name,
+                "protocol": _detect_protocol_from_tags(src_node.get("tags", [])),
+                "sourceRef": {"file": src_node.get("filePath", "")},
+            })
+        elif etype in _EVENT_EDGE_TYPES:
+            topic_name = tgt_node.get("name", "")
+            if not topic_name and ":" in tgt_id:
+                topic_name = tgt_id.split(":", 1)[-1]
+            src_name = src_node.get("name", src_id.split(":")[-1])
+            role = "publisher" if etype == "publishes" else "subscriber"
+            kafka_topics.append({
+                "topic": topic_name,
+                "role": role,
+                "sourceClass": src_name,
+                "sourceRef": {"file": src_node.get("filePath", "")},
+            })
+
+    return {"providers": providers, "consumers": consumers, "kafkaTopics": kafka_topics}
+
+
+def _detect_protocol_from_tags(tags: list[str]) -> str:
+    tag_set = set(tags)
+    if "moa" in tag_set:
+        return "moa"
+    if "dubbo" in tag_set:
+        return "dubbo"
+    if "grpc" in tag_set:
+        return "grpc"
+    return "unknown"
+
+
+def extract_implicit_consumers_from_kg(kg_path: Path) -> list[dict[str, Any]]:
+    """Detect implicit RPC consumers from injects edges.
+
+    Identifies cases where a class injects an external MOA/RPC service interface
+    via @Resource/@Autowired (captured as 'injects' edges in the KG) rather than
+    using explicit @MoaConsumer annotations.
+
+    Filtering rules:
+    - Target must match MOA naming pattern OR have moa/rpc-consumer tags
+    - Target must NOT be a local provider (no provides_rpc edge pointing to it)
+    - Source-target pair must NOT already have a consumes_rpc edge
+    """
+    try:
+        kg = json.loads(kg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    nodes_by_id: dict[str, dict] = {}
+    for n in kg.get("nodes", []):
+        if isinstance(n, dict) and n.get("id"):
+            nodes_by_id[n["id"]] = n
+
+    local_provider_targets: set[str] = set()
+    explicit_consumer_pairs: set[tuple[str, str]] = set()
+
+    for edge in kg.get("edges", []):
+        if not isinstance(edge, dict):
+            continue
+        etype = edge.get("type", "")
+        if etype == "provides_rpc":
+            local_provider_targets.add(edge.get("target", ""))
+        elif etype == "consumes_rpc":
+            explicit_consumer_pairs.add(
+                (edge.get("source", ""), edge.get("target", ""))
+            )
+
+    implicit_consumers: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    for edge in kg.get("edges", []):
+        if not isinstance(edge, dict) or edge.get("type") != "injects":
+            continue
+        src_id = edge.get("source", "")
+        tgt_id = edge.get("target", "")
+
+        if (src_id, tgt_id) in seen:
+            continue
+        seen.add((src_id, tgt_id))
+
+        if (src_id, tgt_id) in explicit_consumer_pairs:
+            continue
+
+        if tgt_id in local_provider_targets:
+            continue
+
+        tgt_node = nodes_by_id.get(tgt_id, {})
+        tgt_name = tgt_node.get("name", tgt_id.split(":")[-1])
+        tgt_tags = set(tgt_node.get("tags", []))
+
+        if tgt_tags & _INTERNAL_CLASS_TAGS:
+            continue
+
+        is_rpc_by_name = bool(_IMPLICIT_CONSUMER_NAME_PATTERNS.search(tgt_name))
+        is_rpc_by_tags = bool(tgt_tags & _IMPLICIT_CONSUMER_TAGS)
+
+        if not is_rpc_by_name and not is_rpc_by_tags:
+            continue
+
+        src_node = nodes_by_id.get(src_id, {})
+        src_name = src_node.get("name", src_id.split(":")[-1])
+        implicit_consumers.append({
+            "identifier": tgt_name,
+            "callerClass": src_name,
+            "protocol": _detect_protocol_from_tags(list(tgt_tags)),
+            "evidence": "implicit-inject",
+            "sourceRef": {"file": src_node.get("filePath", "")},
+        })
+
+    return implicit_consumers
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -489,14 +665,30 @@ if __name__ == "__main__":
         if http_eps:
             result["httpEndpoints"] = http_eps
 
+        if not result["providers"] and not result["consumers"] and not result["kafkaTopics"]:
+            kg_result = extract_rpc_endpoints_from_kg(kg_path)
+            result["providers"] = kg_result["providers"]
+            result["consumers"] = kg_result["consumers"]
+            result["kafkaTopics"] = kg_result["kafkaTopics"]
+
+        implicit = extract_implicit_consumers_from_kg(kg_path)
+        if implicit:
+            existing_ids = {c.get("identifier") for c in result["consumers"]}
+            for ic in implicit:
+                if ic["identifier"] not in existing_ids:
+                    result["consumers"].append(ic)
+                    existing_ids.add(ic["identifier"])
+
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_text(
         json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
     http_count = len(result.get("httpEndpoints", []))
+    implicit_count = sum(1 for c in result.get("consumers", []) if c.get("evidence") == "implicit-inject")
     print(f"Extracted {len(result['providers'])} providers, "
-          f"{len(result['consumers'])} consumers, "
+          f"{len(result['consumers'])} consumers"
+          f"{f' ({implicit_count} implicit)' if implicit_count else ''}, "
           f"{len(result['kafkaTopics'])} kafka topics"
           f"{f', {http_count} HTTP endpoints' if http_count else ''}"
           f" for {args.service_name}")

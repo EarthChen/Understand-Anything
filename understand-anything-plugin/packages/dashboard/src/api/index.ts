@@ -6,6 +6,7 @@ import { handleWikiRequest } from "./handlers/wiki"
 import { handleSourceRequest } from "./handlers/source"
 import { handleBusinessRequest } from "./handlers/business"
 import { handleSearchRequest } from "./handlers/search"
+import { handleStructureRequest } from "./handlers/structure"
 
 const HANDLERS = [
   handleServicesRequest,
@@ -14,6 +15,7 @@ const HANDLERS = [
   handleBusinessRequest,
   handleWikiRequest,
   handleSourceRequest,
+  handleStructureRequest,
   handleGraphRequest,
 ]
 
