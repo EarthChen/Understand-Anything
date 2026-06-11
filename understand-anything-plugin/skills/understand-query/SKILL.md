@@ -8,6 +8,65 @@ argument-hint: ["<subcommand> [--server URL] [--format json|md] [--verbose] [sub
 
 Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the shared Understand-Anything API server. Use seven progressive layers — from service discovery and business landscape down to code structure — to answer questions without loading entire graphs into context.
 
+## Execution Mode: Sub-Agent (Default)
+
+**This skill MUST be delegated to a sub-agent by default.** All understand-query operations are read-only exploration and lookup tasks — the caller only cares about the final result, not the intermediate process.
+
+### Why Sub-Agent?
+
+- Query operations involve multiple CLI calls, output parsing, and drill-down — noisy intermediate steps that pollute the parent context.
+- The caller only needs a structured answer, not raw CLI output.
+- Sub-agent isolation keeps the parent context clean for the actual task at hand.
+
+### Dispatch Instructions (Cross-Platform)
+
+When this skill is triggered, the parent agent MUST delegate to a sub-agent using **whichever mechanism the current platform provides**:
+
+| Platform | Mechanism | Type |
+|----------|-----------|------|
+| **Cursor** | `Task` tool | `subagent_type: "generalPurpose"` (needs shell for CLI) |
+| **Claude Code** | `dispatch_agent` / `Task` tool | General-purpose agent with shell access |
+| **Codex** | Platform-native sub-agent / task dispatch | Agent with shell access |
+
+### Required Context for the Sub-Agent Prompt
+
+Regardless of platform, pass these to the sub-agent:
+
+1. **User's question** — the original query intent verbatim.
+2. **Project directory** — path to the project containing `.understand-anything/` data.
+3. **CLI location** — path to `ua_query.py` (this skill's directory).
+4. **API server** — `http://localhost:3001` (default). Instruct sub-agent to verify server is running; if not, start it via `cd <plugin-path>/packages/dashboard && pnpm run serve`.
+5. **This SKILL.md content** (or the relevant sections for the query type).
+6. **Output expectation** — return a **concise, structured summary** answering the question, not raw CLI dumps.
+
+### Sub-Agent Prompt Template
+
+```
+You are executing an understand-query skill task.
+
+**User Question:** <the actual question>
+**Project Directory:** <path to the project with .understand-anything/ data>
+**CLI Path:** <path to ua_query.py>
+**API Server:** Ensure the API server is running at http://localhost:3001.
+                If not, start it: cd <plugin-path>/packages/dashboard && pnpm run serve
+
+Follow the SKILL.md instructions below to execute the appropriate ua_query.py
+commands. Use --format md for readable output. Combine multiple calls with &&.
+
+<paste relevant SKILL.md sections here>
+
+Return a clear, structured summary addressing the user's question.
+Do NOT return raw CLI output — synthesize findings into an answer.
+```
+
+### When NOT to Use Sub-Agent
+
+Skip sub-agent dispatch only when:
+- The parent agent is **already inside a sub-agent** (avoid nesting).
+- The query is a **single trivial command** (e.g., `services --list`) whose result is needed inline for an ongoing implementation task.
+
+---
+
 ## Golden Rule for Agents (Read FIRST)
 
 For ANY "How does X work?" or "Where is X implemented?" question, use `trace` as your **first and often only** call:
