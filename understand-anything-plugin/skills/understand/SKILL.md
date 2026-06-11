@@ -417,12 +417,10 @@ done
 **Step 0c — Verify all outputs:**
 
 ```bash
-BATCH_INDICES=$(python3 -c "import json; print(' '.join(str(b['batchIndex']) for b in json.load(open('$PROJECT_ROOT/.understand-anything/intermediate/batches.json'))['batches']))")
-for batchIndex in $BATCH_INDICES; do
+for batchIndex in $(python3 -c "import json; print(' '.join(str(b['batchIndex']) for b in json.load(open('$PROJECT_ROOT/.understand-anything/intermediate/batches.json'))['batches']))"); do
   test -s $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-$batchIndex.json || {
     echo "FATAL: extraction results missing for batch $batchIndex" >&2; exit 1;
   }
-  # Verify scriptCompleted=true in output (exits non-zero if files were skipped)
   node -e "
     const d = JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));
     if (!d.scriptCompleted) { console.error('FATAL: batch ' + process.argv[2] + ' extraction degraded'); process.exit(1); }
