@@ -393,7 +393,7 @@ for batch in batches:
 PYSCRIPT
 ```
 
-**Step 0b — Run extraction for batches that still need it (up to 5 concurrently):**
+**Step 0b — Run extraction for batches that still need it (up to 10 concurrently):**
 
 Before running extraction, detect already-completed extractions. For each batch's `batchIndex`, check if `$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json` exists and is non-empty. Skip batches that already have extraction results (this enables automatic resume when a previous run was interrupted). If an output file exists but contains invalid JSON (e.g. truncated from a crash), treat it as incomplete and re-process.
 
@@ -445,9 +445,9 @@ Read the output at `$PROJECT_ROOT/.understand-anything/tmp/dispatch-plan.json`. 
 - `wavesNeeded`: how many sequential waves are needed given the `MAX_CONCURRENT=5` constraint
 - `oversizedGroups[]`: groups that exceed the context budget — warn the user but proceed
 
-If the script fails, fall back to 1:1 dispatch (one subagent per batch, up to 5 concurrent).
+If the script fails, fall back to 1:1 dispatch (one subagent per batch, up to 10 concurrent).
 
-Report: `Dispatch plan: <totalBatches> batches → <actualGroups> groups (<wavesNeeded> wave(s), max 5 concurrent)`
+Report: `Dispatch plan: <totalBatches> batches → <actualGroups> groups (<wavesNeeded> wave(s), max 10 concurrent)`
 
 #### Step 1 — Dispatch file-analyzer agents
 
@@ -462,9 +462,9 @@ If an output file exists but contains invalid JSON (e.g. truncated from a crash)
 Filter to only include batches **without** existing output. If all batches are complete, skip directly to the merge step. If some batches were skipped, report:
 > `Resuming: <N>/<total> batches already complete. Dispatching remaining <M>...`
 
-For remaining batches, use the fusion groups from `dispatch-plan.json` (Step 0d) to determine subagent dispatch. Each fusion group becomes **one subagent invocation** handling multiple batches. Run up to **5 subagents concurrently** (one wave at a time if `wavesNeeded > 1`).
+For remaining batches, use the fusion groups from `dispatch-plan.json` (Step 0d) to determine subagent dispatch. Each fusion group becomes **one subagent invocation** handling multiple batches. Run up to **10 subagents concurrently** (one wave at a time if `wavesNeeded > 1`).
 
-If `dispatch-plan.json` is unavailable (Step 0d failed), fall back to 1:1 dispatch (one subagent per batch, up to 5 concurrent).
+If `dispatch-plan.json` is unavailable (Step 0d failed), fall back to 1:1 dispatch (one subagent per batch, up to 10 concurrent).
 
 For each fusion group, dispatch a subagent using the `file-analyzer` agent definition (at `agents/file-analyzer.md`). Append the following additional context:
 

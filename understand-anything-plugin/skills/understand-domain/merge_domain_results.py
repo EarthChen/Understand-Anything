@@ -52,6 +52,17 @@ def build_project_with_provenance(
     return stamped
 
 
+def _is_doc_only_domain(domain_info: dict[str, Any]) -> bool:
+    """Return True if all modules in this domain are pure documentation paths."""
+    modules = domain_info.get("modules", [])
+    if not modules:
+        return False
+    return all(
+        m.strip("/").split("/")[0].lower() in ("doc", "docs")
+        for m in modules
+    )
+
+
 def merge_domain_results(
     discovery: dict[str, Any],
     flows_by_domain: dict[str, dict[str, Any]],
@@ -62,6 +73,9 @@ def merge_domain_results(
     edges: list[dict] = []
 
     for domain_info in discovery.get("domains", []):
+        if _is_doc_only_domain(domain_info):
+            print(f"[merge-domain] Skipping documentation-only domain: {domain_info['id']}")
+            continue
         domain_id = domain_info["id"]
         nodes.append({
             "id": domain_id,

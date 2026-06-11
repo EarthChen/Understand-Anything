@@ -34,6 +34,7 @@ Identify 3-8 business domains. For each domain, determine which modules belong t
 8. **Split signal — independent persistence**: If a module contains repo/service/table nodes pointing to different persistent entities (different table names, different repository classes), those entities have independent lifecycles and belong to different domains.
 9. **Merge condition**: Only merge modules into the same domain when ALL of: (a) they share the same core entity noun, (b) their tags overlap >50%, (c) they have direct cross-module call edges. If any condition fails, keep them separate.
 10. **Prefer-split principle**: When uncertain, err on the side of more domains. An over-split domain graph can be refined by merging; an over-merged graph has lost domain boundaries permanently.
+11. **Exclude pure-documentation modules**: Modules whose paths are exclusively documentation directories (e.g. `docs/`, `doc/`, `docs/PROCESS/`, `docs/STATE/`) do NOT form business domains. Do NOT create a domain for documentation-only module groups. Documentation modules may be assigned to a code domain if they describe that domain's behavior, but never constitute a domain on their own.
 
 ## Split/Merge Decision Process
 

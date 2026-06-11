@@ -27,7 +27,7 @@ BASE_TOKENS    = 10_000    # agent prompt + metadata per group
 TOKEN_PER_LOC  = 4         # ~4 tokens per line of code
 TOKEN_PER_FILE = 500       # output accumulation per file (nodes + edges + desc)
 MIN_GROUPS     = 3         # minimum parallelism
-MAX_CONCURRENT = 5         # platform constraint
+MAX_CONCURRENT = 10        # platform constraint
 
 
 def estimate_tokens(loc: int, file_count: int) -> int:

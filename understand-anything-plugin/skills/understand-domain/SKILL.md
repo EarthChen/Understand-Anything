@@ -212,19 +212,20 @@ This phase uses different strategies depending on Path:
    ```
 2. Verify one `domain-<name>.json` file exists in `intermediate/` for each domain in the discovery.
 
-#### Phase 4c: Flow Extraction (parallel, up to 5 concurrent)
+#### Phase 4c: Flow Extraction (parallel, up to 10 concurrent)
 
 1. Read the `domain-flow-extractor` agent prompt from `$PLUGIN_ROOT/agents/domain-flow-extractor.md`
 2. **Domain-level incremental detection:** For each domain in `domain-discovery.json`, compute a content fingerprint of the domain's KG subset (`intermediate/domain-<name>.json`). Store fingerprints in `$PROJECT_ROOT/.understand-anything/intermediate/domain-fingerprints.json`. Compare against the previous run's fingerprints (if file exists). Domains with unchanged fingerprints are eligible for skip.
 3. **Before dispatching**, unless `--full` was passed, detect already-extracted domains by checking if `intermediate/flows-<name>.json` exists, is non-empty, and contains **valid JSON with a non-empty `flows` array**. Skip domains that pass all three checks (this enables automatic resume when a previous run was interrupted). If `--full` was passed, re-extract all domains (checkpoint and `flows-*.json` files were deleted in Phase 1). If an output file exists but contains invalid JSON (e.g. truncated from a crash), or the `flows` array is empty/missing, treat it as incomplete and re-process. If all domains are complete, skip directly to Phase 4d.
-4. For each remaining domain in `domain-discovery.json`:
+4. **Filter documentation-only domains:** Before dispatching, skip any domain whose `modules` are all documentation paths (e.g. `docs/`, `doc/`, `docs/PROCESS/`). Documentation modules do not contain business logic and cannot produce meaningful flows. The merge script also filters them as a safety net.
+5. For each remaining domain in `domain-discovery.json`:
    - Read `intermediate/domain-<name>.json` as context
    - Dispatch a subagent with the `domain-flow-extractor` prompt + domain KG subset
    - The agent writes to `intermediate/flows-<name>.json`
-5. Run up to **3 subagents concurrently** (same pattern as `/understand` Phase 2 batches)
-6. If a domain's flow extraction fails, retry once. If it fails again, skip that domain and continue with others.
-7. **Update fingerprints:** After all extractions complete, write the current fingerprints to `domain-fingerprints.json` for future incremental comparisons.
-8. Wait for all to complete.
+6. Run up to **10 subagents concurrently**
+7. If a domain's flow extraction fails, retry once. If it fails again, skip that domain and continue with others.
+8. **Update fingerprints:** After all extractions complete, write the current fingerprints to `domain-fingerprints.json` for future incremental comparisons.
+9. Wait for all to complete.
 
 #### Phase 4d: Merge
 
