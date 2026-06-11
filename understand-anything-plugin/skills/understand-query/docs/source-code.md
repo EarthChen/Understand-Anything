@@ -172,7 +172,7 @@ python ua_query.py kg --service order-service --file OrderController.java --star
 
 | Flag | Type | Description |
 |------|------|-------------|
-| `--service NAME` | string | Target service (required) |
+| `--service NAME` | string | Target service (omit with `--auto-discover`) |
 | `--query KEYWORDS` | string | Search keywords — **comma-separated for multi-keyword parallel search** (required) |
 | `--type TYPE` | string | Filter matches by node type (class, function, file) |
 | `--limit N` | int | Max matched nodes (default: 5) |
@@ -180,6 +180,10 @@ python ua_query.py kg --service order-service --file OrderController.java --star
 | `--source` | boolean | Include source code of top match's file |
 | `--symbol NAME` | string | Extract specific method/class from source (with `--source`) |
 | `--business` | boolean | Include business landscape context search |
+| `--wiki` | boolean | **NEW:** Include wiki domain detail for matched feature |
+| `--domain-flows` | boolean | **NEW:** Include domain flow steps for matched feature |
+| `--verify-source` | boolean | **NEW:** Force source code read for top 3 matches to cross-check wiki/domain data |
+| `--auto-discover` | boolean | **NEW:** Auto-detect service via business+wiki+KG search (omit `--service`) |
 
 **Key behaviors:**
 
@@ -222,7 +226,11 @@ python ua_query.py trace --service my-service --query "Validator,OrderValidator"
 }
 ```
 
-**Agent usage:** For "How does X work?" questions, use `trace --source --business` as the **first and often only** call needed. If trace returns empty, follow the hint: grep workspace or try a different service. **Always include `--business`.**
+**Agent usage:** For "How does X work?" questions, use `trace --source --business --wiki --verify-source` or `ask --depth full`. If trace returns empty, follow the hint: grep workspace or try a different service.
+
+**Source verification:** When `--verify-source` is enabled, the response includes a `sourceVerification` section with actual source code for the top 3 matched nodes. Agents MUST check this section to confirm wiki/domain claims before presenting answers as factual.
+
+**Auto-discover:** When `--auto-discover` is used, `trace` searches business landscape, wiki, and KG across all services to find the most relevant service. The response includes `autoDiscovered: true` when the service was automatically detected.
 
 ---
 
@@ -364,14 +372,24 @@ No extra call needed to locate the type's definition — `typeRef.filePath` tell
 
 These recipes show how to combine capabilities to answer complex questions with fewer tool calls than naive sequential querying.
 
+### Recipe 0: "What is X business function?" (1 call — NEW)
+
+**Naive approach (5+ calls):** services → business → trace → wiki → domain → source  
+**Optimized:**
+
+```bash
+# Single call: ask auto-discovers service, traces, fetches wiki+domain, verifies source
+python ua_query.py --format md ask --query "中文名,EnglishName,Synonym" --depth full
+```
+
 ### Recipe 1: "How does feature X work end-to-end?" (1–2 calls)
 
 **Naive approach (5+ calls):** search → neighbors → source → business → structure  
 **Optimized:**
 
 ```bash
-# Single call: trace does search + neighbors + source + business in one
-python ua_query.py trace --service S --query "中文名,ClassName,Synonym" --source --business
+# Single call: trace with all flags
+python ua_query.py trace --auto-discover --query "中文名,ClassName,Synonym" --source --business --wiki --domain-flows --verify-source
 ```
 
 If `trace` returns `matchedNodes` with `filePath` + `lineRange`, you have everything. Only call `structure --file` if you need param/return types.
@@ -470,11 +488,12 @@ python ua_query.py structure --service order-svc --file OrderServiceImpl.java
 
 | Question Type | Start With | Then (if needed) |
 |---------------|-----------|------------------|
-| "How does X work?" | `trace --source --business` | `structure --file` for types |
+| "What is X business function?" | `ask --depth full` | Nothing — one call covers all |
+| "How does X work?" | `trace --auto-discover --source --business --wiki --verify-source` | `structure --file` for types |
 | "Find all @Annotation classes" | `structure --annotation` | `kg --neighbors` for relationships |
 | "Who calls X?" | `kg --neighbors X --direction inbound` | `structure --property-type X` |
 | "What's the class hierarchy?" | `structure --chain X` | `structure --implementors` |
-| "What services have feature Y?" | `business --search Y` | `trace` per service |
+| "What services have feature Y?" | `ask --depth quick` or `business --search Y` | `trace` per service |
 | "Read this source file" | `kg --file F --toc` | `kg --file F --start N --end M` |
 | "Cross-service dependency?" | `business --panorama` | `trace` in source + target service |
 | "Which DTO is used where?" | `structure --param-type DTO` | `typeRef` in results (no extra call) |

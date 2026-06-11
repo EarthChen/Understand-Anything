@@ -1,8 +1,13 @@
 # Business & Domain Queries
 
-Detailed reference for business landscape, wiki, and domain graph queries using `business`, `wiki`, and `domain` subcommands.
+Detailed reference for business landscape, wiki, and domain graph queries using `business`, `wiki`, `domain`, and the new `ask` subcommands.
 
-> **Quick start:** For business context, start with `business --search`:
+> **Quick start:** For business questions, use `ask` (auto-discovers service, traces, verifies source):
+> ```bash
+> python ua_query.py --format md ask --query "关键词,keyword" --depth full
+> ```
+>
+> For manual business context, use `business --search`:
 > ```bash
 > python ua_query.py business --search "关键词,keyword"
 > ```
@@ -98,6 +103,49 @@ python ua_query.py structure --service payment-svc --annotation MoaProvider
 ```
 
 **Key principle:** Business context tells you WHAT → Wiki tells you HOW (summary) → KG/trace tells you WHERE (code) → Structure tells you TYPE details (signatures).
+
+---
+
+## `ask` — Business Question Answering (NEW)
+
+Answers business questions end-to-end with a single command. Auto-discovers the target service, runs KG trace, fetches wiki domain detail, retrieves domain flows, and verifies against source code.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--query Q` | string | required | Natural language question or comma-separated keywords |
+| `--depth LEVEL` | string | `standard` | `quick`, `standard`, or `full` |
+| `--service S` | string | auto | Override service auto-discovery |
+| `--limit N` | int | 5 | Max matched nodes |
+
+**Depth levels:**
+
+- **quick**: Business landscape search only — fast domain overview
+- **standard**: + KG trace + wiki domain detail — understanding a feature
+- **full**: + domain flows + source code verification — **verified factual answers (recommended)**
+
+**Examples:**
+
+```bash
+# Full verified answer (recommended for any factual question)
+python ua_query.py --format md ask --query "火箭,rocket,RocketReward" --depth full
+
+# Quick domain check
+python ua_query.py ask --query "亲密度,intimacy" --depth quick
+
+# Override service when you know which one
+python ua_query.py ask --query "家族,Family" --service ultron-relation --depth standard
+```
+
+**Auto-discovery strategy:**
+
+1. Search business landscape for matching domains
+2. If no business results, search wiki across all services
+3. If no wiki results, scan KG of services with data layers
+4. Select service with highest vote count
+
+**Source verification (--depth full):**
+
+The response includes a `sourceVerification` section with actual source code for the top 3 matched nodes. This allows agents to confirm that wiki/domain descriptions match the actual implementation.
 
 ---
 

@@ -195,6 +195,12 @@ python ua_query.py --format md business --search "order"
 
 ---
 
+## Server Configuration
+
+The CLI defaults to `http://172.18.228.71:3001`. Override with `UNDERSTAND_SERVER` env var or `--server` flag.
+
+If the server is unreachable, the CLI exits with code 2 and prints startup instructions. Agents should report this to the user rather than attempting to auto-start or probe alternative addresses.
+
 ## Environment Variables
 
 | Variable | Purpose | Default |

@@ -11,7 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote as url_quote, urlencode
 
 DEFAULT_SERVER = "http://172.18.228.71:3001"
-DEFAULT_TIMEOUT = 30
+DEFAULT_TIMEOUT = 3
 
 _IMPL_SUFFIXES = ("ServiceImpl", "WebServiceImpl", "WebService", "Service", "Controller", "Handler", "Manager", "Facade")
 _CONFIG_SUFFIXES = ("Properties", "Config", "Configuration", "Constants", "Enum", "DTO", "BO", "VO", "Request", "Response", "Param")
@@ -47,6 +47,13 @@ def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT) -> Any:
         ) from e
 
 
+def _detect_server(configured: str) -> str:
+    """Verify configured server is reachable. If env var is set, use it directly."""
+    if os.environ.get("UNDERSTAND_SERVER"):
+        return configured
+    return configured
+
+
 def build_url(server: str, path: str, params: dict[str, str] | None = None) -> str:
     base = server.rstrip("/")
     if params:
@@ -61,18 +68,110 @@ def format_output(data: Any, fmt: str) -> str:
 
 
 def _format_markdown(data: Any) -> str:
-    if isinstance(data, dict) and "domains" in data:
+    if isinstance(data, dict) and "domains" in data and not data.get("question"):
         lines = ["# Business Domains", ""]
         for d in data["domains"]:
             lines.append(f"## {d.get('name', d.get('id', '?'))}")
             lines.append(d.get("summary", ""))
             lines.append("")
         return "\n".join(lines)
-    if isinstance(data, dict) and "results" in data:
+    if isinstance(data, dict) and "results" in data and not data.get("matchedNodes"):
         lines = ["# Search Results", ""]
         for r in data["results"]:
             lines.append(f"- **{r.get('name', r.get('id'))}**: {r.get('match', r.get('summary', ''))}")
         return "\n".join(lines)
+
+    # Trace result rendering
+    if isinstance(data, dict) and "matchedNodes" in data:
+        lines = []
+        svc = data.get("service", "?")
+        q = data.get("query", data.get("question", "?"))
+        lines.append(f"# Trace: {q} (service: {svc})")
+        if data.get("autoDiscovered"):
+            lines.append(f"> Auto-discovered service: **{svc}**")
+        lines.append("")
+
+        # Matched nodes
+        nodes = data.get("matchedNodes", [])
+        if nodes:
+            lines.append(f"## Matched Nodes ({len(nodes)})")
+            for n in nodes:
+                fp = n.get("filePath", "")
+                lr = n.get("lineRange", "")
+                loc = f" `{fp}:{lr}`" if fp else ""
+                lines.append(f"- **{n.get('name', '?')}** ({n.get('type', '?')}, relevance={n.get('relevance', '?')}){loc}")
+                if n.get("summary"):
+                    lines.append(f"  {n['summary'][:120]}")
+            lines.append("")
+
+        # Neighbors
+        nbr = data.get("neighbors")
+        if nbr and nbr.get("neighbors"):
+            lines.append(f"## Neighbors (center: {nbr.get('center', {}).get('name', '?')}, edges: {nbr.get('totalEdges', 0)})")
+            for n in nbr["neighbors"][:15]:
+                lines.append(f"- [{n.get('direction', '?')}] **{n.get('name', '?')}** ({n.get('type', '?')}) via _{n.get('edgeType', '?')}_")
+            lines.append("")
+
+        # Business context
+        biz = data.get("businessContext", [])
+        if biz:
+            lines.append("## Business Context")
+            for b in biz[:5]:
+                lines.append(f"- **{b.get('name', b.get('id', '?'))}**: {b.get('summary', b.get('match', ''))[:150]}")
+            lines.append("")
+
+        # Wiki domain
+        wiki = data.get("wikiDomain")
+        if wiki:
+            lines.append("## Wiki Domain Detail")
+            lines.append(f"**{wiki.get('name', wiki.get('domain', '?'))}**")
+            if wiki.get("summary"):
+                lines.append(f"\n{wiki['summary'][:500]}")
+            rules = wiki.get("businessRules", [])
+            if rules:
+                lines.append("\n### Business Rules")
+                for r in rules[:10]:
+                    rid = r.get("id", "?")
+                    lines.append(f"- **{rid}**: {r.get('description', r.get('rule', ''))[:200]}")
+            entities = wiki.get("entities", [])
+            if entities:
+                lines.append("\n### Entities")
+                for e in entities[:10]:
+                    lines.append(f"- **{e.get('name', '?')}**: {e.get('description', '')[:100]}")
+            lines.append("")
+
+        # Domain flows
+        flows = data.get("domainFlows", [])
+        if flows:
+            lines.append("## Domain Flows")
+            for fd in flows:
+                flow = fd.get("flow", {})
+                steps = fd.get("steps", [])
+                lines.append(f"\n### {flow.get('name', '?')}")
+                if flow.get("summary"):
+                    lines.append(flow["summary"][:200])
+                for i, s in enumerate(steps, 1):
+                    lines.append(f"  {i}. {s.get('name', '?')} — {s.get('summary', '')[:100]}")
+            lines.append("")
+
+        # Source
+        src = data.get("source")
+        if isinstance(src, dict) and src.get("content"):
+            lines.append(f"## Source: {src.get('file', '?')} (lines {src.get('lineRange', '?')})")
+            lines.append(f"```java\n{src['content'][:4000]}\n```")
+            lines.append("")
+
+        # Source verification
+        sv = data.get("sourceVerification", [])
+        if sv:
+            lines.append("## Source Verification")
+            for v in sv:
+                lines.append(f"\n### {v.get('node', '?')} (`{v.get('file', '?')}:{v.get('lineRange', '')}`)")
+                lines.append(f"```java\n{v.get('content', '')[:2000]}\n```")
+            lines.append("")
+
+        return "\n".join(lines)
+
     return f"```json\n{json.dumps(data, ensure_ascii=False, indent=2)}\n```"
 
 
@@ -145,14 +244,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     meta_cmd.add_argument("--stale", action="store_true")
 
     trace = sub.add_parser("trace", help="Aggregate: search→neighbors→source in one call")
-    trace.add_argument("--service", required=True)
+    trace.add_argument("--service", help="Target service (omit with --auto-discover)")
     trace.add_argument("--query", required=True, help="Search keywords (comma-separated for multi-keyword: '挚友,ClosedFriend')")
     trace.add_argument("--type", help="Filter matched nodes by type (class, function, file...)")
     trace.add_argument("--limit", type=int, default=5, help="Max matched nodes to return")
     trace.add_argument("--source", action="store_true", help="Include source code of top match")
     trace.add_argument("--symbol", help="Extract specific method/class from source (use with --source)")
     trace.add_argument("--business", action="store_true", help="Include business context search")
+    trace.add_argument("--wiki", action="store_true", help="Include wiki domain detail for matched feature")
+    trace.add_argument("--domain-flows", action="store_true", help="Include domain flow steps for matched feature")
+    trace.add_argument("--verify-source", action="store_true", help="Force source code read to verify wiki/domain claims")
+    trace.add_argument("--auto-discover", action="store_true", help="Auto-detect service via business landscape search")
     trace.add_argument("--fusion", choices=["none", "rrf"], default="rrf", help="Search fusion strategy (default: rrf)")
+
+    ask = sub.add_parser("ask", help="Answer a business question: auto-discover service, trace, wiki, domain, verify source")
+    ask.add_argument("--query", required=True, help="Natural language question (Chinese or English)")
+    ask.add_argument("--depth", choices=["quick", "standard", "full"], default="standard", help="Depth: quick=business only, standard=+trace+wiki, full=+domain+source-verify")
+    ask.add_argument("--service", help="Override auto-discovery with specific service")
+    ask.add_argument("--limit", type=int, default=5, help="Max matched nodes")
+    ask.add_argument("--fusion", choices=["none", "rrf"], default="rrf", help="Search fusion strategy")
 
     struct = sub.add_parser("structure", help="Code structure: signatures, annotations, types")
     struct.add_argument("--service", required=True)
@@ -415,20 +525,151 @@ def _search_api(server: str, query: str, service: str | None = None, scope: str 
     return data.get("results", [])
 
 
+def _auto_discover_service(server: str, query: str) -> tuple[str | None, list[dict]]:
+    """Search business landscape + wiki + KG to find which service hosts a feature. Returns (service_name, biz_results)."""
+    service_votes: dict[str, int] = {}
+    biz_results: list[dict] = []
+
+    # Strategy 1: Business landscape search
+    try:
+        biz_results = _search_api(server, query, scope="business", limit=10)
+        for r in biz_results:
+            for svc in r.get("services", []):
+                svc_name = svc if isinstance(svc, str) else svc.get("name", "")
+                if svc_name:
+                    service_votes[svc_name] = service_votes.get(svc_name, 0) + 3
+            facets = r.get("facets", {})
+            if isinstance(facets, dict):
+                for _facet_name, facet_data in facets.items():
+                    if isinstance(facet_data, dict):
+                        for svc in facet_data.get("services", []):
+                            svc_name = svc if isinstance(svc, str) else svc.get("name", "")
+                            if svc_name:
+                                service_votes[svc_name] = service_votes.get(svc_name, 0) + 2
+    except RuntimeError:
+        pass
+
+    # Strategy 2: Wiki search (catches service-local domains not in business landscape)
+    if not service_votes:
+        try:
+            wiki_results = _search_api(server, query, scope="wiki", limit=10)
+            for r in wiki_results:
+                svc_name = r.get("service", "")
+                if svc_name:
+                    service_votes[svc_name] = service_votes.get(svc_name, 0) + 2
+            if wiki_results:
+                biz_results = wiki_results
+        except RuntimeError:
+            pass
+
+    # Strategy 3: KG search across all services with wiki/kg data
+    if not service_votes:
+        try:
+            svc_list = fetch_json(build_url(server, "/api/services", {}))
+            for svc in svc_list.get("services", []):
+                svc_name = svc.get("name", "")
+                layers = svc.get("dataLayers", {})
+                if not (layers.get("wiki") or layers.get("kg")):
+                    continue
+                try:
+                    kg_hits = _search_api(server, query, service=svc_name, scope="kg", limit=3)
+                    if kg_hits:
+                        best_score = max(_score_node_relevance(n, query) for n in kg_hits)
+                        if best_score > 3.0:
+                            service_votes[svc_name] = service_votes.get(svc_name, 0) + int(best_score)
+                except RuntimeError:
+                    continue
+        except RuntimeError:
+            pass
+
+    if service_votes:
+        best = max(service_votes, key=lambda k: service_votes[k])
+        return best, biz_results
+    return None, biz_results
+
+
+def _fetch_wiki_domain(server: str, service: str, query: str) -> dict | None:
+    """Try to find and fetch wiki domain detail matching the query."""
+    try:
+        wiki_results = _search_api(server, query, service=service, scope="wiki", limit=5)
+        domain_names = [r.get("name", r.get("id", "")) for r in wiki_results if r.get("type") in ("domain", None, "")]
+        if not domain_names:
+            domain_names = [r.get("name", r.get("id", "")) for r in wiki_results[:3]]
+        for name in domain_names:
+            if not name:
+                continue
+            slug = name.replace(" ", "-").lower()
+            try:
+                svc_encoded = url_quote(service, safe="")
+                domain_encoded = url_quote(slug, safe="")
+                return fetch_json(build_url(server, f"/api/wiki/service/{svc_encoded}/domain/{domain_encoded}", {}))
+            except RuntimeError:
+                continue
+        return None
+    except RuntimeError:
+        return None
+
+
+def _fetch_domain_flows(server: str, service: str, query: str) -> list[dict] | None:
+    """Fetch domain graph flows matching the query."""
+    try:
+        params: dict[str, str] = {"service": service, "file": "domain-graph.json"}
+        data = fetch_json(build_url(server, "/api/graph", params))
+        flows = [n for n in data.get("nodes", []) if n.get("type") == "flow"]
+        if not flows:
+            return None
+        q_lower = query.lower()
+        keywords = [k.strip().lower() for k in query.split(",") if k.strip()]
+        relevant = []
+        for f in flows:
+            name = f.get("name", "").lower()
+            summary = f.get("summary", "").lower()
+            if any(kw in name or kw in summary for kw in keywords):
+                relevant.append(f)
+        if not relevant:
+            relevant = flows[:10]
+        flow_details = []
+        edges = data.get("edges", [])
+        nodes = data.get("nodes", [])
+        for flow in relevant[:5]:
+            step_edges = sorted(
+                [e for e in edges if e.get("source") == flow["id"] and e.get("type") == "flow_step"],
+                key=lambda e: e.get("weight", 0),
+            )
+            step_ids = [e["target"] for e in step_edges]
+            steps = [n for n in nodes if n["id"] in step_ids]
+            flow_details.append({"flow": flow, "steps": steps})
+        return flow_details
+    except RuntimeError:
+        return None
+
+
 def cmd_trace(args: argparse.Namespace) -> Any:
     """Aggregate command: search → neighbors → source in one call."""
-    if not args.service:
-        raise SystemExit("trace requires --service")
+    if not args.service and not getattr(args, "auto_discover", False):
+        raise SystemExit("trace requires --service (or use --auto-discover)")
     if not args.query:
         raise SystemExit("trace requires --query")
 
     keywords = [k.strip() for k in args.query.split(",") if k.strip()]
-    result: dict[str, Any] = {"service": args.service, "query": args.query, "keywords": keywords}
+
+    # Auto-discover service if needed
+    service = args.service
+    auto_biz: list[dict] = []
+    if not service and getattr(args, "auto_discover", False):
+        service, auto_biz = _auto_discover_service(args.server, args.query)
+        if not service:
+            return {"error": f"Could not auto-discover service for '{args.query}'. Use --service explicitly.", "businessSearch": auto_biz}
+
+    result: dict[str, Any] = {"service": service, "query": args.query, "keywords": keywords}
+    if auto_biz:
+        result["autoDiscovered"] = True
+        result["businessSearchHits"] = len(auto_biz)
 
     # Step 1: Search KG via server-side BM25 with ALL keywords
     seen_ids: dict[str, tuple[dict, float, str]] = {}  # id -> (node, best_score, best_keyword)
     for kw in keywords:
-        kw_matched = _search_api(args.server, kw, service=args.service, scope="kg", limit=50, fusion=args.fusion)
+        kw_matched = _search_api(args.server, kw, service=service, scope="kg", limit=50, fusion=args.fusion)
         if args.type:
             kw_matched = [n for n in kw_matched if n.get("type") == args.type]
         for node in kw_matched:
@@ -443,14 +684,14 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     if not matched:
         try:
             combined_query = " ".join(keywords)
-            flow_matches = _search_api(args.server, combined_query, service=args.service, scope="domain", limit=5)
+            flow_matches = _search_api(args.server, combined_query, service=service, scope="domain", limit=5)
             flow_matches = [n for n in flow_matches if n.get("type") == "flow"]
             if flow_matches:
                 best_flow = flow_matches[0]
                 code_keywords = _extract_code_keywords(best_flow.get("name", ""))
                 best_kw, best_matched, best_top_score = "", [], 0.0
                 for kw in code_keywords:
-                    re_matched = _search_api(args.server, kw, service=args.service, scope="kg", limit=50, fusion=args.fusion)
+                    re_matched = _search_api(args.server, kw, service=service, scope="kg", limit=50, fusion=args.fusion)
                     if re_matched:
                         top_score = max(_score_node_relevance(n, kw) for n in re_matched[:10])
                         specificity = len(kw) / 10.0
@@ -495,7 +736,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     # Empty result guidance
     if not matched:
         result["hint"] = (
-            f"No KG nodes matched '{args.query}' in service '{args.service}'. "
+            f"No KG nodes matched '{args.query}' in service '{service}'. "
             f"Try: (1) grep workspace for '{args.query}' directly, "
             f"(2) check if Flutter/client code is in a separate module not indexed in this service's KG, "
             f"(3) use 'business --search \"{args.query}\"' for domain-level context."
@@ -511,7 +752,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     # Step 2: Get neighbors for top match (most relevant node)
     top = matched[0]
     try:
-        nbr_params: dict[str, str] = {"service": args.service, "graph": "kg", "node": top["id"], "direction": "both", "depth": "1"}
+        nbr_params: dict[str, str] = {"service": service, "graph": "kg", "node": top["id"], "direction": "both", "depth": "1"}
         nbr_data = fetch_json(build_url(args.server, "/api/graph-query/neighbors", nbr_params))
         center = nbr_data.get("center") or {}
         result["neighbors"] = {
@@ -546,7 +787,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
 
     if file_path and args.source:
         try:
-            src_params: dict[str, str] = {"file": file_path, "service": args.service, "mode": "graph"}
+            src_params: dict[str, str] = {"file": file_path, "service": service, "mode": "graph"}
             if line_range and isinstance(line_range, list) and len(line_range) == 2:
                 start = max(1, line_range[0] - 3)
                 end = line_range[1] + 2
@@ -577,10 +818,122 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     # Step 4: Business context
     if args.business:
         try:
-            biz_results = _search_api(args.server, args.query, scope="business", limit=5)
-            result["businessContext"] = biz_results[:5]
+            if auto_biz:
+                result["businessContext"] = auto_biz[:5]
+            else:
+                biz_results = _search_api(args.server, args.query, scope="business", limit=5)
+                result["businessContext"] = biz_results[:5]
         except RuntimeError:
             result["businessContext"] = None
+
+    # Step 5: Wiki domain detail
+    if getattr(args, "wiki", False) or getattr(args, "verify_source", False):
+        wiki_data = _fetch_wiki_domain(args.server, service, args.query)
+        if wiki_data:
+            result["wikiDomain"] = wiki_data
+
+    # Step 6: Domain flows with steps
+    if getattr(args, "domain_flows", False):
+        flow_data = _fetch_domain_flows(args.server, service, args.query)
+        if flow_data:
+            result["domainFlows"] = flow_data
+
+    # Step 7: Source verification — read source for top matches to cross-check wiki/domain claims
+    if getattr(args, "verify_source", False) and matched and not result.get("source"):
+        verify_targets = matched[:3]
+        verifications = []
+        for node in verify_targets:
+            fp = node.get("filePath")
+            lr = node.get("lineRange")
+            if not fp:
+                continue
+            try:
+                vp: dict[str, str] = {"file": fp, "service": service, "mode": "graph"}
+                if lr and isinstance(lr, list) and len(lr) == 2:
+                    vp["start"] = str(max(1, lr[0] - 3))
+                    vp["end"] = str(min(lr[1] + 2, lr[0] + 200))
+                else:
+                    vp["start"] = "1"
+                    vp["end"] = "100"
+                src = fetch_json(build_url(args.server, "/api/source", vp))
+                verifications.append({
+                    "node": node.get("name", ""),
+                    "file": fp,
+                    "lineRange": lr,
+                    "content": src.get("content", "")[:3000],
+                })
+            except RuntimeError:
+                continue
+        if verifications:
+            result["sourceVerification"] = verifications
+
+    return result
+
+
+def cmd_ask(args: argparse.Namespace) -> Any:
+    """Answer a business question end-to-end: auto-discover → trace → wiki → domain → source-verify."""
+    query = args.query
+    depth = getattr(args, "depth", "standard")
+
+    result: dict[str, Any] = {"question": query, "depth": depth}
+
+    # Step 1: Auto-discover service (or use provided)
+    service = args.service
+    biz_results: list[dict] = []
+    if not service:
+        service, biz_results = _auto_discover_service(args.server, query)
+    if not service:
+        result["error"] = f"Could not determine which service contains '{query}'. Provide --service."
+        result["businessSearch"] = biz_results
+        return result
+
+    result["service"] = service
+    result["autoDiscovered"] = not args.service
+
+    # Step 2: Business context
+    if not biz_results:
+        try:
+            biz_results = _search_api(args.server, query, scope="business", limit=5)
+        except RuntimeError:
+            pass
+    result["businessContext"] = biz_results[:5] if biz_results else []
+
+    if depth == "quick":
+        return result
+
+    # Step 3: Trace (KG search + neighbors + source)
+    class _NS:
+        pass
+    trace_args = _NS()
+    trace_args.server = args.server
+    trace_args.service = service
+    trace_args.query = query
+    trace_args.type = None
+    trace_args.limit = getattr(args, "limit", 5)
+    trace_args.source = depth == "full"
+    trace_args.symbol = None
+    trace_args.business = False
+    trace_args.wiki = True
+    trace_args.domain_flows = depth == "full"
+    trace_args.verify_source = depth == "full"
+    trace_args.auto_discover = False
+    trace_args.fusion = getattr(args, "fusion", "rrf")
+    trace_args.format = getattr(args, "format", "json")
+
+    trace_result = cmd_trace(trace_args)
+
+    result["matchedNodes"] = trace_result.get("matchedNodes", [])
+    result["neighbors"] = trace_result.get("neighbors")
+    if trace_result.get("wikiDomain"):
+        result["wikiDomain"] = trace_result["wikiDomain"]
+    if trace_result.get("domainFlows"):
+        result["domainFlows"] = trace_result["domainFlows"]
+    if trace_result.get("source"):
+        result["source"] = trace_result["source"]
+    if trace_result.get("sourceVerification"):
+        result["sourceVerification"] = trace_result["sourceVerification"]
+    if trace_result.get("discoveredVia"):
+        result["discoveredVia"] = trace_result["discoveredVia"]
 
     return result
 
@@ -649,8 +1002,9 @@ def _extract_symbol(content: str, symbol: str) -> str | None:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    args.server = _detect_server(args.server)
     try:
-        handlers = {"kg": cmd_kg, "domain": cmd_domain, "wiki": cmd_wiki, "business": cmd_business, "services": cmd_services, "meta": cmd_meta, "trace": cmd_trace, "structure": cmd_structure}
+        handlers = {"kg": cmd_kg, "domain": cmd_domain, "wiki": cmd_wiki, "business": cmd_business, "services": cmd_services, "meta": cmd_meta, "trace": cmd_trace, "structure": cmd_structure, "ask": cmd_ask}
         data = handlers[args.command](args)
         print(format_output(data, args.format))
         return 0

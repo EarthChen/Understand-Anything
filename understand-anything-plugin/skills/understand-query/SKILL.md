@@ -6,21 +6,30 @@ argument-hint: ["<subcommand> [--server URL] [--format json|md] [--verbose] [sub
 
 # /understand-query
 
-Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the shared Understand-Anything API server. Use seven progressive layers — from service discovery and business landscape down to code structure — to answer questions without loading entire graphs into context.
+Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the shared Understand-Anything API server. Use eight progressive layers — from service discovery and business landscape down to source-verified code — to answer questions without loading entire graphs into context.
+
+## Source Verification Rule (MANDATORY)
+
+**For any question about business logic, flows, or implementation details, the agent MUST verify answers against actual source code.** Wiki and domain graph data may be stale — source code is the ground truth.
+
+### Verification Protocol
+
+1. **Always use `--verify-source`** (or `--depth full` with `ask`) for questions about:
+   - Business rules and their enforcement
+   - Flow steps and their implementation
+   - Integration points (RPC, Kafka, Redis)
+   - Error handling and edge cases
+2. **Cross-check wiki claims**: If wiki says "Method X does Y", read the actual source to confirm.
+3. **Flag discrepancies**: If source code contradicts wiki/domain data, report the discrepancy explicitly.
+4. **Never trust wiki alone** for: parameter validation logic, error codes, conditional branches, or concurrency controls.
+
+---
 
 ## Execution Mode: Sub-Agent (Default)
 
 **This skill MUST be delegated to a sub-agent by default.** All understand-query operations are read-only exploration and lookup tasks — the caller only cares about the final result, not the intermediate process.
 
-### Why Sub-Agent?
-
-- Query operations involve multiple CLI calls, output parsing, and drill-down — noisy intermediate steps that pollute the parent context.
-- The caller only needs a structured answer, not raw CLI output.
-- Sub-agent isolation keeps the parent context clean for the actual task at hand.
-
 ### Dispatch Instructions (Cross-Platform)
-
-When this skill is triggered, the parent agent MUST delegate to a sub-agent using **whichever mechanism the current platform provides**:
 
 | Platform | Mechanism | Type |
 |----------|-----------|------|
@@ -28,74 +37,115 @@ When this skill is triggered, the parent agent MUST delegate to a sub-agent usin
 | **Claude Code** | `dispatch_agent` / `Task` tool | General-purpose agent with shell access |
 | **Codex** | Platform-native sub-agent / task dispatch | Agent with shell access |
 
-### Required Context for the Sub-Agent Prompt
+### Intent Classification + Sub-Agent Templates
 
-Regardless of platform, pass these to the sub-agent:
+Before dispatching, classify the user's question into one of these intents and use the corresponding template:
 
-1. **User's question** — the original query intent verbatim.
-2. **Project directory** — path to the project containing `.understand-anything/` data.
-3. **CLI location** — path to `ua_query.py` (this skill's directory).
-4. **API server** — `http://172.18.228.71:3001` (default). Instruct sub-agent to verify server is running; if not, start it via `cd <plugin-path>/packages/dashboard && pnpm run serve`.
-5. **This SKILL.md content** (or the relevant sections for the query type).
-6. **Output expectation** — return a **concise, structured summary** answering the question, not raw CLI dumps.
-
-### Sub-Agent Prompt Template
+#### Intent A: Business Function Understanding
+**Trigger:** "X是什么功能？", "X的完整流程是什么？", "How does X work?"
 
 ```
 You are executing an understand-query skill task.
 
 **User Question:** <the actual question>
-**Project Directory:** <path to the project with .understand-anything/ data>
+**Project Directory:** <path>
 **CLI Path:** <path to ua_query.py>
-**API Server:** Ensure the API server is running at http://172.18.228.71:3001.
-                If not, start it: cd <plugin-path>/packages/dashboard && pnpm run serve
+**API Server:** http://172.18.228.71:3001 (default). If unreachable, report to user and stop.
 
-Follow the SKILL.md instructions below to execute the appropriate ua_query.py
-commands. Use --format md for readable output. Combine multiple calls with &&.
+Execute this single command:
+python ua_query.py --format md ask --query "<expanded keywords>" --depth full
 
-<paste relevant SKILL.md sections here>
+The `ask` command auto-discovers the service, traces KG, fetches wiki, domain flows,
+and verifies source code — all in one call.
 
-Return a clear, structured summary addressing the user's question.
-Do NOT return raw CLI output — synthesize findings into an answer.
+IMPORTANT: Review the sourceVerification section in the output. If source code contradicts
+wiki/domain descriptions, explicitly note the discrepancy in your answer.
+
+Return a structured Chinese summary with: 业务概述、完整流程、关键实体、业务规则、源码校验结果。
+```
+
+#### Intent B: Code Location / Implementation
+**Trigger:** "X在哪里实现？", "Where is X implemented?", "Find the code for X"
+
+```
+You are executing an understand-query skill task.
+
+**User Question:** <the actual question>
+**CLI Path:** <path to ua_query.py>
+
+Execute:
+python ua_query.py --format md trace --service <SERVICE> --query "<keywords>" --source --business --verify-source
+
+If service is unknown, add --auto-discover and omit --service.
+
+Return: file paths, class names, method signatures, and key source excerpts.
+```
+
+#### Intent C: Impact Analysis
+**Trigger:** "修改X会影响什么？", "What breaks if I change X?"
+
+```
+Execute in sequence:
+1. python ua_query.py trace --service S --query "X" --source --business
+2. python ua_query.py kg --service S --neighbors <top_match_id> --direction inbound
+3. python ua_query.py structure --service S --property-type <ClassName>
+
+Return: dependency graph, affected callers, and risk assessment.
+```
+
+#### Intent D: Cross-Service Investigation
+**Trigger:** "X和Y服务之间怎么交互？", "Cross-service flow for X"
+
+```
+Execute:
+1. python ua_query.py business --panorama
+2. python ua_query.py trace --service svc-a --query "X" --source --business
+3. python ua_query.py trace --service svc-b --query "X" --source
+
+Return: interaction points, RPC contracts, event flows between services.
 ```
 
 ### When NOT to Use Sub-Agent
 
 Skip sub-agent dispatch only when:
 - The parent agent is **already inside a sub-agent** (avoid nesting).
-- The query is a **single trivial command** (e.g., `services --list`) whose result is needed inline for an ongoing implementation task.
+- The query is a **single trivial command** (e.g., `services --list`) whose result is needed inline.
 
 ---
 
 ## Golden Rule for Agents (Read FIRST)
 
-For ANY "How does X work?" or "Where is X implemented?" question, use `trace` as your **first and often only** call:
+For ANY "How does X work?" or "Where is X implemented?" question:
 
+**Option 1 — Single command (recommended):**
 ```bash
-trace --service SERVICE --query "中文关键词,EnglishName,Synonym" --source --business
+python ua_query.py ask --query "中文关键词,EnglishName,Synonym" --depth full
 ```
 
-This single command searches KG, retrieves neighbors, reads source code, and includes business context — replacing 5-7 individual calls. **Always include `--source --business`.**
-
-**Multi-service questions?** Run trace once per relevant service in a **single Shell call**:
-
+**Option 2 — Manual trace with verification:**
 ```bash
-python ua_query.py trace --service svc-a --query "keyword" --source --business && \
-python ua_query.py trace --service svc-b --query "keyword" --source
+python ua_query.py trace --service SERVICE --query "中文关键词,EnglishName,Synonym" --source --business --wiki --domain-flows --verify-source
 ```
 
-**Token efficiency**: Use `--format md` to reduce output size by 30-50%.
+Both approaches search KG, retrieve neighbors, read source code, include business/wiki/domain context, and verify against source. **Option 1 also auto-discovers the service.**
+
+**Multi-service questions?** Run trace once per relevant service:
+
+```bash
+python ua_query.py trace --service svc-a --query "keyword" --source --business --verify-source && \
+python ua_query.py trace --service svc-b --query "keyword" --source --verify-source
+```
 
 ---
 
 ## Agent Efficiency Rules
 
-1. **Batch CLI calls**: Combine multiple CLI commands into ONE Shell call using `&&`.
-2. **Expand keywords before trace**: Always provide 2-4 comma-separated variants (original + English + synonym). This searches all in parallel — no retry needed.
-3. **Use `--format md`** when the output will be read by an agent (not parsed as JSON).
-4. **Use `--business` with trace** to include business landscape context (saves a separate `business --search` call).
-5. **Use `kg --file --toc` before `kg --file`** to see method index first, then batch-read consecutive methods.
-6. **RRF is default for trace** — `trace` uses `fusion=rrf` automatically. Use `--fusion none` only for strict text-only results.
+1. **Prefer `ask` for business questions**: One command replaces 5+ individual calls.
+2. **Batch CLI calls**: Combine multiple CLI commands into ONE Shell call using `&&`.
+3. **Expand keywords before trace**: Always provide 2-4 comma-separated variants (original + English + synonym).
+4. **Use `--format md`** when the output will be read by an agent (not parsed as JSON).
+5. **Use `--verify-source`** for any answer that will be presented as factual to the user.
+6. **RRF is default for trace** — `trace` uses `fusion=rrf` automatically.
 
 ---
 
@@ -103,7 +153,8 @@ python ua_query.py trace --service svc-b --query "keyword" --source
 
 | Subcommand | Purpose | Detail Doc |
 |------------|---------|------------|
-| `trace` | **Start here.** Search→neighbors→source in one call | [source-code.md](docs/source-code.md) |
+| `ask` | **NEW: Start here for business questions.** Auto-discover → trace → wiki → domain → source-verify | This file |
+| `trace` | Search→neighbors→source in one call (with optional wiki/domain/verify) | [source-code.md](docs/source-code.md) |
 | `kg` | Source-level KG: classes, calls, RPC, file annotations | [source-code.md](docs/source-code.md) |
 | `structure` | Code structure: signatures, annotations, param types | [source-code.md](docs/source-code.md) |
 | `business` | Business landscape: domains, interactions, rules | [business-domain.md](docs/business-domain.md) |
@@ -116,19 +167,16 @@ python ua_query.py trace --service svc-b --query "keyword" --source
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--server URL` | `$UNDERSTAND_SERVER` or `http://172.18.228.71:3001` | API server base URL |
+| `--server URL` | `$UNDERSTAND_SERVER` or auto-detect (localhost → fallback IP) | API server base URL |
 | `--format json\|md` | `json` | Output format |
-| `--verbose` | off | Include extra detail (e.g., edges in KG queries) |
+| `--verbose` | off | Include extra detail |
 
 ---
 
 ## Prerequisites
 
 1. **Python 3.10+** required (stdlib only, no external packages).
-2. **API Server must be running:**
-   ```bash
-   cd understand-anything-plugin/packages/dashboard && pnpm run serve
-   ```
+2. **API Server must be running** (auto-detected at localhost:3001 or configured IP).
 3. **Data must be generated** by running relevant skills:
 
 | Skill | Generates |
@@ -140,7 +188,61 @@ python ua_query.py trace --service svc-b --query "keyword" --source
 
 ---
 
-## Seven-Layer Drill-Down Model
+## `ask` — Business Question Answering (NEW)
+
+**One command to answer business questions end-to-end.** Replaces the manual 5-step workflow.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--query Q` | string | required | Natural language question (Chinese or English, comma-separated keywords) |
+| `--depth LEVEL` | string | `standard` | `quick`=business only, `standard`=+trace+wiki, `full`=+domain+source-verify |
+| `--service S` | string | auto | Override auto-discovery |
+| `--limit N` | int | 5 | Max matched nodes |
+| `--fusion MODE` | string | `rrf` | Search fusion strategy |
+
+**Depth levels:**
+
+| Depth | Steps | Use When |
+|-------|-------|----------|
+| `quick` | Business search only | Quick domain overview |
+| `standard` | + KG trace + wiki domain | Understanding a feature |
+| `full` | + domain flows + source verification | **Answering factual questions (RECOMMENDED)** |
+
+**Examples:**
+
+```bash
+# Full business question (recommended)
+python ua_query.py --format md ask --query "火箭,rocket,RocketReward" --depth full
+
+# Quick domain check
+python ua_query.py ask --query "亲密度,intimacy" --depth quick
+
+# Override service
+python ua_query.py ask --query "家族,Family" --service ultron-relation --depth standard
+```
+
+---
+
+## Updated `trace` Flags
+
+New flags added to `trace` for richer context:
+
+| Flag | Description |
+|------|-------------|
+| `--wiki` | Include wiki domain detail for matched feature |
+| `--domain-flows` | Include domain flow steps |
+| `--verify-source` | Force source code read for top 3 matches to cross-check wiki/domain |
+| `--auto-discover` | Auto-detect service via business+wiki+KG search (omit `--service`) |
+
+**Full trace example:**
+
+```bash
+python ua_query.py trace --auto-discover --query "火箭,rocket" --source --business --wiki --domain-flows --verify-source --format md
+```
+
+---
+
+## Eight-Layer Drill-Down Model
 
 | Layer | Subcommand | Answers |
 |-------|-----------|---------|
@@ -152,46 +254,34 @@ python ua_query.py trace --service svc-b --query "keyword" --source
 | 5. Source-Level KG | `kg --service S --neighbors N` | Class relationships and code? |
 | 6. Source Code | `kg --service S --file PATH` | Read actual implementation source code |
 | 7. Code Structure | `structure --service S --annotation X` | Function signatures, annotations, param/return types |
+| **NEW** 8. Source Verify | `trace --verify-source` / `ask --depth full` | Cross-check wiki/domain against live source code |
 
 ---
 
 ## Agent Decision Tree
 
-### Strategy Summary
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ 0. EXPAND keywords: Chinese + English + synonym (comma-separated)       │
-│ 1. ALWAYS start with `meta` to check freshness                          │
-│ 2. Use `services --list` to discover available targets                  │
-│ 3. Start broad (business/wiki) → narrow (kg/neighbors)                  │
-│ 4. For code changes: wiki sourceRef > kg --file > read file             │
-│ 5. For impact analysis: kg --neighbors inbound first                    │
-│ 6. For cross-service: business panorama → links → wiki                  │
-│ 7. For type/annotation queries: use structure                           │
-│ 8. For inheritance/interface: structure --chain / --implementors        │
-│ 9. Prefer --search over full graph download                            │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
 ### Query Paths by Goal
 
-| Path | When | Start With | Detail |
-|------|------|------------|--------|
-| Feature Location | "Where is X implemented?" | `trace --query "X,EnglishX" --source --business` | [source-code.md](docs/source-code.md#path-1-feature-location) |
-| Bug Investigation | "API returns wrong data" | `wiki --type endpoint` → `kg --neighbors` | [source-code.md](docs/source-code.md#path-2-bug-investigation) |
-| Impact Analysis | "What will changing X break?" | `kg --neighbors X --direction inbound` | [source-code.md](docs/source-code.md#path-3-dependency--impact-analysis) |
-| Cross-Platform | "Client/server don't sync" | `business --panorama` → `business --links` | [business-domain.md](docs/business-domain.md#path-4-cross-platform-debugging) |
-| Architecture | "How is system structured?" | `wiki --architecture` → `services --list` | [business-domain.md](docs/business-domain.md#path-5-architecture-understanding) |
-| Data Quality | "Is KB data reliable?" | `meta --stale` | [reference.md](docs/reference.md) |
-| Code-Level Detail | "Find all @X annotations" | `structure --annotation X` | [source-code.md](docs/source-code.md#path-7-code-level-detail-signatures--annotations) |
-| Inheritance/Impl | "Subclasses of X?" | `structure --chain X` / `--implementors I` | [source-code.md](docs/source-code.md#path-8-inheritance--implementation) |
+| Path | When | Start With |
+|------|------|------------|
+| Business Understanding | "What is X?" "Complete flow of X?" | `ask --depth full` |
+| Feature Location | "Where is X implemented?" | `trace --auto-discover --query "X" --source --verify-source` |
+| Bug Investigation | "API returns wrong data" | `wiki --type endpoint` → `kg --neighbors` → `trace --verify-source` |
+| Impact Analysis | "What will changing X break?" | `kg --neighbors X --direction inbound` + `structure --property-type X` |
+| Cross-Platform | "Client/server don't sync" | `business --panorama` → `trace` per service |
+| Architecture | "How is system structured?" | `wiki --architecture` → `services --list` |
+| Data Quality | "Is KB data reliable?" | `meta --stale` |
+| Code-Level Detail | "Find all @X annotations" | `structure --annotation X` |
 
-### Drill-Down Across Layers
+---
 
-When a business/domain query reveals code you need to inspect, follow the natural progression. See detailed patterns in:
-- [Business → Source drill-down](docs/business-domain.md#drill-down-from-business-to-source-code)
-- [Source-level drill-down](docs/source-code.md#drill-down-from-business-context-to-source-code)
+## Server Configuration
+
+The CLI uses `http://172.18.228.71:3001` as the default API server.
+
+- Override with `UNDERSTAND_SERVER` environment variable or `--server` flag.
+- If the server is unreachable, the CLI exits with code 2 and prints startup instructions.
+- The agent should NOT attempt to auto-start the server — report the error to the user.
 
 ---
 
@@ -199,50 +289,34 @@ When a business/domain query reveals code you need to inspect, follow the natura
 
 | Operation | ~Tokens | Recommendation |
 |-----------|---------|----------------|
+| `ask --depth quick` | 200–500 | Always safe |
+| `ask --depth standard` | 1000–3000 | Default for business questions |
+| `ask --depth full` | 3000–8000 | Use for verified answers |
+| `trace --source --business` | 1500–4000 | Primary exploration |
 | `services --list` | 200 | Always safe |
-| `meta --stale` | 150 | Always safe |
 | `business --search Q` | 300 | Prefer over `--list` |
-| `kg --search Q` (fuzzy) | 500–1500 | Typo-tolerant, try first |
-| `wiki --service S --domain D` | 1000–3000 | On demand |
 | `kg --neighbors X` (depth=1) | 500–1500 | Primary traversal |
-| `structure --file PATH` | 200–800 | Get signatures for one file |
-| `structure --annotation X` | 300–1500 | Search by annotation (includes typeRef) |
-| `structure --chain X` | 200–600 | Inheritance chain traversal |
-| `structure --implementors I` | 200–800 | Find all interface implementors |
 | `kg` full graph (no filter) | 5000–50000 | **AVOID** |
-| `domain` full graph | 3000–20000 | **AVOID** — use `--flows` |
-
-**Tips:**
-- Use `--search` and `--neighbors` instead of unfiltered graph dumps.
-- Set `--depth 1` (default) for KG neighbors; only increase when necessary (max 3).
-- Filter edges with `--edge-type` to reduce noise.
-- Use `services --has wiki,kg` to find services ready for deep queries.
 
 ---
 
 ## Combination Recipes (Reduce Tool Calls)
 
-Common scenarios optimized to minimize calls. Full details in [source-code.md](docs/source-code.md#combination-recipes-reducing-tool-calls).
-
 | Scenario | Calls | Recipe |
 |----------|-------|--------|
-| "How does X work?" | 1 | `trace --query "X,英文,Synonym" --source --business` |
+| "What is X business function?" | **1** | `ask --query "X,英文" --depth full` |
+| "How does X work?" | **1** | `trace --auto-discover --query "X" --source --business --wiki --verify-source` |
 | "Find RPC endpoints + types" | 2 | `structure --annotation` → `kg --edges --type consumes_rpc` |
 | "Impact of changing X" | 2 | `kg --neighbors X --direction both` → `structure --property-type X` |
-| "Class hierarchy" | 2 | `structure --chain X --direction up` → `structure --implementors I` |
-| "Read large file" | 2 | `kg --file F --toc` → `kg --file F --start N --end M` |
-| "Business → source code" | 3 | `business --search` → `trace --source --business` → `structure --file` |
 | "Cross-service dep" | 3 | `business --panorama` → `trace` in source svc → `trace` in target svc |
-
-**Key insight:** `typeRef` auto-resolution means type-based searches (`--param-type`, `--return-type`, `--property-type`, `--interface`) automatically include where the referenced type is defined — saving one extra lookup per result.
 
 ---
 
 ## Detail Documentation
 
-- **[Source-Level Queries](docs/source-code.md)** — `kg`, `trace`, `structure`, `kg --file` TOC pattern, combination recipes
+- **[Source-Level Queries](docs/source-code.md)** — `kg`, `trace`, `structure`, `kg --file` TOC pattern
 - **[Business & Domain Queries](docs/business-domain.md)** — `business`, `wiki`, `domain`, cross-platform recipe
-- **[Technical Reference](docs/reference.md)** — `services`, `meta`, search algorithm, error handling, output formats
+- **[Technical Reference](docs/reference.md)** — `services`, `meta`, search algorithm, error handling
 
 ---
 
@@ -250,13 +324,11 @@ Common scenarios optimized to minimize calls. Full details in [source-code.md](d
 
 **Typical agent patterns:**
 
-1. **Freshness gate:** Run `meta --stale` before trusting any layer
-2. **Target discovery:** Run `services --has wiki,kg` to pick a service
-3. **Contextual lookup:** Business search → wiki domain → kg neighbors before editing code
-4. **Cross-reference:** Check business rules (`--type rules`) before modifying domain logic
-5. **Impact check:** Inbound `kg --neighbors` + `structure --property-type X` before refactoring shared classes
-6. **Type inspection:** Use `structure --annotation` or `--param-type` for signature-level queries (results include `typeRef` auto-resolution)
-7. **Hierarchy exploration:** `structure --chain X --direction up/down` + `structure --implementors I` for type relationships
+1. **Business question:** `ask --depth full` → synthesize → present to user
+2. **Code change:** `trace --verify-source` → confirm implementation → edit files
+3. **Impact check:** `kg --neighbors` + `structure --property-type` → assess risk
+4. **Freshness gate:** `meta --stale` → decide if data is trustworthy
+5. **Cross-reference:** Check `sourceVerification` output before modifying domain logic
 
 **Related skills:**
 
