@@ -18,14 +18,13 @@ export function createApp(opts: ServerOptions = {}) {
   }
   const router = createApiRouter()
   const app = express()
+  const allowedOrigins = process.env.CORS_ORIGINS?.split(",").map(s => s.trim()) ?? []
   app.use(cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. curl, same-origin, server-to-server)
       if (!origin) { callback(null, true); return }
-      // Only allow localhost / 127.0.0.1 origins
       try {
         const { hostname } = new URL(origin)
-        if (hostname === "localhost" || hostname === "127.0.0.1") {
+        if (hostname === "localhost" || hostname === "127.0.0.1" || allowedOrigins.includes(origin)) {
           callback(null, true)
         } else {
           callback(null, false)
@@ -58,8 +57,9 @@ export function createApp(opts: ServerOptions = {}) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = Number(process.env.PORT ?? 3001)
+  const host = process.env.HOST ?? "0.0.0.0"
   const app = createApp()
-  app.listen(port, () => {
-    console.log(`\n  API Server: http://127.0.0.1:${port}/\n`)
+  app.listen(port, host, () => {
+    console.log(`\n  API Server: http://${host}:${port}/\n`)
   })
 }

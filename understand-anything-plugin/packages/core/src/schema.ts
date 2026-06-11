@@ -54,6 +54,10 @@ export const NODE_TYPE_ALIASES: Record<string, string> = {
   protobuf: "schema",
   definition: "schema",
   typedef: "schema",
+  // Documentation section aliases (commonly generated for Markdown docs)
+  section: "document",
+  rule: "concept",
+  guideline: "concept",
   // Domain aliases — "process" intentionally excluded (ambiguous with OS/Node.js process)
   business_domain: "domain",
   business_flow: "flow",
@@ -125,6 +129,13 @@ export const EDGE_TYPE_ALIASES: Record<string, string> = {
   created_by: "authored_by",
   api_call: "consumes_api",
   http_call: "consumes_api",
+  // Documentation structure aliases (commonly generated for Markdown/doc analysis)
+  indexes: "documents",
+  categorizes: "contains",
+  belongs_to_category: "categorized_under",
+  supplements: "builds_on",
+  related_variant: "similar_to",
+  maps: "related",
   // Note: "implemented_by" is intentionally NOT aliased to "implements" —
   // it inverts edge direction (see commit fd0df15). The LLM should use
   // "implements" with correct source/target instead.

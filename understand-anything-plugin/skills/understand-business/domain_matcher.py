@@ -32,10 +32,16 @@ def _load_domains_from_wiki_dir(wiki_dir, domains, service=''):
             name = data.get('name', f.stem)
             endpoints = []
             ip = data.get('integrationPoints', {})
-            for entry in ip.get('inbound', []):
-                ep = entry.get('endpoint', '')
-                if ep:
-                    endpoints.append(ep)
+            if isinstance(ip, list):
+                for entry in ip:
+                    ep = entry.get('endpoint', '') or entry.get('target', '')
+                    if ep:
+                        endpoints.append(ep)
+            elif isinstance(ip, dict):
+                for entry in ip.get('inbound', []):
+                    ep = entry.get('endpoint', '')
+                    if ep:
+                        endpoints.append(ep)
             if name not in domains:
                 domains[name] = {
                     'data': data,

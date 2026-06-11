@@ -18,14 +18,33 @@ import sys
 from pathlib import Path
 
 
+_NAME_SLUG_CACHE: dict[str, str] = {}
+
+
+def _load_slug_map(project_root: str):
+    if _NAME_SLUG_CACHE:
+        return
+    map_path = Path(project_root) / '.understand-anything' / 'intermediate' / 'name-slug-map.json'
+    if map_path.exists():
+        try:
+            _NAME_SLUG_CACHE.update(json.loads(map_path.read_text()))
+        except (json.JSONDecodeError, IOError):
+            pass
+
+
 def _to_slug(name: str) -> str:
     """Convert domain name to ASCII kebab-case slug for filenames."""
+    if name in _NAME_SLUG_CACHE:
+        return _NAME_SLUG_CACHE[name]
     slug = name.lower().strip()
     slug = re.sub(r'[（(].+?[)）]', '', slug).strip()
     slug = re.sub(r'[\s_]+', '-', slug)
     slug = re.sub(r'[^a-z0-9\-]', '', slug)
     slug = re.sub(r'-+', '-', slug).strip('-')
-    return slug or 'unnamed'
+    if not slug:
+        import hashlib
+        slug = 'domain-' + hashlib.md5(name.encode()).hexdigest()[:8]
+    return slug
 
 
 def _deduplicate_domains(domains: list[dict]) -> list[dict]:
@@ -50,6 +69,7 @@ def _deduplicate_domains(domains: list[dict]) -> list[dict]:
 
 def assemble_landscape(project_root_str: str) -> dict | None:
     project_root = Path(project_root_str)
+    _load_slug_map(project_root_str)
     intermediate = project_root / '.understand-anything' / 'intermediate'
 
     phase1_path = intermediate / 'phase1-matches.json'

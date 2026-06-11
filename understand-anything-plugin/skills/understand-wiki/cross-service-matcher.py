@@ -349,8 +349,8 @@ def extract_wrapper_providers(kg: dict, service_name: str) -> list[dict]:
             "wrapper_file": consumer_info["node"].get("filePath", ""),
             "rpc_interface": iface_name,
             "rpc_interface_id": consumer_info["interface_id"],
-            "provider_class": provider_info["node"]["name"] if provider_info else "",
-            "provider_id": provider_info["node"]["id"] if provider_info else "",
+            "provider_class": provider_info["node"].get("name", "") if provider_info else "",
+            "provider_id": provider_info["node"].get("id", "") if provider_info else "",
         })
 
     return wrappers
