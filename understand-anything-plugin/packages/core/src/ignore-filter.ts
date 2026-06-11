@@ -65,11 +65,14 @@ export const DEFAULT_IGNORE_PATTERNS: string[] = [
   "*.swo",
   "*~",
 
+  // CI/CD configs
+  ".gitlab-ci.yml",
+  ".github/",
+
   // AI tools
   ".cursor/",
   ".claude/",
   ".copilot/",
-  ".github/copilot/",
   ".aider*",
   ".continue/",
   ".codeium/",
