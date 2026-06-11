@@ -153,6 +153,8 @@ This phase uses different strategies depending on Path:
 
 **Path 2 (KG exists — from Phase 3):** Use the split pipeline below.
 
+**Documentation exclusion rule (applies to all sub-phases):** Modules whose paths are exclusively documentation or infrastructure directories (`docs/`, `doc/`, `script/`, `docker/`, project root config files) do NOT participate in domain splitting. The `domain-discoverer` agent is instructed to exclude them (Rule 11). If the discovery output still contains documentation-only modules in domain assignments, remove them before proceeding to KG splitting and flow extraction. Only source code modules (containing `.java`, `.py`, `.ts`, `.go`, etc.) should be assigned to business domains.
+
 #### Phase 4a: Domain Discovery
 
 1. **Checkpoint detection:** Unless `--full` was passed (checkpoints deleted in Phase 1), check if `$PROJECT_ROOT/.understand-anything/intermediate/domain-discovery-checkpoint.json` exists and contains valid JSON with `_checkpoint.status == "complete"`. If so, read `domain-discovery.json` and skip to Phase 4a-audit.

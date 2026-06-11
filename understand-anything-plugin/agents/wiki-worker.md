@@ -56,7 +56,7 @@ Generate/regenerate ONLY the wiki page for the specified domain ID. Used by the 
 2. Collect all flows (via `contains_flow` edges from this domain)
 3. Collect all steps (via `flow_step` edges from those flows)
 4. Process ONLY these nodes for wiki page generation (Phase 1 Step 2 + Phase 2)
-5. Write output to: `$PROJECT_ROOT/.understand-anything/intermediate/wiki/domains/$TARGET_DOMAIN.json`
+5. Write output to: `$PROJECT_ROOT/.understand-anything/intermediate/wiki/domains/<domain-slug>.json` (derive slug by stripping the `domain:` prefix from `$TARGET_DOMAIN`, e.g. `domain:order-management` → `order-management.json`)
 6. Do NOT generate service overview, index, or meta (the orchestrator handles those)
 7. Report: `"Generated 1 domain page: $TARGET_DOMAIN"`
 

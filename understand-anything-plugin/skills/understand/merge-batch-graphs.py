@@ -902,9 +902,30 @@ def merge_and_normalize(batches: list[dict[str, Any]]) -> tuple[dict[str, Any], 
     report.append("")
     report.append(f"Output: {len(nodes_by_id)} nodes, {len(edges_by_key)} edges")
 
+    final_edges = list(edges_by_key.values())
+    for edge in final_edges:
+        if edge.get("type") in ("provides_rpc", "consumes_rpc"):
+            props = edge.get("properties")
+            if not isinstance(props, dict) or not props.get("protocol") or props.get("protocol") == "unknown":
+                desc = edge.get("description", "")
+                fw = None
+                try:
+                    parsed = json.loads(desc) if desc.startswith("{") else {}
+                    fw = parsed.get("framework")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                if fw:
+                    proto = _framework_to_protocol(fw)
+                else:
+                    proto = _infer_rpc_protocol(edge)
+                if not isinstance(props, dict):
+                    edge["properties"] = {"protocol": proto}
+                else:
+                    props["protocol"] = proto
+
     assembled = {
         "nodes": list(nodes_by_id.values()),
-        "edges": list(edges_by_key.values()),
+        "edges": final_edges,
     }
 
     return assembled, report
@@ -1056,6 +1077,17 @@ def _ensure_tag(node: dict[str, Any], tag: str) -> None:
         tags.append(tag)
 
 
+_FRAMEWORK_PROTOCOL_MAP = {
+    "moa": "moa-rpc", "moaservice": "moa-rpc", "dubbo": "dubbo-rpc",
+    "feign": "http", "grpc": "grpc", "thrift": "thrift",
+}
+
+
+def _framework_to_protocol(framework: str) -> str:
+    """Map a framework name (from annotation recovery) to a wire protocol."""
+    return _FRAMEWORK_PROTOCOL_MAP.get(framework.lower(), "rpc")
+
+
 def _synthetic_node_id(interface_name: str) -> str:
     return f"endpoint:__synthetic__:{interface_name}"
 
@@ -1167,6 +1199,7 @@ def recover_rpc_mq_from_extraction(
                             "direction": "forward",
                             "weight": 0.9,
                             "description": json.dumps({"interface": iface, "framework": framework}),
+                            "properties": {"protocol": _framework_to_protocol(framework)},
                             "recoveredFromAnnotation": True,
                         })
                         existing_edges.add(edge_key)
@@ -1208,6 +1241,7 @@ def recover_rpc_mq_from_extraction(
                             "direction": "forward",
                             "weight": 0.8,
                             "description": json.dumps({"interface": service_name, "framework": "feign"}),
+                            "properties": {"protocol": _framework_to_protocol("feign")},
                             "recoveredFromAnnotation": True,
                         })
                         existing_edges.add(edge_key)
@@ -1254,6 +1288,7 @@ def recover_rpc_mq_from_extraction(
                         "direction": "forward",
                         "weight": 0.8,
                         "description": json.dumps({"interface": iface_type, "framework": framework}),
+                        "properties": {"protocol": _framework_to_protocol(framework)},
                         "recoveredFromAnnotation": True,
                     })
                     existing_edges.add(edge_key)
@@ -1514,6 +1549,103 @@ def recover_injects_from_extraction(
     return recovered, lines
 
 
+def _infer_rpc_protocol(edge: dict) -> str:
+    """Infer RPC protocol from edge properties, description, or source/target naming."""
+    explicit = edge.get("properties", {}).get("protocol")
+    if explicit and explicit != "unknown":
+        return explicit
+    desc = edge.get("description", "")
+    if '"framework": "moa"' in desc or '"framework":"moa"' in desc:
+        return "moa-rpc"
+    src = edge.get("source", "")
+    tgt = edge.get("target", "")
+    combined = src + tgt
+    if "moa-provider" in combined or "moa-consumer" in combined or "MoaWrapper" in combined:
+        return "moa-rpc"
+    if "grpc" in combined.lower():
+        return "grpc"
+    if "http" in combined.lower() or "rest" in combined.lower():
+        return "http"
+    return "rpc"
+
+
+def _infer_languages_and_frameworks(
+    nodes: list, edges: list, project_dir: str,
+) -> tuple[list[str], list[str]]:
+    """Infer languages and frameworks from scan-result.json or graph content."""
+    scan_path = os.path.join(project_dir, ".understand-anything", "intermediate", "scan-result.json")
+    languages: list[str] = []
+    frameworks: list[str] = []
+
+    if os.path.exists(scan_path):
+        try:
+            scan = json.loads(Path(scan_path).read_text(encoding="utf-8"))
+            by_lang = scan.get("stats", {}).get("byLanguage", {})
+            lang_map = {"java": "Java", "kotlin": "Kotlin", "python": "Python",
+                        "typescript": "TypeScript", "javascript": "JavaScript",
+                        "go": "Go", "rust": "Rust", "cpp": "C++", "c": "C",
+                        "csharp": "C#", "ruby": "Ruby", "php": "PHP", "swift": "Swift",
+                        "scala": "Scala", "dart": "Dart", "vue": "Vue", "groovy": "Groovy"}
+            if by_lang:
+                for lang_id, count in sorted(by_lang.items(), key=lambda x: -x[1]):
+                    if lang_id in lang_map and count > 0:
+                        languages.append(lang_map[lang_id])
+            else:
+                top_langs = scan.get("languages", [])
+                for raw in top_langs:
+                    if isinstance(raw, dict):
+                        lang_id = raw.get("language", "")
+                    elif isinstance(raw, str):
+                        lang_id = raw
+                    else:
+                        continue
+                    mapped = lang_map.get(lang_id.lower())
+                    if mapped and mapped not in languages:
+                        languages.append(mapped)
+            top_fws = scan.get("frameworks", [])
+            if top_fws:
+                fw_normalize = {"moa": "MOA RPC", "moa rpc": "MOA RPC",
+                                "spring boot": "Spring Boot", "spring": "Spring Boot",
+                                "mybatis": "MyBatis", "mybatis-plus": "MyBatis",
+                                "kafka": "Kafka", "redis": "Redis", "mysql": "MySQL",
+                                "maven": "Maven", "gradle": "Gradle"}
+                for fw in top_fws:
+                    normalized = fw_normalize.get(fw.lower(), fw)
+                    if normalized not in frameworks:
+                        frameworks.append(normalized)
+            files = {f.get("path", "") for f in scan.get("files", [])}
+            if any("pom.xml" in p for p in files) and "Maven" not in frameworks:
+                frameworks.append("Maven")
+            if any("build.gradle" in p for p in files) and "Gradle" not in frameworks:
+                frameworks.append("Gradle")
+        except Exception:
+            pass
+
+    edge_types = {e.get("type") for e in edges}
+    node_sources = " ".join(n.get("id", "") for n in nodes[:200])
+    if "provides_rpc" in edge_types or "consumes_rpc" in edge_types:
+        if "moa-provider" in node_sources or "moa-consumer" in node_sources or "MoaWrapper" in node_sources:
+            if "MOA RPC" not in frameworks:
+                frameworks.append("MOA RPC")
+        elif not any(f in frameworks for f in ("gRPC", "HTTP")):
+            frameworks.append("RPC")
+    if any("spring" in n.get("filePath", "").lower() for n in nodes if n.get("type") == "file"):
+        if "Spring Boot" not in frameworks:
+            frameworks.append("Spring Boot")
+    if any("mybatis" in n.get("filePath", "").lower() or "mapper" in n.get("filePath", "").lower()
+           for n in nodes if n.get("type") == "file"):
+        if "MyBatis" not in frameworks:
+            frameworks.append("MyBatis")
+    if "subscribes" in edge_types or "publishes" in edge_types:
+        if "Kafka" not in frameworks:
+            frameworks.append("Kafka")
+    if any("redis" in n.get("id", "").lower() for n in nodes):
+        if "Redis" not in frameworks:
+            frameworks.append("Redis")
+
+    return languages, frameworks
+
+
 def generate_manifest(kg: dict, output_path: str) -> dict:
     """Extract a lightweight manifest from the assembled knowledge graph."""
     nodes = kg.get("nodes", [])
@@ -1525,45 +1657,63 @@ def generate_manifest(kg: dict, output_path: str) -> dict:
     )
 
     providers = []
+    seen_providers = set()
     for edge in edges:
         if edge.get("type") == "provides_rpc":
             target = edge.get("target", "")
             if "endpoint:__synthetic__:" in target:
                 identifier = target.replace("endpoint:__synthetic__:", "")
+            else:
+                identifier = target.split(":")[-1] if ":" in target else target
+            if identifier and identifier not in seen_providers:
+                seen_providers.add(identifier)
                 providers.append({
                     "identifier": identifier,
-                    "protocol": edge.get("properties", {}).get("protocol", "unknown"),
+                    "protocol": _infer_rpc_protocol(edge),
                 })
 
     consumers = []
+    seen_consumers = set()
     for edge in edges:
         if edge.get("type") == "consumes_rpc":
             target = edge.get("target", "")
             if "endpoint:__synthetic__:" in target:
                 target_interface = target.replace("endpoint:__synthetic__:", "")
+            else:
+                target_interface = target.split(":")[-1] if ":" in target else target
+            source_id = edge.get("source", "").split(":")[-1]
+            consumer_key = f"{source_id}:{target_interface}"
+            if target_interface and consumer_key not in seen_consumers:
+                seen_consumers.add(consumer_key)
                 consumers.append({
-                    "identifier": edge.get("source", "").split(":")[-1],
-                    "protocol": edge.get("properties", {}).get("protocol", "unknown"),
+                    "identifier": source_id,
+                    "protocol": _infer_rpc_protocol(edge),
                     "targetInterface": target_interface,
                 })
 
     kafka_exports = []
     kafka_imports = []
+    seen_kafka = set()
     for edge in edges:
         if edge.get("type") == "subscribes":
             target = edge.get("target", "")
             if "topic:__synthetic__:" in target:
                 topic = target.replace("topic:__synthetic__:", "")
+            else:
+                props = edge.get("properties", {}) or {}
+                topic = props.get("topic", target.split(":")[-1] if ":" in target else target)
+            if topic and topic not in seen_kafka:
+                seen_kafka.add(topic)
                 kafka_imports.append({"topic": topic, "role": "subscriber"})
 
     synthetic = [
         n["id"] for n in nodes if n.get("id", "").startswith("endpoint:__synthetic__:")
     ]
 
+    project_dir = os.path.dirname(os.path.dirname(output_path))
     git_hash = ""
     git_branch = ""
     try:
-        project_dir = os.path.dirname(os.path.dirname(output_path))
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             capture_output=True,
@@ -1584,6 +1734,16 @@ def generate_manifest(kg: dict, output_path: str) -> dict:
             git_branch = result.stdout.strip()
     except Exception:
         pass
+    meta_languages = metadata.get("languages", [])
+    meta_frameworks = metadata.get("frameworks", [])
+    if not meta_languages or not meta_frameworks:
+        inferred_langs, inferred_fws = _infer_languages_and_frameworks(
+            nodes, edges, project_dir,
+        )
+        if not meta_languages:
+            meta_languages = inferred_langs
+        if not meta_frameworks:
+            meta_frameworks = inferred_fws
 
     manifest = {
         "version": "1.0",
@@ -1592,8 +1752,8 @@ def generate_manifest(kg: dict, output_path: str) -> dict:
         "gitCommitHash": git_hash,
         "gitBranch": git_branch,
         "metadata": {
-            "languages": metadata.get("languages", []),
-            "frameworks": metadata.get("frameworks", []),
+            "languages": meta_languages,
+            "frameworks": meta_frameworks,
             "nodeCount": len(nodes),
             "edgeCount": len(edges),
             "fileCount": file_count,
