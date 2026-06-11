@@ -135,7 +135,9 @@ Skeleton format (Bounded Context Canvas structure). **The example below shows Ch
     "outbound": []
   },
 
-  "errorCatalog": [],
+  "errorCatalog": [
+    // Phase 2 populates with: { "exception": "...", "trigger": "...", "handling": "...", "severity": "..." }
+  ],
 
   "flows": [
     {
@@ -242,7 +244,8 @@ While reading source code for step expansion, simultaneously populate the domain
 
 **Error Catalog:**
 - Collect all exception classes thrown within this domain's source code
-- For each, document: trigger condition, handling strategy, severity level
+- Each entry MUST use field name `exception` (NOT `code`):
+  `{ "exception": "OrderNotFoundException", "trigger": "invalid ID", "handling": "returns 404", "severity": "user_error" }`
 - Severity: `user_error` (invalid input), `transient` (timeout/retry), `fatal` (data corruption/system failure)
 
 ### Step 6 — Enrich Flow Summaries

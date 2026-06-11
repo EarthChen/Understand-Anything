@@ -149,6 +149,40 @@ def _match_methods_to_class(
     return methods
 
 
+def _load_file_results(extraction_dir: Path) -> list[dict]:
+    """Load structural extraction results from merged or batched files.
+
+    Supports two formats:
+    1. Merged single file: ``extraction/structural-analysis.json``
+       — dict keyed by file path, values have classes/functions/imports.
+    2. Legacy batched files: ``ua-file-extract-results-*.json``
+       — each contains ``{"results": [{"path", "classes", "functions", ...}]}``.
+    """
+    merged = extraction_dir / "extraction" / "structural-analysis.json"
+    if merged.is_file():
+        try:
+            data = json.loads(merged.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        if isinstance(data, dict):
+            return [
+                {"path": fp, **file_data}
+                for fp, file_data in data.items()
+                if isinstance(file_data, dict)
+            ]
+
+    results: list[dict] = []
+    for ext_file in sorted(extraction_dir.glob("ua-file-extract-results-*.json")):
+        try:
+            batch = json.loads(ext_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        batch_results = batch.get("results")
+        if isinstance(batch_results, list):
+            results.extend(batch_results)
+    return results
+
+
 def extract_endpoints_from_dir(
     extraction_dir: Path, service_name: str,
     project_root: Path | None = None,
@@ -161,123 +195,112 @@ def extract_endpoints_from_dir(
     providers: list[dict] = []
     consumers: list[dict] = []
     kafka_topics: list[dict] = []
-    # class_name -> relative file path (for resolving interface source files)
     _class_file_map: dict[str, str] = {}
 
-    extraction_files = sorted(extraction_dir.glob("ua-file-extract-results-*.json"))
+    file_results = _load_file_results(extraction_dir)
 
-    for ext_file in extraction_files:
-        try:
-            data = json.loads(ext_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
+    for file_result in file_results:
+        file_path = file_result.get("path", "")
+        classes = file_result.get("classes", [])
+        functions = file_result.get("functions", [])
+        if not isinstance(classes, list):
+            classes = []
+        if not isinstance(functions, list):
+            functions = []
 
-        results = data.get("results")
-        if not isinstance(results, list):
-            continue
+        for cls in classes:
+            if not isinstance(cls, dict):
+                continue
+            cls_name = cls.get("name", "")
+            if not cls_name:
+                continue
 
-        for file_result in results:
-            file_path = file_result.get("path", "")
-            classes = file_result.get("classes", [])
-            functions = file_result.get("functions", [])
-            if not isinstance(classes, list):
-                classes = []
-            if not isinstance(functions, list):
-                functions = []
+            _class_file_map[cls_name] = file_path
 
-            for cls in classes:
-                if not isinstance(cls, dict):
-                    continue
-                cls_name = cls.get("name", "")
-                if not cls_name:
-                    continue
+            ann_names = _annotation_names(cls.get("annotations"))
+            interfaces = cls.get("interfaces", [])
+            if not isinstance(interfaces, list):
+                interfaces = []
 
-                _class_file_map[cls_name] = file_path
+            provider_anns = ann_names & _PROVIDER_ANNOTATIONS
+            if provider_anns and interfaces:
+                ann_name = next(iter(provider_anns))
+                protocol = _ANNOTATION_TO_PROTOCOL.get(ann_name, "unknown")
+                ann_args = _annotation_args(cls.get("annotations"), ann_name)
+                methods = _match_methods_to_class(functions, cls.get("methods", []))
 
-                ann_names = _annotation_names(cls.get("annotations"))
-                interfaces = cls.get("interfaces", [])
-                if not isinstance(interfaces, list):
-                    interfaces = []
-
-                provider_anns = ann_names & _PROVIDER_ANNOTATIONS
-                if provider_anns and interfaces:
-                    ann_name = next(iter(provider_anns))
-                    protocol = _ANNOTATION_TO_PROTOCOL.get(ann_name, "unknown")
-                    ann_args = _annotation_args(cls.get("annotations"), ann_name)
-                    methods = _match_methods_to_class(functions, cls.get("methods", []))
-
-                    for iface in interfaces:
-                        if not isinstance(iface, str) or not iface:
-                            continue
-                        providers.append({
-                            "identifier": iface,
-                            "protocol": protocol,
-                            "framework": ann_name,
-                            "group": ann_args.get("group"),
-                            "version": ann_args.get("version"),
-                            "methods": methods,
-                            "sourceRef": {"file": file_path},
-                        })
-
-                consumer_anns = ann_names & _CONSUMER_CLASS_ANNOTATIONS
-                if consumer_anns:
-                    ann_name = next(iter(consumer_anns))
-                    protocol = _ANNOTATION_TO_PROTOCOL.get(ann_name, "unknown")
-                    ann_args = _annotation_args(cls.get("annotations"), ann_name)
-                    target = (
-                        ann_args.get("value")
-                        or ann_args.get("name")
-                        or ann_args.get("url")
-                        or cls_name
-                    )
-                    consumers.append({
-                        "identifier": cls_name,
+                for iface in interfaces:
+                    if not isinstance(iface, str) or not iface:
+                        continue
+                    providers.append({
+                        "identifier": iface,
                         "protocol": protocol,
                         "framework": ann_name,
-                        "targetInterface": target if isinstance(target, str) else cls_name,
+                        "group": ann_args.get("group"),
+                        "version": ann_args.get("version"),
+                        "methods": methods,
                         "sourceRef": {"file": file_path},
                     })
 
-                typed_props = cls.get("typedProperties", [])
-                if isinstance(typed_props, list):
-                    for prop in typed_props:
-                        if not isinstance(prop, dict):
-                            continue
-                        prop_anns = _annotation_names(prop.get("annotations"))
-                        field_consumer_anns = prop_anns & _CONSUMER_ANNOTATIONS
-                        if field_consumer_anns:
-                            ann_name = next(iter(field_consumer_anns))
-                            protocol = _ANNOTATION_TO_PROTOCOL.get(ann_name, "unknown")
-                            iface_name = prop.get("type", prop.get("name", "?"))
-                            consumers.append({
-                                "identifier": iface_name,
-                                "protocol": protocol,
-                                "framework": ann_name,
-                                "targetInterface": iface_name,
-                                "sourceRef": {"file": file_path},
-                            })
+            consumer_anns = ann_names & _CONSUMER_CLASS_ANNOTATIONS
+            if consumer_anns:
+                ann_name = next(iter(consumer_anns))
+                protocol = _ANNOTATION_TO_PROTOCOL.get(ann_name, "unknown")
+                ann_args = _annotation_args(cls.get("annotations"), ann_name)
+                target = (
+                    ann_args.get("value")
+                    or ann_args.get("name")
+                    or ann_args.get("url")
+                    or cls_name
+                )
+                consumers.append({
+                    "identifier": cls_name,
+                    "protocol": protocol,
+                    "framework": ann_name,
+                    "targetInterface": target if isinstance(target, str) else cls_name,
+                    "sourceRef": {"file": file_path},
+                })
 
-            for fn in functions:
-                if not isinstance(fn, dict):
-                    continue
-                fn_anns = _annotation_names(fn.get("annotations"))
-                if fn_anns & _SUBSCRIBER_ANNOTATIONS:
-                    for ann_name in fn_anns & _SUBSCRIBER_ANNOTATIONS:
-                        ann_args = _annotation_args(fn.get("annotations"), ann_name)
-                        topics = ann_args.get("topics", ann_args.get("value", ""))
-                        if isinstance(topics, str):
-                            topics = [topics] if topics else []
-                        elif not isinstance(topics, list):
-                            topics = []
-                        for topic in topics:
-                            if not topic:
-                                continue
-                            kafka_topics.append({
-                                "topic": topic,
-                                "role": "subscriber",
-                                "handlerMethod": fn.get("name"),
-                                "sourceRef": {"file": file_path},
-                            })
+            typed_props = cls.get("typedProperties", [])
+            if isinstance(typed_props, list):
+                for prop in typed_props:
+                    if not isinstance(prop, dict):
+                        continue
+                    prop_anns = _annotation_names(prop.get("annotations"))
+                    field_consumer_anns = prop_anns & _CONSUMER_ANNOTATIONS
+                    if field_consumer_anns:
+                        ann_name = next(iter(field_consumer_anns))
+                        protocol = _ANNOTATION_TO_PROTOCOL.get(ann_name, "unknown")
+                        iface_name = prop.get("type", prop.get("name", "?"))
+                        consumers.append({
+                            "identifier": iface_name,
+                            "protocol": protocol,
+                            "framework": ann_name,
+                            "targetInterface": iface_name,
+                            "sourceRef": {"file": file_path},
+                        })
+
+        for fn in functions:
+            if not isinstance(fn, dict):
+                continue
+            fn_anns = _annotation_names(fn.get("annotations"))
+            if fn_anns & _SUBSCRIBER_ANNOTATIONS:
+                for ann_name in fn_anns & _SUBSCRIBER_ANNOTATIONS:
+                    ann_args = _annotation_args(fn.get("annotations"), ann_name)
+                    topics = ann_args.get("topics", ann_args.get("value", ""))
+                    if isinstance(topics, str):
+                        topics = [topics] if topics else []
+                    elif not isinstance(topics, list):
+                        topics = []
+                    for topic in topics:
+                        if not topic:
+                            continue
+                        kafka_topics.append({
+                            "topic": topic,
+                            "role": "subscriber",
+                            "handlerMethod": fn.get("name"),
+                            "sourceRef": {"file": file_path},
+                        })
 
     provider_ids = {p["identifier"] for p in providers}
     filtered_consumers = []
@@ -478,7 +501,8 @@ def extract_rpc_endpoints_from_kg(kg_path: Path) -> dict[str, Any]:
 
     Reads provides_rpc, consumes_rpc, publishes, and subscribes edges
     to build endpoint records directly from the knowledge graph,
-    without requiring intermediate extraction files.
+    without requiring intermediate extraction files.  Also extracts
+    method-level data from KG function nodes belonging to each provider.
     """
     try:
         kg = json.loads(kg_path.read_text(encoding="utf-8"))
@@ -489,6 +513,11 @@ def extract_rpc_endpoints_from_kg(kg_path: Path) -> dict[str, Any]:
     for n in kg.get("nodes", []):
         if isinstance(n, dict) and n.get("id"):
             nodes_by_id[n["id"]] = n
+
+    funcs_by_file: dict[str, list[dict]] = {}
+    for n in kg.get("nodes", []):
+        if isinstance(n, dict) and n.get("type") == "function" and n.get("filePath"):
+            funcs_by_file.setdefault(n["filePath"], []).append(n)
 
     providers: list[dict] = []
     consumers: list[dict] = []
@@ -512,16 +541,31 @@ def extract_rpc_endpoints_from_kg(kg_path: Path) -> dict[str, Any]:
         if etype == "provides_rpc":
             tgt_name = tgt_node.get("name", tgt_id.split(":")[-1])
             src_name = src_node.get("name", src_id.split(":")[-1])
+            src_file = src_node.get("filePath", "")
+            methods = []
+            for fn in funcs_by_file.get(src_file, []):
+                fn_name = fn.get("name", "")
+                if fn_name and not fn_name.startswith("_"):
+                    lr = fn.get("lineRange")
+                    methods.append({
+                        "name": fn_name,
+                        "description": fn.get("summary", ""),
+                        "sourceRef": {"file": src_file, "lineRange": lr} if lr else {"file": src_file},
+                    })
+            methods.sort(key=lambda m: m.get("sourceRef", {}).get("lineRange", [0])[0] if m.get("sourceRef", {}).get("lineRange") else 0)
             providers.append({
+                "interface": tgt_name,
                 "identifier": tgt_name,
                 "implementor": src_name,
                 "protocol": _detect_protocol_from_tags(src_node.get("tags", [])),
-                "sourceRef": {"file": src_node.get("filePath", "")},
+                "methods": methods,
+                "sourceRef": {"file": src_file},
             })
         elif etype == "consumes_rpc":
             tgt_name = tgt_node.get("name", tgt_id.split(":")[-1])
             src_name = src_node.get("name", src_id.split(":")[-1])
             consumers.append({
+                "interface": tgt_name,
                 "identifier": tgt_name,
                 "callerClass": src_name,
                 "protocol": _detect_protocol_from_tags(src_node.get("tags", [])),

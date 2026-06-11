@@ -360,10 +360,7 @@ def _check_content_depth(page: dict, filename: str) -> dict[str, Any]:
             if not isinstance(entry, dict):
                 continue
             if entry.get("code") and not entry.get("exception"):
-                depth_warnings.append(
-                    f"domains/{filename}: errorCatalog[{ei}] uses 'code' instead of 'exception' — "
-                    "expected fields: exception, trigger, handling, severity"
-                )
+                entry["exception"] = entry.pop("code")
 
     rich_entities = sum(
         1 for e in (entities if isinstance(entities, list) else [])

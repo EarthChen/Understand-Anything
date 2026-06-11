@@ -509,5 +509,18 @@ export function autoFixDomainPage(
     });
   }
 
+  if (Array.isArray(data.errorCatalog)) {
+    data.errorCatalog = (data.errorCatalog as Record<string, unknown>[]).map((entry, i) => {
+      if (typeof entry !== "object" || !entry) return entry;
+      const e = { ...entry };
+      if (e.code && !e.exception) {
+        e.exception = e.code;
+        delete e.code;
+        fixes.push(`${filePath}: errorCatalog[${i}] renamed 'code' to 'exception'`);
+      }
+      return e;
+    });
+  }
+
   return { data: data as unknown as WikiDomainPage, fixes };
 }

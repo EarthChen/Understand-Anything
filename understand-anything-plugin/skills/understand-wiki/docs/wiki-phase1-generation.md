@@ -146,7 +146,7 @@ Read the domain graph and extract all domain IDs:
 
 ```bash
 DOMAIN_IDS=$(python3 -c "
-import json, sys
+import json
 dg = json.load(open('$SERVICE_UA/domain-graph.json'))
 ids = [n['id'] for n in dg.get('nodes', []) if n.get('type') == 'domain']
 print(' '.join(ids))
@@ -162,7 +162,7 @@ If no domains found, report error and stop.
 For each remaining domain, build a domain-scoped KG first:
 
 ```bash
-for DOMAIN_ID in $DOMAIN_IDS; do
+for DOMAIN_ID in $(echo $DOMAIN_IDS); do
   FILTERED_KG=$(python3 "$SKILL_DIR/wiki_kg_filter.py" \
     "$SERVICE_UA/knowledge-graph.json" \
     "$SERVICE_UA/domain-graph.json" \

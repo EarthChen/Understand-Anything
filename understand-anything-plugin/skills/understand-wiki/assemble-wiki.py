@@ -168,7 +168,12 @@ def main() -> None:
 
     src_ref = compute_source_ref_coverage(final_dir)
     depth = compute_content_depth(final_dir)
-    schema_score = 100 if not validation_warnings else max(0, 100 - len(validation_warnings) * 2)
+    AUTO_FIX_MARKERS = ("renamed ", "converted ", "added ", "generated ", "set order=", "corrected ")
+    domain_warnings = [w for w in validation_warnings if w.startswith("domains/")]
+    domain_real = [w for w in domain_warnings if not any(m in w for m in AUTO_FIX_MARKERS)]
+    domain_errors = [w for w in domain_real if w.split(": ", 1)[-1].startswith("ERROR")]
+    domain_warns = [w for w in domain_real if w not in domain_errors]
+    schema_score = max(0, 100 - len(domain_errors) * 10 - len(domain_warns) * 1)
 
     meta = {
         "gitCommitHash": git_hash,

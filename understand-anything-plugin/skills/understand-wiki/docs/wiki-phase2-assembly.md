@@ -143,20 +143,18 @@ python3 "$SKILL_DIR/build-wiki-index.py" \
 
 ```bash
 # Extract expected domains from domain-graph.json
-EXPECTED_DOMAINS=$(python3 -c "
-import json, sys
+INTERMEDIATE_WIKI="$PROJECT_ROOT/.understand-anything/intermediate/wiki/domains"
+MISSING_DOMAINS=""
+for domain in $(python3 -c "
+import json
 with open('$SERVICE_ROOT/.understand-anything/domain-graph.json') as f:
     dg = json.load(f)
 domains = set()
 for n in dg.get('nodes', []):
     if n.get('type') == 'domain':
         domains.add(n['id'].replace('domain:', ''))
-for d in sorted(domains):
-    print(d)
-")
-INTERMEDIATE_WIKI="$PROJECT_ROOT/.understand-anything/intermediate/wiki/domains"
-MISSING_DOMAINS=""
-for domain in $EXPECTED_DOMAINS; do
+print(' '.join(sorted(domains)))
+"); do
   if [ ! -f "$INTERMEDIATE_WIKI/$domain.json" ]; then
     MISSING_DOMAINS="$MISSING_DOMAINS $domain"
   fi
