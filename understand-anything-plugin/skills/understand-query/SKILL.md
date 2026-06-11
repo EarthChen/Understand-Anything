@@ -231,7 +231,7 @@ New flags added to `trace` for richer context:
 |------|-------------|
 | `--wiki` | Include wiki domain detail for matched feature |
 | `--domain-flows` | Include domain flow steps |
-| `--verify-source` | Force source code read for top 3 matches to cross-check wiki/domain |
+| `--verify-source` | Read actual source code for top 3 matches — returns full content for agent reasoning |
 | `--auto-discover` | Auto-detect service via business+wiki+KG search (omit `--service`) |
 
 **Full trace example:**

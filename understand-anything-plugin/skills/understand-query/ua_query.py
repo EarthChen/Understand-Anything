@@ -39,6 +39,14 @@ def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT) -> Any:
                 f"  - {s.get('name', s.get('id', '?'))} ({s.get('type', '?')})" for s in suggestions[:8]
             )
         raise RuntimeError(msg) from e
+    except (TimeoutError, OSError) as e:
+        if "timed out" in str(e).lower() or isinstance(e, TimeoutError):
+            raise RuntimeError(f"Request timed out ({timeout}s): {url.split('?')[0]}") from e
+        raise ServerUnavailableError(
+            f"API Server unavailable at {url.split('?')[0]}. "
+            f"Start it with: cd understand-anything-plugin/packages/dashboard && pnpm run serve\n"
+            f"Detail: {e}"
+        ) from e
     except URLError as e:
         raise ServerUnavailableError(
             f"API Server unavailable at {url.split('?')[0]}. "
@@ -161,13 +169,16 @@ def _format_markdown(data: Any) -> str:
             lines.append(f"```java\n{src['content'][:4000]}\n```")
             lines.append("")
 
-        # Source verification
-        sv = data.get("sourceVerification", [])
+        # Source reads (full source for agent reasoning)
+        sv = data.get("sourceReads", [])
         if sv:
-            lines.append("## Source Verification")
+            lines.append("## Source Code Reads")
             for v in sv:
-                lines.append(f"\n### {v.get('node', '?')} (`{v.get('file', '?')}:{v.get('lineRange', '')}`)")
-                lines.append(f"```java\n{v.get('content', '')[:2000]}\n```")
+                lr = v.get("lineRange", "")
+                ext = v.get("file", "").rsplit(".", 1)[-1] if "." in v.get("file", "") else "java"
+                lang = {"kt": "kotlin", "java": "java", "py": "python", "ts": "typescript", "js": "javascript", "dart": "dart"}.get(ext, ext)
+                lines.append(f"\n### {v.get('node', '?')} ({v.get('type', '?')}) — `{v.get('file', '?')}:{lr}`")
+                lines.append(f"```{lang}\n{v.get('content', '')}\n```")
             lines.append("")
 
         return "\n".join(lines)
@@ -666,19 +677,33 @@ def cmd_trace(args: argparse.Namespace) -> Any:
         result["autoDiscovered"] = True
         result["businessSearchHits"] = len(auto_biz)
 
-    # Step 1: Search KG via server-side BM25 with ALL keywords
-    seen_ids: dict[str, tuple[dict, float, str]] = {}  # id -> (node, best_score, best_keyword)
-    for kw in keywords:
-        kw_matched = _search_api(args.server, kw, service=service, scope="kg", limit=50, fusion=args.fusion)
-        if args.type:
-            kw_matched = [n for n in kw_matched if n.get("type") == args.type]
-        for node in kw_matched:
-            nid = node.get("id", "")
-            score = _score_node_relevance(node, kw)
-            if nid not in seen_ids or score > seen_ids[nid][1]:
-                seen_ids[nid] = (node, score, kw)
-    matched = [item[0] for item in seen_ids.values()]
+    # Step 1: Search KG — batch keywords into one space-joined request + one individual fallback
+    seen_ids: dict[str, tuple[dict, float, str]] = {}
+    batch_query = " ".join(keywords[:4])
+    batch_matched = _search_api(args.server, batch_query, service=service, scope="kg", limit=50, fusion=args.fusion)
+    if args.type:
+        batch_matched = [n for n in batch_matched if n.get("type") == args.type]
     best_keyword = keywords[0] if keywords else args.query
+    for node in batch_matched:
+        nid = node.get("id", "")
+        score = _score_node_relevance(node, best_keyword)
+        if nid not in seen_ids or score > seen_ids[nid][1]:
+            seen_ids[nid] = (node, score, best_keyword)
+    # One supplemental search with the best English keyword for broader coverage
+    eng_kws = [k for k in keywords if k.isascii() and len(k) > 3]
+    if eng_kws and eng_kws[0] != batch_query:
+        try:
+            sup = _search_api(args.server, eng_kws[0], service=service, scope="kg", limit=50, fusion=args.fusion)
+            if args.type:
+                sup = [n for n in sup if n.get("type") == args.type]
+            for node in sup:
+                nid = node.get("id", "")
+                score = _score_node_relevance(node, eng_kws[0])
+                if nid not in seen_ids or score > seen_ids[nid][1]:
+                    seen_ids[nid] = (node, score, eng_kws[0])
+        except RuntimeError:
+            pass
+    matched = [item[0] for item in seen_ids.values()]
 
     # Step 1b: Domain-flow fallback when multi-keyword search yields no results
     if not matched:
@@ -815,14 +840,18 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     elif not args.source:
         result["source"] = "omitted (use --source to include)"
 
-    # Step 4: Business context
+    # Step 4: Business context — single batch search
     if args.business:
         try:
             if auto_biz:
                 result["businessContext"] = auto_biz[:5]
             else:
-                biz_results = _search_api(args.server, args.query, scope="business", limit=5)
-                result["businessContext"] = biz_results[:5]
+                biz_query = " ".join(keywords[:3]) if keywords else args.query
+                try:
+                    biz_hits = _search_api(args.server, biz_query, scope="business", limit=5)
+                except RuntimeError:
+                    biz_hits = []
+                result["businessContext"] = biz_hits[:5]
         except RuntimeError:
             result["businessContext"] = None
 
@@ -838,10 +867,12 @@ def cmd_trace(args: argparse.Namespace) -> Any:
         if flow_data:
             result["domainFlows"] = flow_data
 
-    # Step 7: Source verification — read source for top matches to cross-check wiki/domain claims
-    if getattr(args, "verify_source", False) and matched and not result.get("source"):
-        verify_targets = matched[:3]
-        verifications = []
+    # Step 7: Source reads — return actual source code for top matches so agent can reason about it
+    if getattr(args, "verify_source", False) and matched:
+        sources = result.get("source")
+        existing_file = sources.get("file") if isinstance(sources, dict) else None
+        verify_targets = [n for n in matched[:3] if n.get("filePath") and n.get("filePath") != existing_file]
+        source_reads = []
         for node in verify_targets:
             fp = node.get("filePath")
             lr = node.get("lineRange")
@@ -850,22 +881,24 @@ def cmd_trace(args: argparse.Namespace) -> Any:
             try:
                 vp: dict[str, str] = {"file": fp, "service": service, "mode": "graph"}
                 if lr and isinstance(lr, list) and len(lr) == 2:
-                    vp["start"] = str(max(1, lr[0] - 3))
-                    vp["end"] = str(min(lr[1] + 2, lr[0] + 200))
+                    vp["start"] = str(max(1, lr[0] - 5))
+                    vp["end"] = str(min(lr[1] + 5, lr[0] + 300))
                 else:
                     vp["start"] = "1"
-                    vp["end"] = "100"
+                    vp["end"] = "150"
                 src = fetch_json(build_url(args.server, "/api/source", vp))
-                verifications.append({
+                source_reads.append({
                     "node": node.get("name", ""),
+                    "type": node.get("type", ""),
                     "file": fp,
                     "lineRange": lr,
-                    "content": src.get("content", "")[:3000],
+                    "lineCount": src.get("lineCount", 0),
+                    "content": src.get("content", ""),
                 })
             except RuntimeError:
                 continue
-        if verifications:
-            result["sourceVerification"] = verifications
+        if source_reads:
+            result["sourceReads"] = source_reads
 
     return result
 
