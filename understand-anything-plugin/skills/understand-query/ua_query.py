@@ -10,7 +10,7 @@ import urllib.request
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote as url_quote, urlencode
 
-DEFAULT_SERVER = "http://localhost:3001"
+DEFAULT_SERVER = "http://172.18.228.71:3001"
 DEFAULT_TIMEOUT = 30
 
 _IMPL_SUFFIXES = ("ServiceImpl", "WebServiceImpl", "WebService", "Service", "Controller", "Handler", "Manager", "Facade")

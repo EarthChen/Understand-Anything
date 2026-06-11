@@ -605,6 +605,14 @@ export function validateGraph(data: unknown): ValidationResult {
       proj.gitCommitHash = "";
       issues.push({ level: "auto-corrected", category: "missing-field", message: `project.gitCommitHash missing — defaulted to ""`, path: "project.gitCommitHash" });
     }
+    if (typeof proj.provenance === "object" && proj.provenance !== null) {
+      const prov = proj.provenance as Record<string, unknown>;
+      const provResult = ArtifactProvenanceSchema.safeParse(prov);
+      if (!provResult.success) {
+        delete proj.provenance;
+        issues.push({ level: "auto-corrected", category: "invalid-field", message: `project.provenance malformed — removed to prevent validation failure`, path: "project.provenance" });
+      }
+    }
     fixed.project = proj;
   } else if (!fixed.project) {
     fixed.project = {

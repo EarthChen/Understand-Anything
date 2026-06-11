@@ -199,7 +199,7 @@ python ua_query.py --format md business --search "order"
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `UNDERSTAND_SERVER` | API server base URL | `http://localhost:3001` |
+| `UNDERSTAND_SERVER` | API server base URL | `http://172.18.228.71:3001` |
 
 ---
 

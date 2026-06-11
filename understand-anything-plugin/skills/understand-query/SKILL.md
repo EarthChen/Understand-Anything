@@ -35,7 +35,7 @@ Regardless of platform, pass these to the sub-agent:
 1. **User's question** — the original query intent verbatim.
 2. **Project directory** — path to the project containing `.understand-anything/` data.
 3. **CLI location** — path to `ua_query.py` (this skill's directory).
-4. **API server** — `http://localhost:3001` (default). Instruct sub-agent to verify server is running; if not, start it via `cd <plugin-path>/packages/dashboard && pnpm run serve`.
+4. **API server** — `http://172.18.228.71:3001` (default). Instruct sub-agent to verify server is running; if not, start it via `cd <plugin-path>/packages/dashboard && pnpm run serve`.
 5. **This SKILL.md content** (or the relevant sections for the query type).
 6. **Output expectation** — return a **concise, structured summary** answering the question, not raw CLI dumps.
 
@@ -47,7 +47,7 @@ You are executing an understand-query skill task.
 **User Question:** <the actual question>
 **Project Directory:** <path to the project with .understand-anything/ data>
 **CLI Path:** <path to ua_query.py>
-**API Server:** Ensure the API server is running at http://localhost:3001.
+**API Server:** Ensure the API server is running at http://172.18.228.71:3001.
                 If not, start it: cd <plugin-path>/packages/dashboard && pnpm run serve
 
 Follow the SKILL.md instructions below to execute the appropriate ua_query.py
@@ -116,7 +116,7 @@ python ua_query.py trace --service svc-b --query "keyword" --source
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--server URL` | `$UNDERSTAND_SERVER` or `http://localhost:3001` | API server base URL |
+| `--server URL` | `$UNDERSTAND_SERVER` or `http://172.18.228.71:3001` | API server base URL |
 | `--format json\|md` | `json` | Output format |
 | `--verbose` | off | Include extra detail (e.g., edges in KG queries) |
 
