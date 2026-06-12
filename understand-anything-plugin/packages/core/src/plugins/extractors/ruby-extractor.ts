@@ -325,6 +325,7 @@ export class RubyExtractor implements LanguageExtractor {
       ],
       methods,
       properties,
+      kind: "class",
     });
   }
 
@@ -345,6 +346,7 @@ export class RubyExtractor implements LanguageExtractor {
     }
 
     classes.push({
+      kind: "module",
       name,
       lineRange: [
         node.startPosition.row + 1,

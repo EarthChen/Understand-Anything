@@ -259,6 +259,7 @@ export class PythonExtractor implements LanguageExtractor {
       ],
       methods,
       properties,
+      kind: "class",
     });
   }
 

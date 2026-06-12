@@ -309,6 +309,7 @@ export class TypeScriptExtractor implements LanguageExtractor {
       ],
       methods,
       properties,
+      kind: "class",
     });
   }
 

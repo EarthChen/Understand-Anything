@@ -207,6 +207,12 @@ export class ObjcExtractor implements LanguageExtractor {
         case "class_implementation":
           this.extractClassImplementation(node, functions, classes, classIndex);
           break;
+        case "category_interface":
+          this.extractCategoryInterface(node, functions, classes, exports, classIndex);
+          break;
+        case "category_implementation":
+          this.extractCategoryImplementation(node, functions, classes, classIndex);
+          break;
 
         case "protocol_declaration":
           this.extractProtocol(node, functions, classes, exports);
@@ -357,6 +363,7 @@ export class ObjcExtractor implements LanguageExtractor {
       ],
       methods: [],
       properties: [],
+      kind: "class",
     };
     classes.push(classEntry);
     classIndex.set(name, classEntry);
@@ -469,6 +476,7 @@ export class ObjcExtractor implements LanguageExtractor {
         node.endPosition.row + 1,
       ],
       methods,
+      kind: "protocol",
       properties: [],
     };
     classes.push(classEntry);
@@ -478,4 +486,59 @@ export class ObjcExtractor implements LanguageExtractor {
       lineNumber: node.startPosition.row + 1,
     });
   }
+
+  private extractCategoryInterface(
+    node: TreeSitterNode,
+    functions: StructuralAnalysis["functions"],
+    classes: StructuralAnalysis["classes"],
+    exports: StructuralAnalysis["exports"],
+    classIndex: Map<string, StructuralAnalysis["classes"][0]>,
+  ): void {
+    const nameNode = findChild(node, "identifier");
+    if (!nameNode) return;
+
+    const classEntry = this.getOrCreateClass(nameNode.text, node, classes, classIndex);
+    classEntry.kind ??= "class";
+
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (!child) continue;
+      if (child.type === "method_declaration") {
+        const selector = extractSelector(child);
+        if (selector && !classEntry.methods.includes(selector)) {
+          classEntry.methods.push(selector);
+        }
+        this.extractMethod(child, [], functions);
+      }
+    }
+  }
+
+  private extractCategoryImplementation(
+    node: TreeSitterNode,
+    functions: StructuralAnalysis["functions"],
+    classes: StructuralAnalysis["classes"],
+    classIndex: Map<string, StructuralAnalysis["classes"][0]>,
+  ): void {
+    const nameNode = findChild(node, "identifier");
+    if (!nameNode) return;
+
+    const classEntry = this.getOrCreateClass(nameNode.text, node, classes, classIndex);
+    classEntry.lineRange = [
+      Math.min(classEntry.lineRange[0], node.startPosition.row + 1),
+      node.endPosition.row + 1,
+    ];
+
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (!child || child.type !== "implementation_definition") continue;
+      for (const methodDef of findChildren(child, "method_definition")) {
+        const selector = extractSelector(methodDef);
+        if (selector && !classEntry.methods.includes(selector)) {
+          classEntry.methods.push(selector);
+        }
+        this.extractMethod(methodDef, [], functions);
+      }
+    }
+  }
+
 }

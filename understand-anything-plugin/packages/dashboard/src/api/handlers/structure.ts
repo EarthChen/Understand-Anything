@@ -21,6 +21,7 @@ interface ClassEntry {
   name: string
   startLine: number
   endLine: number
+  kind?: string
   methods?: string[]
   properties?: string[]
   annotations?: Array<{ name: string; arguments?: Record<string, string> }>
@@ -131,7 +132,7 @@ interface TypeRef {
 interface SearchResult {
   filePath: string
   name: string
-  kind: "class" | "function"
+  kind: string
   lineRange: [number, number]
   match: Record<string, string>
   typeRef?: TypeRef
@@ -238,9 +239,9 @@ function handleSearch(
           results.push({
             filePath,
             name: cls.name,
-            kind: "class",
+            kind: cls.kind ?? "class",
             lineRange: [cls.startLine, cls.endLine],
-            match: { annotation },
+    match: { annotation },
           })
         }
       }
@@ -291,9 +292,9 @@ function handleSearch(
           results.push({
             filePath,
             name: cls.name,
-            kind: "class",
+            kind: cls.kind ?? "class",
             lineRange: [cls.startLine, cls.endLine],
-            match: { interface: iface },
+    match: { interface: iface },
           })
         }
       }
@@ -305,9 +306,9 @@ function handleSearch(
           results.push({
             filePath,
             name: cls.name,
-            kind: "class",
+            kind: cls.kind ?? "class",
             lineRange: [cls.startLine, cls.endLine],
-            match: { propertyType },
+    match: { propertyType },
           })
         }
       }
@@ -320,9 +321,9 @@ function handleSearch(
           results.push({
             filePath,
             name: cls.name,
-            kind: "class",
+            kind: cls.kind ?? "class",
             lineRange: [cls.startLine, cls.endLine],
-            match: { symbol: cls.name },
+    match: { symbol: cls.name },
           })
         }
       }
@@ -512,7 +513,7 @@ function handleSymbolSource(
 
   interface SymbolMatch {
     name: string
-    kind: "class" | "function"
+    kind: string
     filePath: string
     lineRange: [number, number]
   }

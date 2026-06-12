@@ -8,6 +8,8 @@ import { z } from "zod";
 export const TreeSitterConfigSchema = z.object({
   wasmPackage: z.string(),
   wasmFile: z.string(),
+  /** Path to a local .wasm file (resolved from package root). Takes precedence over wasmPackage/wasmFile. */
+  localWasm: z.string().optional(),
 });
 
 export type TreeSitterConfig = z.infer<typeof TreeSitterConfigSchema>;

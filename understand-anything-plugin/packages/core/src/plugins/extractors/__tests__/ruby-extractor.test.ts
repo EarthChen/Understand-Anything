@@ -162,6 +162,7 @@ end
 
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("UserService");
+      expect(result.classes[0].kind).toBe("class");
       expect(result.classes[0].methods).toContain("initialize");
       expect(result.classes[0].methods).toContain("find_user");
 

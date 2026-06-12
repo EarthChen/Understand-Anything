@@ -141,6 +141,7 @@ impl Config {
       // Methods linked to struct
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("Config");
+      expect(result.classes[0].kind).toBe("struct");
       expect(result.classes[0].methods).toContain("new");
       expect(result.classes[0].methods).toContain("validate");
 
@@ -186,6 +187,7 @@ pub struct Config {
 
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("Config");
+      expect(result.classes[0].kind).toBe("struct");
       expect(result.classes[0].properties).toEqual(["name", "port"]);
       expect(result.classes[0].methods).toEqual([]);
       expect(result.classes[0].lineRange[0]).toBe(2);

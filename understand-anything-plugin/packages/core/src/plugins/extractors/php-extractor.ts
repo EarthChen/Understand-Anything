@@ -169,6 +169,12 @@ export class PhpExtractor implements LanguageExtractor {
             lineNumber: node.startPosition.row + 1,
           });
           break;
+        case "trait_declaration":
+          this.extractTrait(node, functions, classes, exports);
+          break;
+        case "enum_declaration":
+          this.extractPhpEnum(node, classes, exports);
+          break;
 
         case "namespace_use_declaration":
           this.extractUseDeclaration(node, imports);
@@ -323,6 +329,7 @@ export class PhpExtractor implements LanguageExtractor {
       lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
       methods,
       properties,
+      kind: "class",
     });
   }
 
@@ -349,6 +356,7 @@ export class PhpExtractor implements LanguageExtractor {
     }
 
     classes.push({
+      kind: "interface",
       name,
       lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
       methods,
@@ -458,4 +466,63 @@ export class PhpExtractor implements LanguageExtractor {
       });
     }
   }
+
+  private extractTrait(
+    node: TreeSitterNode,
+    functions: StructuralAnalysis["functions"],
+    classes: StructuralAnalysis["classes"],
+    exports: StructuralAnalysis["exports"],
+  ): void {
+    const nameNode = findChild(node, "identifier") ?? findChild(node, "name");
+    if (!nameNode) return;
+
+    const methods: string[] = [];
+    const properties: string[] = [];
+    const body = findChild(node, "declaration_list");
+    if (body) {
+      this.extractDeclarationList(body, methods, properties, functions);
+    }
+
+    classes.push({
+      name: nameNode.text,
+      lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
+      methods,
+      properties,
+      kind: "trait",
+    });
+    exports.push({ name: nameNode.text, lineNumber: node.startPosition.row + 1 });
+  }
+
+  private extractPhpEnum(
+    node: TreeSitterNode,
+    classes: StructuralAnalysis["classes"],
+    exports: StructuralAnalysis["exports"],
+  ): void {
+    const nameNode = findChild(node, "identifier") ?? findChild(node, "name");
+    if (!nameNode) return;
+
+    const properties: string[] = [];
+    const body = findChild(node, "enum_declaration_list");
+    if (body) {
+      for (const caseNode of findChildren(body, "enum_case")) {
+        const caseName = findChild(caseNode, "identifier") ?? findChild(caseNode, "name");
+        if (caseName) properties.push(caseName.text);
+      }
+      // Also try direct enum_constant children
+      for (const caseNode of findChildren(body, "enum_constant")) {
+        const caseName = findChild(caseNode, "identifier") ?? findChild(caseNode, "name");
+        if (caseName) properties.push(caseName.text);
+      }
+    }
+
+    classes.push({
+      name: nameNode.text,
+      lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
+      methods: [],
+      properties,
+      kind: "enum",
+    });
+    exports.push({ name: nameNode.text, lineNumber: node.startPosition.row + 1 });
+  }
+
 }

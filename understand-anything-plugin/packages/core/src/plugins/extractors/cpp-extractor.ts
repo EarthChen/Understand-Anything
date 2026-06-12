@@ -225,6 +225,12 @@ export class CppExtractor implements LanguageExtractor {
         case "struct_specifier":
           this.extractClassOrStruct(node, "struct", classes, functions, exports);
           break;
+        case "enum_specifier":
+          this.extractCppEnum(node, classes, exports);
+          break;
+        case "union_specifier":
+          this.extractCppUnion(node, classes, exports);
+          break;
 
         case "function_definition":
           this.extractFunctionDef(node, functions, exports, methodsByClass);
@@ -409,6 +415,7 @@ export class CppExtractor implements LanguageExtractor {
       ],
       methods,
       properties,
+      kind,
     });
 
     // The class/struct name itself is an export (non-anonymous types are always exported in C/C++ headers)
@@ -498,4 +505,58 @@ export class CppExtractor implements LanguageExtractor {
 
     return funcNode.text;
   }
+
+  private extractCppEnum(
+    node: TreeSitterNode,
+    classes: StructuralAnalysis["classes"],
+    exports: StructuralAnalysis["exports"],
+  ): void {
+    const nameNode = findChild(node, "type_identifier");
+    const properties: string[] = [];
+    const body = findChild(node, "enumerator_list");
+    if (body) {
+      for (const enumerator of findChildren(body, "enumerator")) {
+        const enumName = findChild(enumerator, "identifier") ?? findChild(enumerator, "field_identifier");
+        if (enumName) properties.push(enumName.text);
+      }
+    }
+
+    const name = nameNode?.text ?? "<anonymous>";
+    classes.push({
+      name,
+      lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
+      methods: [],
+      properties,
+      kind: "enum",
+    });
+    if (nameNode) exports.push({ name, lineNumber: node.startPosition.row + 1 });
+  }
+
+
+  private extractCppUnion(
+    node: TreeSitterNode,
+    classes: StructuralAnalysis["classes"],
+    exports: StructuralAnalysis["exports"],
+  ): void {
+    const nameNode = findChild(node, "type_identifier");
+    const properties: string[] = [];
+    const body = findChild(node, "field_declaration_list");
+    if (body) {
+      for (const field of findChildren(body, "field_declaration")) {
+        const name = findChild(field, "field_identifier") ?? findChild(field, "identifier");
+        if (name) properties.push(name.text);
+      }
+    }
+
+    const name = nameNode?.text ?? "<anonymous>";
+    classes.push({
+      name,
+      lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
+      methods: [],
+      properties,
+      kind: "union",
+    });
+    if (nameNode) exports.push({ name, lineNumber: node.startPosition.row + 1 });
+  }
+
 }

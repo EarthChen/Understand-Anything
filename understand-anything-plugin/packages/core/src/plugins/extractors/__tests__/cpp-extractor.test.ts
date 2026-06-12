@@ -134,6 +134,7 @@ public:
 
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("Server");
+      expect(result.classes[0].kind).toBe("class");
       expect(result.classes[0].properties).toEqual(["host", "port"]);
       expect(result.classes[0].methods).toContain("start");
       expect(result.classes[0].methods).toContain("getPort");
@@ -412,6 +413,42 @@ int compute(int n) { return n * 2; }
       tree.delete();
       parser.delete();
     });
+
+    it("extracts enum declarations", () => {
+      const { tree, parser, root } = parse(`enum Color {
+    RED,
+    GREEN,
+    BLUE
+};
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.classes).toHaveLength(1);
+      expect(result.classes[0].name).toBe("Color");
+      expect(result.classes[0].kind).toBe("enum");
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("extracts union declarations", () => {
+      const { tree, parser, root } = parse(`union Data {
+    int i;
+    float f;
+    char c;
+};
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.classes).toHaveLength(1);
+      expect(result.classes[0].name).toBe("Data");
+      expect(result.classes[0].kind).toBe("union");
+      expect(result.classes[0].properties).toContain("i");
+      expect(result.classes[0].properties).toContain("f");
+
+      tree.delete();
+      parser.delete();
+    });
   });
 
   // ---- Call Graph ----
@@ -556,6 +593,7 @@ namespace utils {
       // Classes: Server
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("Server");
+      expect(result.classes[0].kind).toBe("class");
       expect(result.classes[0].properties).toEqual(["host", "port"]);
       expect(result.classes[0].methods).toContain("start");
       expect(result.classes[0].methods).toContain("getPort");

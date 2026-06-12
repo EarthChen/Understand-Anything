@@ -1,7 +1,7 @@
 import fs from "fs"
 import path from "path"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
-import { findGraphFile, projectRootFromGraphFile, graphFilePathSet, resolveProjectRoot } from "../utils"
+import { findGraphFile, projectRootFromGraphFile, graphFilePathSet } from "../utils"
 import { readSource } from "../../../source-reader"
 
 function resolveServiceRoot(baseRoot: string, serviceName: string): string | null {

@@ -121,6 +121,7 @@ describe("DartExtractor", () => {
 
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("Server");
+      expect(result.classes[0].kind).toBe("class");
       expect(result.classes[0].properties).toEqual(["host", "port"]);
       expect(result.classes[0].methods).toEqual(["start", "stop"]);
 

@@ -450,6 +450,7 @@ export class KotlinExtractor implements LanguageExtractor {
       lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
       methods,
       properties,
+      kind: findChild(node, "enum_class_body") ? "enum" : "class",
     };
     if (annotations.length > 0) classEntry.annotations = annotations;
     if (superclass) classEntry.superclass = superclass;
@@ -501,6 +502,7 @@ export class KotlinExtractor implements LanguageExtractor {
       lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
       methods,
       properties,
+      kind: "object",
     };
     if (annotations.length > 0) classEntry.annotations = annotations;
     if (typedProperties.length > 0) classEntry.typedProperties = typedProperties;

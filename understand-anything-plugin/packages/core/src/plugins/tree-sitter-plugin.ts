@@ -141,9 +141,17 @@ export class TreeSitterPlugin implements AnalyzerPlugin {
 
         const loadGrammar = async () => {
           try {
-            const wasmPath = require.resolve(
-              `${config.treeSitter!.wasmPackage}/${config.treeSitter!.wasmFile}`,
-            );
+            let wasmPath: string;
+            if (config.treeSitter!.localWasm) {
+              const { resolve: pathResolve, dirname } = await import("node:path");
+              const { fileURLToPath } = await import("node:url");
+              const pkgRoot = pathResolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+              wasmPath = pathResolve(pkgRoot, config.treeSitter!.localWasm);
+            } else {
+              wasmPath = require.resolve(
+                `${config.treeSitter!.wasmPackage}/${config.treeSitter!.wasmFile}`,
+              );
+            }
             const lang = await LanguageCls.load(wasmPath);
             this._languages.set(config.id, lang);
 

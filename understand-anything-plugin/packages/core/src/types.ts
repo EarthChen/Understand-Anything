@@ -501,6 +501,8 @@ export interface StructuralAnalysis {
     superclass?: string;
     interfaces?: string[];
     typedProperties?: PropertyInfo[];
+    /** Type kind when the language differentiates (e.g. Swift: class/struct/enum/protocol/extension/actor) */
+    kind?: string;
   }>;
   imports: Array<{ source: string; specifiers: string[]; lineNumber: number }>;
   exports: Array<{ name: string; lineNumber: number; isDefault?: boolean }>;

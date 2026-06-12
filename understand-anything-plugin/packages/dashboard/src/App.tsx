@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo, useCallback, lazy, Suspense } from "react
 import { validateGraph } from "@understand-anything/core/schema";
 import { validateSystemGraph } from "@understand-anything/core/system-graph";
 import type { GraphIssue } from "@understand-anything/core/schema";
+import type { KnowledgeGraph } from "@understand-anything/core/types";
 import { useDashboardStore } from "./store";
 import GraphView from "./components/GraphView";
 import DomainGraphView from "./components/DomainGraphView";
@@ -104,7 +105,7 @@ function Dashboard() {
         if (!data) return;
         const result = validateGraph(data);
         if (result.success && result.data) {
-          setGraph(result.data);
+          setGraph(result.data as KnowledgeGraph);
           setGraphIssues(result.issues);
           if ((data as Record<string, unknown>).kind === "knowledge") {
             useDashboardStore.getState().setViewMode("knowledge");
@@ -159,7 +160,7 @@ function Dashboard() {
         if (!data) return;
         const result = validateGraph(data);
         if (result.success && result.data) {
-          setDomainGraph(result.data);
+          setDomainGraph(result.data as KnowledgeGraph);
         } else if (result.fatal) {
           console.warn(`[domain-graph] validation failed: ${result.fatal}`);
         }
@@ -234,7 +235,7 @@ function Dashboard() {
         const data = await res.json();
         const result = validateGraph(data);
         if (result.success && result.data) {
-          useDashboardStore.getState().setGraph(result.data);
+          useDashboardStore.getState().setGraph(result.data as KnowledgeGraph);
           useDashboardStore.getState().setViewMode("structural");
         }
       } catch {

@@ -533,6 +533,7 @@ export class DartExtractor implements LanguageExtractor {
     exports: StructuralAnalysis["exports"],
     annotations: AnnotationInfo[],
     inheritance?: { superclass?: string; interfaces: string[] },
+    kind: string = "class",
   ): void {
     const methods: string[] = [];
     const properties: string[] = [];
@@ -547,6 +548,7 @@ export class DartExtractor implements LanguageExtractor {
       lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
       methods,
       properties,
+      kind,
     };
     if (annotations.length > 0) classEntry.annotations = annotations;
     if (inheritance?.superclass) classEntry.superclass = inheritance.superclass;
@@ -581,6 +583,7 @@ export class DartExtractor implements LanguageExtractor {
       exports,
       annotations,
       inheritance,
+      "class",
     );
   }
 
@@ -602,6 +605,8 @@ export class DartExtractor implements LanguageExtractor {
       classes,
       exports,
       [],
+      undefined,
+      "mixin",
     );
   }
 
@@ -623,6 +628,8 @@ export class DartExtractor implements LanguageExtractor {
       classes,
       exports,
       [],
+      undefined,
+      "extension",
     );
   }
 
@@ -643,6 +650,7 @@ export class DartExtractor implements LanguageExtractor {
       lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
       methods: [],
       properties,
+      kind: "enum",
     };
     classes.push(classEntry);
     addExport(exports, nameNode.text, node.startPosition.row + 1);

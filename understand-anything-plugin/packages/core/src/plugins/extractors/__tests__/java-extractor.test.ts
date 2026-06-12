@@ -196,6 +196,7 @@ describe("JavaExtractor", () => {
 
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("Server");
+      expect(result.classes[0].kind).toBe("class");
       expect(result.classes[0].properties).toEqual(["host", "port"]);
       expect(result.classes[0].methods).toEqual(["start", "stop"]);
       expect(result.classes[0].lineRange[0]).toBe(1);
@@ -586,6 +587,55 @@ public class OrderController {
       const result = extractor.extractStructure(root);
 
       expect(result.classes[0].annotations).toBeUndefined();
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("extracts enum declarations", () => {
+      const { tree, parser, root } = parse(`public enum Color {
+    RED,
+    GREEN,
+    BLUE
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.classes).toHaveLength(1);
+      expect(result.classes[0].name).toBe("Color");
+      expect(result.classes[0].kind).toBe("enum");
+      expect(result.classes[0].properties).toContain("RED");
+      expect(result.classes[0].properties).toContain("GREEN");
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("extracts record declarations", () => {
+      const { tree, parser, root } = parse(`public record Point(int x, int y) {
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.classes).toHaveLength(1);
+      expect(result.classes[0].name).toBe("Point");
+      expect(result.classes[0].kind).toBe("record");
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("extracts annotation type declarations", () => {
+      const { tree, parser, root } = parse(`public @interface MyAnnotation {
+    String value();
+    int count() default 0;
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.classes).toHaveLength(1);
+      expect(result.classes[0].name).toBe("MyAnnotation");
+      expect(result.classes[0].kind).toBe("annotation");
 
       tree.delete();
       parser.delete();

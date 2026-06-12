@@ -143,6 +143,7 @@ class UserService {
 
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("UserService");
+      expect(result.classes[0].kind).toBe("class");
       expect(result.classes[0].methods).toContain("__construct");
       expect(result.classes[0].methods).toContain("getUser");
       expect(result.classes[0].methods).toContain("log");
@@ -256,6 +257,40 @@ interface Repository {
 
       const exportNames = result.exports.map((e) => e.name);
       expect(exportNames).toContain("Repository");
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("extracts trait declarations", () => {
+      const { tree, parser, root } = parse(`<?php
+trait HasUuid {
+    public function uuid() {}
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.classes).toHaveLength(1);
+      expect(result.classes[0].name).toBe("HasUuid");
+      expect(result.classes[0].kind).toBe("trait");
+      expect(result.classes[0].methods).toContain("uuid");
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("extracts enum declarations", () => {
+      const { tree, parser, root } = parse(`<?php
+enum Color: string {
+    case Red = 'red';
+    case Green = 'green';
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.classes).toHaveLength(1);
+      expect(result.classes[0].name).toBe("Color");
+      expect(result.classes[0].kind).toBe("enum");
 
       tree.delete();
       parser.delete();
@@ -649,6 +684,7 @@ namespace App\\Services {
       expect(result.imports[0].source).toBe("App\\Models\\User");
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("UserService");
+      expect(result.classes[0].kind).toBe("class");
 
       tree.delete();
       parser.delete();

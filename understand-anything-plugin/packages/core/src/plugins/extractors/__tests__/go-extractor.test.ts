@@ -151,6 +151,7 @@ func (s Server) Name() string {
       // Methods are also linked to the struct
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("Server");
+      expect(result.classes[0].kind).toBe("struct");
       expect(result.classes[0].methods).toContain("Start");
       expect(result.classes[0].methods).toContain("Name");
 
@@ -179,6 +180,7 @@ type Server struct {
 
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("Server");
+      expect(result.classes[0].kind).toBe("struct");
       expect(result.classes[0].properties).toEqual(["Host", "Port"]);
       expect(result.classes[0].methods).toEqual([]);
       expect(result.classes[0].lineRange[0]).toBe(3);
@@ -573,6 +575,7 @@ func helper(x int) string {
       // Struct: Server with properties Host, Port and method Start
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("Server");
+      expect(result.classes[0].kind).toBe("struct");
       expect(result.classes[0].properties).toEqual(["Host", "Port"]);
       expect(result.classes[0].methods).toContain("Start");
 

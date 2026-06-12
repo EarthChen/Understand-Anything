@@ -306,6 +306,7 @@ export class GoExtractor implements LanguageExtractor {
       ],
       methods: [], // Methods are attached later from methodsByReceiver
       properties,
+      kind: "struct",
     });
 
     if (isExported(nameNode.text)) {
@@ -334,6 +335,7 @@ export class GoExtractor implements LanguageExtractor {
     }
 
     classes.push({
+      kind: "interface",
       name: nameNode.text,
       lineRange: [
         declNode.startPosition.row + 1,

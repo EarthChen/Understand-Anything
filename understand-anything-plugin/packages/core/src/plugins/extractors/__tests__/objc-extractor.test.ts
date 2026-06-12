@@ -44,6 +44,7 @@ describe("ObjcExtractor", () => {
 
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("Dog");
+      expect(result.classes[0].kind).toBe("class");
       expect(result.classes[0].superclass).toBe("Animal");
       expect(result.classes[0].interfaces).toEqual(["Runnable", "Serializable"]);
       expect(result.classes[0].methods).toEqual(["bark"]);
@@ -158,6 +159,7 @@ describe("ObjcExtractor", () => {
 
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("Dog");
+      expect(result.classes[0].kind).toBe("class");
       expect(result.classes[0].methods).toEqual(["bark", "create"]);
 
       expect(result.functions).toHaveLength(2);
@@ -182,6 +184,7 @@ describe("ObjcExtractor", () => {
 
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("Dog");
+      expect(result.classes[0].kind).toBe("class");
       expect(result.classes[0].superclass).toBe("Animal");
       expect(result.classes[0].methods).toEqual(["bark"]);
 

@@ -172,6 +172,7 @@ class DataProcessor:
 
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("DataProcessor");
+      expect(result.classes[0].kind).toBe("class");
       expect(result.classes[0].methods).toContain("__init__");
       expect(result.classes[0].methods).toContain("process");
       expect(result.classes[0].properties).toContain("name");

@@ -164,6 +164,7 @@ describe("CSharpExtractor", () => {
 
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("Server");
+      expect(result.classes[0].kind).toBe("class");
       expect(result.classes[0].properties).toEqual(["_host", "_port", "Address"]);
       expect(result.classes[0].methods).toEqual(["Start", "Stop"]);
       expect(result.classes[0].lineRange[0]).toBe(2);
@@ -239,6 +240,39 @@ describe("CSharpExtractor", () => {
       expect(result.classes).toHaveLength(1);
       expect(result.classes[0].name).toBe("IMarker");
       expect(result.classes[0].methods).toEqual([]);
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("extracts enum declarations", () => {
+      const { tree, parser, root } = parse(`namespace App {
+    enum Color { Red, Green, Blue }
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.classes).toHaveLength(1);
+      expect(result.classes[0].name).toBe("Color");
+      expect(result.classes[0].kind).toBe("enum");
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("extracts struct declarations", () => {
+      const { tree, parser, root } = parse(`namespace App {
+    struct Point {
+        public int X;
+        public int Y;
+    }
+}
+`);
+      const result = extractor.extractStructure(root);
+
+      expect(result.classes).toHaveLength(1);
+      expect(result.classes[0].name).toBe("Point");
+      expect(result.classes[0].kind).toBe("struct");
 
       tree.delete();
       parser.delete();

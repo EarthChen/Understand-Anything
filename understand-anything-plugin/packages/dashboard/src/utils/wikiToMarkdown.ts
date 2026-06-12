@@ -403,7 +403,7 @@ export function overviewToMarkdown(data: WikiOverview, labels: WikiLabels = defa
   };
 
   // Handle both flat services[] and facets[].services[] structures
-  const facets = Array.isArray((data as Record<string, unknown>).facets) ? (data as Record<string, unknown>).facets as Array<{ type?: string; name: string; label?: string; path?: string; services?: unknown[]; techStack?: string[] }> : null;
+  const facets = Array.isArray((data as unknown as Record<string, unknown>).facets) ? (data as unknown as Record<string, unknown>).facets as Array<{ type?: string; name: string; label?: string; path?: string; services?: unknown[]; techStack?: string[] }> : null;
   const services = Array.isArray(data?.services) ? data.services : [];
 
   if (facets && facets.length > 0) {
@@ -441,7 +441,7 @@ export function overviewToMarkdown(data: WikiOverview, labels: WikiLabels = defa
   }
 
   // Embedded architecture diagram (from facet wiki)
-  const arch = (data as Record<string, unknown>)._architecture as WikiArchitecture | undefined;
+  const arch = (data as unknown as Record<string, unknown>)._architecture as WikiArchitecture | undefined;
   if (arch) {
     const archDiagram = architectureToMermaidDiagram(arch);
     if (archDiagram) {
@@ -457,9 +457,9 @@ export function overviewToMarkdown(data: WikiOverview, labels: WikiLabels = defa
   }
 
   // Embedded cross-domain flows (from facet wiki)
-  const crossDomains = (data as Record<string, unknown>)._crossDomains as WikiCrossDomain[] | undefined;
+  const crossDomains = (data as unknown as Record<string, unknown>)._crossDomains as WikiCrossDomain[] | undefined;
   if (crossDomains && crossDomains.length > 0) {
-    lines.push(`## ${labels.crossDomainFlows ?? "跨域业务流程"}`);
+    lines.push(`## ${(labels as unknown as Record<string, string | undefined>).crossDomainFlows ?? "跨域业务流程"}`);
     lines.push("");
     for (const domain of crossDomains) {
       lines.push(`### ${domain.name}`);
@@ -580,7 +580,7 @@ export function crossDomainToMarkdown(data: WikiCrossDomain, labels: WikiLabels 
   }
 
   // Cross-platform architecture diagram
-  const archData = (data as Record<string, unknown>).architecture as { layers?: Array<{ name: string; services: string[]; description: string }>; communications?: Array<{ from: string; to: string; protocol: string; description: string }> } | undefined;
+  const archData = (data as unknown as Record<string, unknown>).architecture as { layers?: Array<{ name: string; services: string[]; description: string }>; communications?: Array<{ from: string; to: string; protocol: string; description: string }> } | undefined;
   if (archData?.communications && archData.communications.length > 0) {
     lines.push("## 跨端通信架构");
     lines.push("");
@@ -614,7 +614,7 @@ export function crossDomainToMarkdown(data: WikiCrossDomain, labels: WikiLabels 
   }
 
   // Multi-flow aggregation (panorama page with embedded flows)
-  const flows = Array.isArray((data as Record<string, unknown>).flows) ? (data as Record<string, unknown>).flows as Array<{ facet?: string; name: string; summary: string; services: string[]; steps: Array<{ order: number; service: string; description: string; wikiRef?: string; crossServiceCall?: { interface?: string; method: string; type: string } }> }> : null;
+  const flows = Array.isArray((data as unknown as Record<string, unknown>).flows) ? (data as unknown as Record<string, unknown>).flows as Array<{ facet?: string; name: string; summary: string; services: string[]; steps: Array<{ order: number; service: string; description: string; wikiRef?: string; crossServiceCall?: { interface?: string; method: string; type: string } }> }> : null;
   if (flows && flows.length > 0) {
     for (const flow of flows) {
       const header = flow.facet ? `## [${flow.facet}] ${flow.name}` : `## ${flow.name}`;

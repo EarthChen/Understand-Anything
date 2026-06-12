@@ -296,6 +296,15 @@ export class JavaExtractor implements LanguageExtractor {
         case "interface_declaration":
           this.extractInterface(node, functions, classes, exports, endpoints);
           break;
+        case "enum_declaration":
+          this.extractEnum(node, classes, exports);
+          break;
+        case "record_declaration":
+          this.extractRecord(node, functions, classes, exports);
+          break;
+        case "annotation_type_declaration":
+          this.extractAnnotationType(node, functions, classes, exports);
+          break;
       }
     }
 
@@ -458,6 +467,7 @@ export class JavaExtractor implements LanguageExtractor {
       ],
       methods,
       properties,
+      kind: "class",
     };
     if (annotations.length > 0) classEntry.annotations = annotations;
     if (superclass) classEntry.superclass = superclass;
@@ -521,6 +531,7 @@ export class JavaExtractor implements LanguageExtractor {
         node.endPosition.row + 1,
       ],
       methods,
+      kind: "interface",
       properties,
     };
     if (annotations.length > 0) classEntry.annotations = annotations;
@@ -668,4 +679,87 @@ export class JavaExtractor implements LanguageExtractor {
       }
     }
   }
+
+  private extractEnum(
+    node: TreeSitterNode,
+    classes: StructuralAnalysis["classes"],
+    exports: StructuralAnalysis["exports"],
+  ): void {
+    const nameNode = node.childForFieldName("name") ?? findChild(node, "identifier");
+    if (!nameNode) return;
+
+    const body = findChild(node, "enum_body");
+    const properties: string[] = [];
+    if (body) {
+      for (const enumConst of findChildren(body, "enum_constant")) {
+        const constName = findChild(enumConst, "identifier");
+        if (constName) properties.push(constName.text);
+      }
+    }
+
+    classes.push({
+      name: nameNode.text,
+      lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
+      methods: [],
+      properties,
+      kind: "enum",
+    });
+    exports.push({ name: nameNode.text, lineNumber: node.startPosition.row + 1 });
+  }
+
+  private extractRecord(
+    node: TreeSitterNode,
+    functions: StructuralAnalysis["functions"],
+    classes: StructuralAnalysis["classes"],
+    exports: StructuralAnalysis["exports"],
+  ): void {
+    const nameNode = node.childForFieldName("name") ?? findChild(node, "identifier");
+    if (!nameNode) return;
+
+    const methods: string[] = [];
+    const properties: string[] = [];
+    const body = findChild(node, "class_body");
+    if (body) {
+      this.extractClassBodyMembers(body, methods, properties, functions, exports);
+    }
+
+    classes.push({
+      name: nameNode.text,
+      lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
+      methods,
+      properties,
+      kind: "record",
+    });
+    exports.push({ name: nameNode.text, lineNumber: node.startPosition.row + 1 });
+  }
+
+
+  private extractAnnotationType(
+    node: TreeSitterNode,
+    functions: StructuralAnalysis["functions"],
+    classes: StructuralAnalysis["classes"],
+    exports: StructuralAnalysis["exports"],
+  ): void {
+    const nameNode = node.childForFieldName("name") ?? findChild(node, "identifier");
+    if (!nameNode) return;
+
+    const methods: string[] = [];
+    const body = findChild(node, "class_body");
+    if (body) {
+      for (const method of findChildren(body, "method_declaration")) {
+        const methodName = method.childForFieldName("name") ?? findChild(method, "identifier");
+        if (methodName) methods.push(methodName.text);
+      }
+    }
+
+    classes.push({
+      name: nameNode.text,
+      lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
+      methods,
+      properties: [],
+      kind: "annotation",
+    });
+    exports.push({ name: nameNode.text, lineNumber: node.startPosition.row + 1 });
+  }
+
 }

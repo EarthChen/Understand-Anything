@@ -386,7 +386,6 @@ function handleHotspots(searchParams: URLSearchParams): ApiResponse {
     fanOut.set(edge.source, (fanOut.get(edge.source) ?? 0) + 1)
   }
 
-  const nodesById = new Map(loaded.nodes.map((n) => [n.id, n]))
   const scored: Array<{
     id: string
     name: string

@@ -282,6 +282,7 @@ export class RustExtractor implements LanguageExtractor {
       ],
       methods: [], // Methods are attached later from methodsByType
       properties,
+      kind: "struct",
     });
 
     if (isPublic(node)) {
@@ -313,6 +314,7 @@ export class RustExtractor implements LanguageExtractor {
     }
 
     classes.push({
+      kind: "enum",
       name: nameNode.text,
       lineRange: [
         node.startPosition.row + 1,
@@ -360,6 +362,7 @@ export class RustExtractor implements LanguageExtractor {
     }
 
     classes.push({
+      kind: "trait",
       name: nameNode.text,
       lineRange: [
         node.startPosition.row + 1,

@@ -239,6 +239,15 @@ export class CSharpExtractor implements LanguageExtractor {
         case "interface_declaration":
           this.extractInterface(child, functions, classes, exports);
           break;
+        case "enum_declaration":
+          this.extractEnum(node, classes, exports);
+          break;
+        case "struct_declaration":
+          this.extractStruct(node, functions, classes, exports);
+          break;
+        case "record_declaration":
+          this.extractStruct(node, functions, classes, exports);
+          break;
       }
     }
   }
@@ -268,6 +277,15 @@ export class CSharpExtractor implements LanguageExtractor {
 
         case "interface_declaration":
           this.extractInterface(child, functions, classes, exports);
+          break;
+        case "enum_declaration":
+          this.extractEnum(child, classes, exports);
+          break;
+        case "struct_declaration":
+          this.extractStruct(child, functions, classes, exports);
+          break;
+        case "record_declaration":
+          this.extractStruct(child, functions, classes, exports);
           break;
 
         case "namespace_declaration":
@@ -317,6 +335,7 @@ export class CSharpExtractor implements LanguageExtractor {
       ],
       methods,
       properties,
+      kind: "class",
     });
 
     if (hasModifier(node, "public")) {
@@ -361,6 +380,7 @@ export class CSharpExtractor implements LanguageExtractor {
     }
 
     classes.push({
+      kind: "interface",
       name: nameNode.text,
       lineRange: [
         node.startPosition.row + 1,
@@ -521,4 +541,59 @@ export class CSharpExtractor implements LanguageExtractor {
       }
     }
   }
+
+  private extractEnum(
+    node: TreeSitterNode,
+    classes: StructuralAnalysis["classes"],
+    exports: StructuralAnalysis["exports"],
+  ): void {
+    const nameNode = findChild(node, "identifier");
+    if (!nameNode) return;
+
+    const body = findChild(node, "declaration_list") ?? findChild(node, "enum_member_declaration_list");
+    const properties: string[] = [];
+    if (body) {
+      for (const member of findChildren(body, "enum_member_declaration")) {
+        const memberName = findChild(member, "identifier");
+        if (memberName) properties.push(memberName.text);
+      }
+    }
+
+    classes.push({
+      name: nameNode.text,
+      lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
+      methods: [],
+      properties,
+      kind: "enum",
+    });
+    exports.push({ name: nameNode.text, lineNumber: node.startPosition.row + 1 });
+  }
+
+  private extractStruct(
+    node: TreeSitterNode,
+    functions: StructuralAnalysis["functions"],
+    classes: StructuralAnalysis["classes"],
+    exports: StructuralAnalysis["exports"],
+  ): void {
+    const nameNode = findChild(node, "identifier");
+    if (!nameNode) return;
+
+    const methods: string[] = [];
+    const properties: string[] = [];
+    const body = findChild(node, "declaration_list");
+    if (body) {
+      this.extractClassBodyMembers(body, methods, properties, functions, exports);
+    }
+
+    const kind = node.type === "record_declaration" ? "record" : "struct";
+    classes.push({
+      name: nameNode.text,
+      lineRange: [node.startPosition.row + 1, node.endPosition.row + 1],
+      methods,
+      properties,
+      kind,
+    });
+    exports.push({ name: nameNode.text, lineNumber: node.startPosition.row + 1 });
+  }
+
 }
