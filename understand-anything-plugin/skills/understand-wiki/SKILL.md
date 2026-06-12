@@ -1,16 +1,42 @@
 ---
 name: understand-wiki
 description: Generate a comprehensive, navigable knowledge base Wiki for a microservice project. Supports single-service and batch modes with progressive adoption.
-argument-hint: '[--batch] [--service=<name>] [--review] [--full] [--force] [--dry-run] [--continue-on-error] [--language <lang>] [--repo-type <type>]'
+argument-hint: '[--workflow] [--batch] [--service=<name>] [--review] [--full] [--force] [--dry-run] [--continue-on-error] [--language <lang>] [--repo-type <type>]'
 ---
 
 # /understand-wiki
 
 Generate a team knowledge base Wiki for microservice projects. Each service gets its own Wiki (documenting domains, flows, steps with source references). When multiple services are integrated, a parent-level orchestration Wiki is generated with cross-service relationships and business flow navigation.
 
+---
+
+## Invocation Mode
+
+**Check `$ARGUMENTS` for `--workflow` before doing anything else.**
+
+### If `--workflow` is present → Workflow harness path
+
+Strip `--workflow` from `$ARGUMENTS`, then invoke the **Workflow tool** (not a sub-agent) with:
+
+```
+scriptPath: "$SKILL_DIR/workflow.js"
+args: { rawArgs: "<$ARGUMENTS without --workflow>", cwd: "<current working directory>" }
+```
+
+Wait for the workflow to complete and surface its result. **Do not execute any manual phases below.**
+
+The workflow harness runs a deterministic multi-stage pipeline (KG → DG → Wiki → Assembly → Cross-Service → Business) with structured schemas and parallel execution — suitable for large batch runs and CI environments.
+
+### If `--workflow` is absent (default) → Manual LLM-driven path
+
+Continue to the manual phases described in this file (LLM agent orchestrates each step directly).
+
+---
+
 ## Options
 
 - `$ARGUMENTS` may contain:
+  - `--workflow` — Use the Workflow harness (`workflow.js`) instead of the default LLM-driven execution. Enables deterministic multi-stage pipeline with structured schemas, parallel service processing, and resumable checkpoints. Recommended for batch runs with 3+ services.
   - `--batch` — Explicitly declare current directory as parent (batch mode). Without this flag, **default is single-service mode**.
   - `--service=<name>` — Generate Wiki for a specific service (implies batch mode, runs from parent dir)
   - `--review` — After generation, run the `wiki-reviewer` agent for quality assurance
@@ -30,6 +56,8 @@ Generate a team knowledge base Wiki for microservice projects. Each service gets
 | `cd service-a && /understand-wiki` | Single-service (default) | Generate Wiki for current service → trigger parent incremental update |
 | `/understand-wiki --service=order-service` | Single-service (from parent) | Target named service (implies `--batch` context) |
 | `/understand-wiki --batch` | Batch | Scan all sub-services, generate/update Wiki for each, then update parent |
+| `/understand-wiki --workflow --batch` | Batch via Workflow harness | Same as above but runs `workflow.js` — deterministic pipeline, parallel, resumable |
+| `/understand-wiki --workflow` | Single via Workflow harness | Single-service run through `workflow.js` |
 
 **Design principle: Explicit over implicit.** Default is always single-service (current directory = one service). Use `--batch` to explicitly declare parent mode. This avoids misdetection in monorepo structures.
 
@@ -92,7 +120,7 @@ After wiki-worker writes content to `intermediate/wiki/`, run the deterministic 
 4. `build-wiki-index.py` — generates `index.json` (MUST run)
 5. `assemble-wiki.py` — final assembly (MUST run)
 
-**Checkpoint:** After successful assembly, write `$PROJECT_ROOT/.understand-anything/tmp/ua-wiki-${WIKI_SESSION_ID}-checkpoint-phase2.json` with `{"_checkpoint": {"status": "complete", "phase": 2}}`. On re-run (non-`--full`), if this checkpoint exists and is valid, skip Phase 2 and proceed directly to the Quality Gate.
+**Checkpoint:** After successful assembly, write `$SERVICE_ROOT/.understand-anything/tmp/ua-wiki-${WIKI_SESSION_ID}-checkpoint-p2-${SERVICE_NAME}.json` with `{"_checkpoint": {"status": "complete", "phase": 2}}`. On re-run (non-`--full`), if this checkpoint exists and is valid, skip Phase 2 and proceed directly to the Quality Gate.
 
 **Detailed implementation:** See [Phase 2 — Assembly Pipeline](docs/wiki-phase2-assembly.md)
 
@@ -115,7 +143,7 @@ Identify cross-service relationships, LLM review/organize flows, generate parent
 
 **Incremental mode:** Before running the cross-service LLM analysis, compute content hashes (SHA-256) of each service's `wiki/meta.json`. Compare against the previous run's hashes stored in `$PROJECT_ROOT/.understand-anything/wiki/service-hashes.json`. If all service hashes match, skip Phase 3 entirely. If only some changed, pass the unchanged service wikis as read-only context and focus the LLM analysis on changed services only. After completion, update `service-hashes.json`.
 
-**Checkpoint:** After successful cross-service analysis, write `$PROJECT_ROOT/.understand-anything/tmp/ua-wiki-${WIKI_SESSION_ID}-checkpoint-phase3.json` with `{"_checkpoint": {"status": "complete", "phase": 3}}`. On re-run, if checkpoint exists and all service hashes match, skip Phase 3.
+**Checkpoint:** After successful cross-service analysis, write `$PROJECT_ROOT/.understand-anything/tmp/ua-wiki-${WIKI_SESSION_ID}-checkpoint-p3.json` with `{"_checkpoint": {"status": "complete", "phase": 3}}`. On re-run, if checkpoint exists and all service hashes match, skip Phase 3.
 
 **Detailed implementation:** See [Phase 3 — Cross-Service](docs/wiki-phase3-crossservice.md)
 

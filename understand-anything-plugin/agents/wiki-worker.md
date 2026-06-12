@@ -300,6 +300,39 @@ IF `SERVER_WIKI_AVAILABLE=false`:
 
 ---
 
+---
+
+### Frontend Mode (`REPO_TYPE=frontend`)
+
+When generating wiki for a frontend repository (React, Vue, Angular, etc.), adjust content focus:
+
+**Content priorities (replace backend defaults):**
+- **Pages & Routing**: Document each page/view component, client-side routing structure, navigation patterns, lazy loading boundaries
+- **API Integration**: Document all HTTP/REST/GraphQL API calls (endpoints consumed), request/response handling, error states
+- **State Management**: Redux/Zustand/Pinia/Vuex stores, context providers, data flow between components
+- **Component Domains**: Group related components into domain pages (e.g., `auth`, `checkout`, `product-catalog`)
+- **Build & Bundle**: Entry points, code-splitting boundaries, environment configuration
+
+**Domain classification strategy:**
+Classify domains from feature directory structure or routing hierarchy (e.g., `/pages/checkout/` → `checkout` domain, `/features/auth/` → `auth` domain).
+
+IF `SERVER_WIKI_AVAILABLE=true`:
+1. Load server wiki domain→endpoint mapping from `$SERVER_FACET_PATH/.understand-anything/wiki/`
+2. For each candidate frontend domain, extract API calls (`consumes_api` KG edges or `fetch`/`axios` call sites)
+3. Match API paths to server endpoints → classify frontend domain under the server domain that owns those endpoints
+4. Unmatched domains: classify from code structure/naming (mark as degraded confidence)
+
+IF `SERVER_WIKI_AVAILABLE=false`:
+1. Classify all domains from directory/file structure and naming conventions
+2. Mark all domain classifications as degraded confidence
+
+**Entity naming conventions for frontend:**
+- Use page/view component names as primary entities (e.g., `CheckoutPage`, `ProductListView`)
+- Use store/slice names as secondary entities (e.g., `cartStore`, `authSlice`, `useOrderState`)
+- API service classes/hooks are tertiary (e.g., `OrderApiService`, `useProductQuery`)
+
+---
+
 ## Phase 3 — (Removed)
 
 Index and metadata generation is now handled by the deterministic assembly pipeline

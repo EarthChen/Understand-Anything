@@ -298,39 +298,34 @@ If validation passes:
 3. Clean up intermediate files (keep if `--keep-intermediate`)
 4. **Build system topology registry** (Dashboard service discovery):
 
-   a. **Generate `system-graph.json`** — merge all facet-level topology graphs into a single root-level registry:
-   - Read each facet's topology: `<facet-path>/.understand-anything/system-graph.json` (server) or `client-graph.json` (mobile)
-   - Merge all nodes and edges into one graph
-   - Build `serviceIndex` with `basePath` for each service (relative path from project root, e.g. `"backend/ultron-basic-user"`)
-   - Write to `$PROJECT_ROOT/.understand-anything/system-graph.json`
+   a. **Generate `system-graph.json`** — use the canonical `build-system-graph.py` script (do NOT manually merge facet graphs):
 
-   ```json
-   {
-     "version": "1.0",
-     "generatedAt": "<ISO 8601>",
-     "project": {
-       "name": "<from system.json.name>",
-       "description": "<from system.json.description>",
-       "serviceCount": "<total services across all facets>",
-       "totalNodes": "<sum of service KG node counts>",
-       "totalEdges": "<sum of service KG edge counts>"
-     },
-     "nodes": ["<merged from all facet topology graphs + facet-type nodes>"],
-     "edges": ["<merged from all facet topology graphs + contains edges>"],
-     "serviceIndex": {
-       "<service-name>": {
-         "hasKg": true,
-         "hasWiki": true,
-         "hasDomain": true,
-         "kgCommit": "<from facet serviceIndex>",
-         "basePath": "<facet-path>/<service-name>",
-         "facet": "<server|mobile|frontend from system.json facet type>"
-       }
-     }
-   }
+   ```bash
+   WIKI_SKILL_DIR="$(dirname "$SKILL_DIR")/../.understand-anything-plugin/skills/understand-wiki"
+   # Fallback: check common plugin install paths
+   if [ ! -f "$WIKI_SKILL_DIR/build-system-graph.py" ]; then
+     WIKI_SKILL_DIR="$HOME/.understand-anything-plugin/skills/understand-wiki"
+   fi
+   python3 "$WIKI_SKILL_DIR/build-system-graph.py" "$PROJECT_ROOT"
    ```
 
-   Add `"facet"` node for each facet (type: "facet", facetType: server/mobile/frontend) and `"contains"` edges from facet nodes to their services.
+   This script automatically:
+   - Reads `system.json` facets to discover all services (server + mobile)
+   - Uses `microservice:` prefix for service node IDs (CRITICAL: never use `service:` prefix)
+   - Generates `facet` group nodes and `contains` edges linking facets to their services
+   - Matches RPC edges across services via `provides_rpc`/`consumes_rpc` in each service's KG
+   - Enriches from `wiki/architecture.json` cross-service calls if available
+   - Writes to `$PROJECT_ROOT/.understand-anything/system-graph.json`
+
+   **Validate immediately after generation:**
+   ```bash
+   node -e "const{validateSystemGraph}=require('@understand-anything/core/system-graph');const d=require('$PROJECT_ROOT/.understand-anything/system-graph.json');const r=validateSystemGraph(d);console.log(r.valid?'PASS':'FAIL',r.issues.length,'issues');if(!r.valid)console.log(r.issues.join('\n'))"
+   ```
+
+   If validation fails, check:
+   - Node ID prefix mismatch (must be `microservice:`, not `service:`)
+   - Missing mobile/client nodes (check `system.json` facet paths)
+   - Edge targets referencing non-existent nodes
 
    b. **Generate `wiki/` directory** — build root-level wiki entry points for Dashboard navigation:
    - `wiki/meta.json`: `{ "generatedAt": "<ISO>", "version": "1.0.0", "outputLanguage": "<lang>", "serviceCount": <N> }`
@@ -365,12 +360,16 @@ If validation passes:
          { "name": "mobile", "label": "移动客户端", "services": ["ddoversea", "ddoversea_flutter"], "description": "..." },
          { "name": "backend", "label": "后端微服务", "services": ["ultron-relation", "ultron-basic-user"], "description": "..." }
        ],
-       "crossServiceCalls": ["<ONLY cross-facet calls — omit intra-facet calls>"],
+       "crossServiceCalls": ["<merged from per-facet architecture.json — see note below>"],
        "eventFlows": [],
        "sharedResources": []
      }
      ```
-     The `facets` field enables the Dashboard to render Mermaid subgraphs grouped by端 and filter out intra-facet calls at the top level. Intra-facet calls remain visible in each facet's own architecture page.
+
+     **CRITICAL: Populating `crossServiceCalls`**:
+     Read each facet's wiki `architecture.json` (e.g. `<facet-path>/.understand-anything/wiki/architecture.json`) and merge their `crossServiceCalls` arrays into the root-level file. The server facet's architecture typically contains all intra-backend RPC calls — include ALL of them here (the Dashboard's `architectureToMarkdown` function handles cross-facet filtering automatically via the `facets` field). Without this data, the architecture page will only show a service name table with no Mermaid diagram.
+
+     The `facets` field enables the Dashboard to render Mermaid subgraphs grouped by facet type. Intra-facet calls remain visible in each facet's own architecture page.
 
    The Dashboard reads `system-graph.json` as its authoritative service registry (no directory scanning).
 
