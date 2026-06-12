@@ -346,17 +346,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     trace.add_argument("--query", required=True, help="Search keywords (comma-separated for multi-keyword: '挚友,ClosedFriend')")
     trace.add_argument("--type", help="Filter matched nodes by type (class, function, file...)")
     trace.add_argument("--limit", type=int, default=5, help="Max matched nodes to return")
-    trace.add_argument("--source", action="store_true", help="Include source code of top match")
+    trace.add_argument("--source", action="store_true", help="Include source code of matched nodes (top 1 inline + top 3 as sourceReads)")
     trace.add_argument("--grouped", action="store_true", help="Group source code by file for all matched nodes (use with --source)")
     trace.add_argument("--symbol", help="Extract specific method/class from source (use with --source)")
     trace.add_argument("--business", action="store_true", help="Include business context search")
     trace.add_argument("--wiki", action="store_true", help="Include wiki domain detail for matched feature")
     trace.add_argument("--domain-flows", action="store_true", help="Include domain flow steps for matched feature")
-    trace.add_argument("--verify-source", action="store_true", help="Force source code read to verify wiki/domain claims")
     trace.add_argument("--auto-discover", action="store_true", help="Auto-detect service via business landscape search")
     trace.add_argument("--fusion", choices=["none", "rrf"], default="rrf", help="Search fusion strategy (default: rrf)")
 
-    ask = sub.add_parser("ask", help="Answer a business question: auto-discover service, trace, wiki, domain, verify source")
+    ask = sub.add_parser("ask", help="Answer a business question: auto-discover service, trace, wiki, domain, source")
     ask.add_argument("--query", required=True, help="Natural language question (Chinese or English)")
     ask.add_argument("--depth", choices=["quick", "standard", "full"], default="standard", help="Depth: quick=business only, standard=+trace+wiki, full=+domain+source-verify")
     ask.add_argument("--service", help="Override auto-discovery with specific service")
@@ -366,6 +365,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     struct = sub.add_parser("structure", help="Code structure: signatures, annotations, types")
     struct.add_argument("--service", required=True)
     struct.add_argument("--file", help="Get structure for a specific file path (exact or suffix match)")
+    struct.add_argument("--start", type=int, help="Start line for --file --source (1-based)")
+    struct.add_argument("--end", type=int, help="End line for --file --source (1-based)")
     struct.add_argument("--files", action="store_true", help="List all indexed file paths")
     struct.add_argument("--annotation", help="Search by class/function annotation name")
     struct.add_argument("--param-type", help="Search by function parameter type")
@@ -1253,7 +1254,6 @@ def cmd_trace(args: argparse.Namespace) -> Any:
                     query=cross_svc_fallback["keyword"],
                     limit=args.limit, business=False,
                     wiki=getattr(args, "wiki", False),
-                    verify_source=getattr(args, "verify_source", False),
                     domain_flows=getattr(args, "domain_flows", False),
                     auto_discover=False,
                     fusion=getattr(args, "fusion", "rrf"),
@@ -1442,7 +1442,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
             result["businessContext"] = None
 
     # Step 5: Wiki domain detail
-    if getattr(args, "wiki", False) or getattr(args, "verify_source", False):
+    if getattr(args, "wiki", False):
         wiki_data = _fetch_wiki_domain(args.server, service, args.query)
         if wiki_data:
             result["wikiDomain"] = wiki_data
@@ -1454,7 +1454,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
             result["domainFlows"] = flow_data
 
     # Step 7: Source reads — return actual source code for top matches so agent can reason about it
-    if getattr(args, "verify_source", False) and matched:
+    if args.source and matched:
         sources = result.get("source")
         existing_file = sources.get("file") if isinstance(sources, dict) else None
         verify_targets = [n for n in matched[:3] if n.get("filePath") and n.get("filePath") != existing_file]
@@ -1486,8 +1486,8 @@ def cmd_trace(args: argparse.Namespace) -> Any:
         if source_reads:
             result["sourceReads"] = source_reads
 
-    # Cross-service RPC detection: find injected RPC interfaces and locate their implementations
-    if result.get("neighbors") and getattr(args, "verify_source", False):
+    # Cross-service RPC detection: always run when neighbors exist (cheap metadata lookup)
+    if result.get("neighbors"):
         _RPC_PATTERNS = ("MoaService", "MoaWebService", "FeignClient", "Feign", "GrpcService", "RpcService")
         rpc_outbound = [
             n for n in result["neighbors"].get("neighbors", [])
@@ -1613,7 +1613,6 @@ def _detect_and_follow_cross_service_rpc(
         follow_args.business = False
         follow_args.wiki = True
         follow_args.domain_flows = True
-        follow_args.verify_source = True
         follow_args.auto_discover = False
         follow_args.fusion = "rrf"
         follow_args.format = "json"
@@ -1641,7 +1640,7 @@ def _detect_and_follow_cross_service_rpc(
             "hint": (
                 f"检测到 '{current_service}' 消费 RPC 接口 '{target_interface}'，"
                 f"实现服务为 '{target_service}'，但追踪失败。建议手动执行: "
-                f"python ua_query.py trace --service {target_service} --query \"{target_interface}\" --source --verify-source"
+                f"python ua_query.py trace --service {target_service} --query \"{target_interface}\" --source"
             ),
             "rpcInterfaces": rpc_interface_names[:5],
             "targetService": target_service,
@@ -1695,7 +1694,6 @@ def cmd_ask(args: argparse.Namespace) -> Any:
     trace_args.business = False
     trace_args.wiki = True
     trace_args.domain_flows = depth == "full"
-    trace_args.verify_source = depth == "full"
     trace_args.auto_discover = False
     trace_args.fusion = getattr(args, "fusion", "rrf")
     trace_args.format = getattr(args, "format", "json")
@@ -1772,6 +1770,15 @@ def cmd_callers(args: argparse.Namespace) -> Any:
     depth = min(max(args.depth, 1), 3)
     nbr_data = _fetch_neighbors(args.server, effective_service, center["id"], "inbound", depth, "calls")
     callers = _neighbor_entries(nbr_data)
+
+    # Fallback: if no "calls" edges, try "injects" (classes that inject this one)
+    if not callers:
+        nbr_data = _fetch_neighbors(args.server, effective_service, center["id"], "inbound", depth, "injects")
+        callers = _neighbor_entries(nbr_data)
+        if callers:
+            for c in callers:
+                c["edgeType"] = "injects"
+
     result: dict[str, Any] = {
         "service": effective_service,
         "center": {"id": center["id"], "name": center.get("name", ""), "type": center.get("type", "")},
@@ -1790,6 +1797,15 @@ def cmd_callees(args: argparse.Namespace) -> Any:
     depth = min(max(args.depth, 1), 3)
     nbr_data = _fetch_neighbors(args.server, effective_service, center["id"], "outbound", depth, "calls")
     callees = _neighbor_entries(nbr_data)
+
+    # Fallback: if no "calls" edges, try "injects" (Spring DI dependencies)
+    if not callees:
+        nbr_data = _fetch_neighbors(args.server, effective_service, center["id"], "outbound", depth, "injects")
+        callees = _neighbor_entries(nbr_data)
+        if callees:
+            for c in callees:
+                c["edgeType"] = "injects"
+
     result: dict[str, Any] = {
         "service": effective_service,
         "center": {"id": center["id"], "name": center.get("name", ""), "type": center.get("type", "")},
@@ -1881,7 +1897,20 @@ def cmd_structure(args: argparse.Namespace) -> Any:
         return fetch_json(build_url(args.server, "/api/structure/files", {"service": args.service}))
     if args.file:
         params = {"service": args.service, "path": args.file}
-        return fetch_json(build_url(args.server, "/api/structure/file", params))
+        result = fetch_json(build_url(args.server, "/api/structure/file", params))
+        if getattr(args, "source", False):
+            src_params: dict[str, str] = {"file": args.file, "service": args.service, "mode": "graph"}
+            if getattr(args, "start", None):
+                src_params["start"] = str(args.start)
+            if getattr(args, "end", None):
+                src_params["end"] = str(args.end)
+            try:
+                src_data = fetch_json(build_url(args.server, "/api/source", src_params))
+                result["sourceContent"] = src_data.get("content", src_data.get("source", ""))
+                result["lineCount"] = src_data.get("lineCount", src_data.get("totalLines", 0))
+            except RuntimeError:
+                pass
+        return result
     search_params: dict[str, str] = {"service": args.service, "limit": str(args.limit)}
     if args.annotation:
         search_params["annotation"] = args.annotation

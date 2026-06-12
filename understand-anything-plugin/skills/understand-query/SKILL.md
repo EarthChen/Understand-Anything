@@ -14,7 +14,7 @@ Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the
 
 ### Verification Protocol
 
-1. **Always use `--verify-source`** (or `--depth full` with `ask`) for questions about:
+1. **Always use `--source`** (or `--depth full` with `ask`) for questions about:
    - Business rules and their enforcement
    - Flow steps and their implementation
    - Integration points (RPC, Kafka, Redis)
@@ -90,7 +90,7 @@ You are executing an understand-query skill task.
 **CLI Path:** <path to ua_query.py>
 
 Execute:
-python ua_query.py --format md trace --service <SERVICE> --query "<keywords>" --source --business --verify-source
+python ua_query.py --format md trace --service <SERVICE> --query "<keywords>" --source --business
 
 If service is unknown, add --auto-discover and omit --service.
 
@@ -140,7 +140,7 @@ python ua_query.py ask --query "中文关键词,EnglishName,Synonym" --depth ful
 
 **Option 2 — Manual trace with verification:**
 ```bash
-python ua_query.py trace --service SERVICE --query "中文关键词,EnglishName,Synonym" --source --business --wiki --domain-flows --verify-source
+python ua_query.py trace --service SERVICE --query "中文关键词,EnglishName,Synonym" --source --business --wiki --domain-flows
 ```
 
 Both approaches search KG, retrieve neighbors, read source code, include business/wiki/domain context, and verify against source. **Option 1 also auto-discovers the service.**
@@ -148,8 +148,8 @@ Both approaches search KG, retrieve neighbors, read source code, include busines
 **Multi-service questions?** Run trace once per relevant service:
 
 ```bash
-python ua_query.py trace --service svc-a --query "keyword" --source --business --verify-source && \
-python ua_query.py trace --service svc-b --query "keyword" --source --verify-source
+python ua_query.py trace --service svc-a --query "keyword" --source --business && \
+python ua_query.py trace --service svc-b --query "keyword" --source
 ```
 
 ---
@@ -160,7 +160,7 @@ python ua_query.py trace --service svc-b --query "keyword" --source --verify-sou
 2. **Batch CLI calls**: Combine multiple CLI commands into ONE Shell call using `&&`.
 3. **Expand keywords before trace**: Always provide 2-4 comma-separated variants (original + English + synonym).
 4. **Use `--format md`** when the output will be read by an agent (not parsed as JSON).
-5. **Use `--verify-source`** for any answer that will be presented as factual to the user.
+5. **Use `--source`** for any answer that will be presented as factual to the user.
 6. **RRF is default for trace** — `trace` uses `fusion=rrf` automatically.
 
 ---
@@ -256,7 +256,7 @@ New flags added to `trace` for richer context:
 |------|-------------|
 | `--wiki` | Include wiki domain detail for matched feature |
 | `--domain-flows` | Include domain flow steps |
-| `--verify-source` | Read actual source code for top 3 matches — returns full content for agent reasoning |
+| `--source` | Read source code of matched nodes (top 1 inline + top 3 as `sourceReads`) |
 | `--auto-discover` | Auto-detect service via business+wiki+KG search (omit `--service`) |
 | `--grouped` | With `--source`: return source for all matched nodes grouped by file, plus `relationshipMap` |
 | `--symbol NAME` | With `--source`: extract a specific method/class block from the top match's file |
@@ -266,7 +266,7 @@ New flags added to `trace` for richer context:
 **Full trace example:**
 
 ```bash
-python ua_query.py trace --auto-discover --query "火箭,rocket" --source --business --wiki --domain-flows --verify-source --format md
+python ua_query.py trace --auto-discover --query "火箭,rocket" --source --business --wiki --domain-flows --format md
 ```
 
 **Grouped source across matches:**
@@ -321,7 +321,29 @@ python ua_query.py kg --service S --file OrderServiceImpl.java --summary
 | 5. Source-Level KG | `kg --service S --neighbors N` | Class relationships and code? |
 | 6. Source Code | `kg --service S --file PATH` | Read actual implementation source code |
 | 7. Code Structure | `structure --service S --annotation X` | Function signatures, annotations, param/return types |
-| **NEW** 8. Source Verify | `trace --verify-source` / `ask --depth full` | Cross-check wiki/domain against live source code |
+| **NEW** 8. Source Verify | `trace --source` / `ask --depth full` | Cross-check wiki/domain against live source code |
+
+---
+
+## Source Code Access Guide
+
+Agents **cannot read local files directly** — all source code must come through CLI commands. Choose the right approach:
+
+| Scenario | Command | What You Get |
+|----------|---------|-------------|
+| Answer a business question (recommended) | `ask --depth full` | Auto: top matches + source reads (up to 500 lines each) |
+| Trace + read source for a feature | `trace --query X --source` | Top 1 inline + top 3 as `sourceReads` |
+| Read entire file by path | `kg --service S --file PATH` | Full file content (or `--start N --end M` for range) |
+| Read file with structure metadata | `structure --service S --file PATH --source` | Structure info + source code (supports `--start`/`--end`) |
+| Find and read specific method | `structure --service S --symbol methodName --source` | Method signature + source code |
+| Read specific line range | `structure --service S --file PATH --source --start 50 --end 150` | Lines 50-150 of the file |
+
+**Key rules:**
+1. `ask --depth full` is the fastest path — it auto-discovers, traces, and reads source in ONE call
+2. `trace --source` is the unified source code flag — one flag for all source needs
+3. When source is truncated (>500 lines), use `structure --file --source --start/--end` to read segments
+4. All source comes from the API server — if the server is down, source code is unavailable
+5. RPC detection is automatic (always runs when neighbors exist, no flag needed)
 
 ---
 
@@ -332,9 +354,9 @@ python ua_query.py kg --service S --file OrderServiceImpl.java --summary
 | Path | When | Start With |
 |------|------|------------|
 | Business Understanding | "What is X?" "Complete flow of X?" | `ask --depth full` |
-| Feature Location | "Where is X implemented?" | `trace --auto-discover --query "X" --source --verify-source` |
+| Feature Location | "Where is X implemented?" | `trace --auto-discover --query "X" --source` |
 | Symbol + Source | "Show me the code for createOrder" | `structure --symbol createOrder --source` |
-| Bug Investigation | "API returns wrong data" | `wiki --type endpoint` → `kg --neighbors` → `trace --verify-source` |
+| Bug Investigation | "API returns wrong data" | `wiki --type endpoint` → `kg --neighbors` → `trace --source` |
 | Impact Analysis | "What will changing X break?" | `impact --symbol X --direction inbound --depth 3` → `callers` / `structure --property-type X` |
 | Call Graph | "Who calls X?" / "What does X call?" | `callers --symbol X` or `callees --symbol X` |
 | Code Hotspots | "What are the most critical classes?" | `hotspots --type class --limit 20` |
@@ -381,7 +403,7 @@ The CLI uses `http://172.18.228.71:3001` as the default API server.
 | Scenario | Calls | Recipe |
 |----------|-------|--------|
 | "What is X business function?" | **1** | `ask --query "X,英文" --depth full` |
-| "How does X work?" | **1** | `trace --auto-discover --query "X" --source --business --wiki --verify-source` |
+| "How does X work?" | **1** | `trace --auto-discover --query "X" --source --business --wiki` |
 | "Find RPC endpoints + types" | 2 | `structure --annotation` → `kg --edges --type consumes_rpc` |
 | "Impact of changing X" | 2 | `impact --symbol X --direction inbound --depth 3` → `structure --property-type X` |
 | "Who calls X?" | 1 | `callers --service S --symbol X --depth 2` |
@@ -410,7 +432,7 @@ The CLI uses `http://172.18.228.71:3001` as the default API server.
 **Typical agent patterns:**
 
 1. **Business question:** `ask --depth full` → synthesize → present to user
-2. **Code change:** `trace --verify-source` → confirm implementation → edit files
+2. **Code change:** `trace --source` → confirm implementation → edit files
 3. **Impact check:** `impact --symbol X --direction inbound` + `affected --files` → assess risk and test scope
 4. **Freshness gate:** `meta --stale` → decide if data is trustworthy
 5. **Cross-reference:** Check `sourceVerification` output before modifying domain logic
