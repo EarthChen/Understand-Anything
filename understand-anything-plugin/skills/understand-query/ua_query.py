@@ -107,7 +107,9 @@ def _format_markdown(data: Any) -> str:
                 fp = n.get("filePath", "")
                 lr = n.get("lineRange", "")
                 loc = f" `{fp}:{lr}`" if fp else ""
-                lines.append(f"- **{n.get('name', '?')}** ({n.get('type', '?')}, relevance={n.get('relevance', '?')}){loc}")
+                br = n.get("blastRadius")
+                br_str = f", blast={br['total']}" if br else ""
+                lines.append(f"- **{n.get('name', '?')}** ({n.get('type', '?')}, relevance={n.get('relevance', '?')}{br_str}){loc}")
                 if n.get("summary"):
                     lines.append(f"  {n['summary'][:120]}")
             lines.append("")
@@ -162,6 +164,32 @@ def _format_markdown(data: Any) -> str:
                     lines.append(f"  {i}. {s.get('name', '?')} — {s.get('summary', '')[:100]}")
             lines.append("")
 
+        # Source by file (grouped mode)
+        source_by_file = data.get("sourceByFile")
+        if source_by_file:
+            lines.append("## Source by File")
+            rel_map = data.get("relationshipMap", [])
+            if rel_map:
+                lines.append(f"### Relationships ({len(rel_map)} edges between matched nodes)")
+                for edge in rel_map[:20]:
+                    lines.append(
+                        f"- **{edge.get('fromName', edge.get('from', '?'))}** "
+                        f"→ **{edge.get('toName', edge.get('to', '?'))}** "
+                        f"via _{edge.get('edgeType', '?')}_ ({edge.get('direction', '?')})"
+                    )
+                lines.append("")
+            for fp, entry in source_by_file.items():
+                lr = entry.get("lineRange", "")
+                symbols = entry.get("symbols", [])
+                sym_names = ", ".join(s.get("name", "?") for s in symbols)
+                lines.append(f"### `{fp}` (lines {lr})")
+                lines.append(f"Symbols: {sym_names}")
+                ext = fp.rsplit(".", 1)[-1] if "." in fp else "java"
+                lang = {"kt": "kotlin", "java": "java", "py": "python", "ts": "typescript", "js": "javascript", "dart": "dart"}.get(ext, ext)
+                content = entry.get("source", "")[:4000]
+                lines.append(f"```{lang}\n{content}\n```")
+                lines.append("")
+
         # Source
         src = data.get("source")
         if isinstance(src, dict) and src.get("content"):
@@ -181,6 +209,64 @@ def _format_markdown(data: Any) -> str:
                 lines.append(f"```{lang}\n{v.get('content', '')}\n```")
             lines.append("")
 
+        return "\n".join(lines)
+
+    if isinstance(data, dict) and "symbol" in data and "matches" in data:
+        lines = [f"# Symbol: {data.get('symbol', '?')}", ""]
+        for m in data.get("matches", []):
+            lr = m.get("lineRange", [])
+            lr_str = f"L{lr[0]}-{lr[1]}" if lr and len(lr) == 2 else ""
+            lines.append(f"## {m.get('kind', '?')} `{m.get('name', '?')}` — `{m.get('filePath', '?')}:{lr_str}`")
+            source = m.get("source")
+            if source:
+                ext = m.get("filePath", "").rsplit(".", 1)[-1] if "." in m.get("filePath", "") else "java"
+                lang = {"kt": "kotlin", "java": "java", "py": "python", "ts": "typescript", "js": "javascript", "dart": "dart"}.get(ext, ext)
+                lines.append(f"```{lang}\n{source}\n```")
+            lines.append("")
+        return "\n".join(lines)
+
+    if isinstance(data, dict) and "impactRadius" in data and "affectedNodes" in data:
+        center = data.get("center", {})
+        lines = [
+            f"# Impact Analysis: {center.get('name', '?')}",
+            f"Service: {data.get('service', '?')} | Depth: {data.get('depth', '?')} | Direction: {data.get('direction', '?')} | Radius: {data.get('impactRadius', 0)}",
+            "",
+        ]
+        for n in data.get("affectedNodes", [])[:30]:
+            path = " → ".join(n.get("path", []))
+            lines.append(f"- **{n.get('name', '?')}** ({n.get('type', '?')}, d={n.get('distance', '?')}) — {path}")
+        if len(data.get("affectedNodes", [])) > 30:
+            lines.append(f"\n... and {len(data['affectedNodes']) - 30} more")
+        return "\n".join(lines)
+
+    if isinstance(data, dict) and ("callers" in data or "callees" in data):
+        label = "Callers" if "callers" in data else "Callees"
+        center = data.get("center", {})
+        items = data.get("callers") or data.get("callees") or []
+        lines = [f"# {label}: {center.get('name', '?')}", f"Total: {data.get('total', len(items))}", ""]
+        for n in items[:25]:
+            fp = n.get("filePath", "")
+            loc = f" `{fp}`" if fp else ""
+            lines.append(f"- **{n.get('name', '?')}** ({n.get('type', '?')}) via _{n.get('edgeType', '?')}_{loc}")
+        return "\n".join(lines)
+
+    if isinstance(data, dict) and "hotspots" in data:
+        lines = [f"# Hotspots ({data.get('service', '?')})", f"Total nodes: {data.get('totalNodes', '?')}", ""]
+        lines.append("| Name | Type | Fan In | Fan Out | Score | File |")
+        lines.append("|------|------|--------|---------|-------|------|")
+        for h in data.get("hotspots", [])[:20]:
+            fp = h.get("filePath", "") or ""
+            if len(fp) > 40:
+                fp = "..." + fp[-37:]
+            lines.append(f"| {h.get('name', '?')} | {h.get('type', '?')} | {h.get('fanIn', 0)} | {h.get('fanOut', 0)} | {h.get('score', 0)} | {fp} |")
+        return "\n".join(lines)
+
+    if isinstance(data, dict) and "affectedTests" in data:
+        lines = ["# Affected Tests", f"Changed files: {', '.join(data.get('changedFiles', []))}", ""]
+        for t in data.get("affectedTests", []):
+            lines.append(f"- **{t.get('testFile', '?')}** — {t.get('reason', '?')} (via {t.get('relatedSymbol', '?')})")
+        if not data.get("affectedTests"):
+            lines.append("_No affected tests found._")
         return "\n".join(lines)
 
     return f"```json\n{json.dumps(data, ensure_ascii=False, indent=2)}\n```"
@@ -211,6 +297,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     kg.add_argument("--layers", action="store_true")
     kg.add_argument("--tour", action="store_true")
     kg.add_argument("--toc", action="store_true", help="Return file's method index (name+type+lineRange) instead of source")
+    kg.add_argument("--summary", action="store_true", help="Return file-level overview with relationships")
     kg.add_argument("--verbose", action="store_true")
 
     domain = sub.add_parser("domain", help="Domain graph queries")
@@ -260,6 +347,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     trace.add_argument("--type", help="Filter matched nodes by type (class, function, file...)")
     trace.add_argument("--limit", type=int, default=5, help="Max matched nodes to return")
     trace.add_argument("--source", action="store_true", help="Include source code of top match")
+    trace.add_argument("--grouped", action="store_true", help="Group source code by file for all matched nodes (use with --source)")
     trace.add_argument("--symbol", help="Extract specific method/class from source (use with --source)")
     trace.add_argument("--business", action="store_true", help="Include business context search")
     trace.add_argument("--wiki", action="store_true", help="Include wiki domain detail for matched feature")
@@ -289,15 +377,180 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     struct.add_argument("--chain", help="Traverse inheritance chain for a class name")
     struct.add_argument("--direction", choices=["up", "down"], default="up", help="Chain direction: up=superclasses, down=subclasses")
     struct.add_argument("--implementors", help="Find all classes implementing an interface")
+    struct.add_argument("--symbol", help="Search for a specific symbol (function or class) across all files")
+    struct.add_argument("--source", action="store_true", help="Include source code when using --symbol")
+
+    impact = sub.add_parser("impact", help="Transitive impact analysis via BFS")
+    impact.add_argument("--service", required=True)
+    impact.add_argument("--symbol", required=True)
+    impact.add_argument("--depth", type=int, default=3)
+    impact.add_argument("--direction", choices=["inbound", "outbound", "both"], default="inbound")
+    impact.add_argument("--edge-type")
+
+    callers = sub.add_parser("callers", help="Who calls this symbol?")
+    callers.add_argument("--service", required=True)
+    callers.add_argument("--symbol", required=True)
+    callers.add_argument("--depth", type=int, default=1)
+
+    callees = sub.add_parser("callees", help="What does this symbol call?")
+    callees.add_argument("--service", required=True)
+    callees.add_argument("--symbol", required=True)
+    callees.add_argument("--depth", type=int, default=1)
+
+    hotspots = sub.add_parser("hotspots", help="Fan-in/fan-out scoring")
+    hotspots.add_argument("--service", required=True)
+    hotspots.add_argument("--limit", type=int, default=20)
+    hotspots.add_argument("--type")
+
+    affected = sub.add_parser("affected", help="Find affected test files")
+    affected.add_argument("--service", required=True)
+    affected.add_argument("--files", required=True, help="Comma-separated file paths")
+    affected.add_argument("--depth", type=int, default=2)
 
     return parser.parse_args(argv)
 
 
 # --- Subcommand handlers ---
 
+def _short_type_name(name: str) -> str:
+    return name.rsplit(".", 1)[-1]
+
+
+def _cmd_structure_symbol(args: argparse.Namespace) -> Any:
+    symbol = args.symbol
+    limit = max(args.limit, 1)
+    include_source = getattr(args, "source", False)
+
+    if include_source:
+        params: dict[str, str] = {
+            "service": args.service,
+            "symbol": symbol,
+            "limit": str(limit),
+        }
+        if args.path:
+            params["pathPattern"] = args.path
+        data = fetch_json(build_url(args.server, "/api/structure/symbol-source", params))
+        return {"symbol": symbol, "matches": data.get("results", [])}
+
+    params: dict[str, str] = {
+        "service": args.service,
+        "symbol": symbol,
+        "limit": str(limit),
+    }
+    if args.path:
+        params["pathPattern"] = args.path
+    data = fetch_json(build_url(args.server, "/api/structure/search", params))
+    results = data.get("results", [])
+    matches = [
+        {
+            "name": r.get("name", ""),
+            "kind": r.get("kind", ""),
+            "filePath": r.get("filePath", ""),
+            "lineRange": r.get("lineRange"),
+            "match": r.get("match", {}),
+        }
+        for r in results
+    ]
+    return {"symbol": symbol, "matches": matches}
+
+
+def _kg_file_toc(args: argparse.Namespace, graph_data: dict[str, Any]) -> list[dict[str, Any]]:
+    file_key = args.file.lower()
+    symbols = [
+        {"name": n["name"], "type": n.get("type", ""), "lineRange": n.get("lineRange"), "summary": n.get("summary", "")[:80]}
+        for n in graph_data.get("nodes", [])
+        if file_key in n.get("filePath", "").lower() or file_key in n.get("id", "").lower()
+    ]
+    symbols.sort(key=lambda s: (s.get("lineRange") or [9999])[0])
+    return symbols
+
+
+def _cmd_kg_file_summary(args: argparse.Namespace) -> Any:
+    try:
+        graph_data = fetch_json(build_url(args.server, "/api/graph", {
+            "service": args.service,
+            "file": "knowledge-graph.json",
+        }))
+    except RuntimeError as e:
+        raise RuntimeError(f"Failed to load knowledge graph: {e}") from e
+
+    symbols = _kg_file_toc(args, graph_data)
+    file_key = args.file.lower()
+    file_nodes = [
+        n for n in graph_data.get("nodes", [])
+        if n.get("type") == "file"
+        and (file_key in n.get("filePath", "").lower() or file_key in n.get("id", "").lower())
+    ]
+    file_symbols = [n for n in graph_data.get("nodes", []) if file_key in n.get("filePath", "").lower()]
+
+    full_path = ""
+    if file_nodes:
+        full_path = file_nodes[0].get("filePath", "") or file_nodes[0].get("id", "").replace("file:", "", 1)
+    elif file_symbols:
+        full_path = file_symbols[0].get("filePath", "")
+
+    center_node = file_nodes[0] if file_nodes else (file_symbols[0] if file_symbols else None)
+
+    callers: list[dict[str, Any]] = []
+    callees: list[dict[str, Any]] = []
+    inbound = 0
+    outbound = 0
+    if center_node:
+        try:
+            nbr_data = _fetch_neighbors(args.server, args.service, center_node["id"], "both", 1)
+            seen_callers: set[str] = set()
+            seen_callees: set[str] = set()
+            for n in nbr_data.get("neighbors", []):
+                node = n.get("node") or {}
+                edge = n.get("edge") or {}
+                edge_type = edge.get("type", "")
+                direction = n.get("direction", "")
+                name = node.get("name", node.get("id", "?"))
+                entry = {"name": name, "type": node.get("type", ""), "edgeType": edge_type}
+                if direction == "inbound":
+                    inbound += 1
+                    if edge_type == "calls" and name not in seen_callers:
+                        seen_callers.add(name)
+                        callers.append(entry)
+                elif direction == "outbound":
+                    outbound += 1
+                    if edge_type == "calls" and name not in seen_callees:
+                        seen_callees.add(name)
+                        callees.append(entry)
+        except RuntimeError:
+            pass
+
+    imports: list[str] = []
+    try:
+        struct_data = fetch_json(build_url(args.server, "/api/structure/file", {
+            "service": args.service,
+            "path": args.file,
+        }))
+        for imp in struct_data.get("imports", []):
+            raw = imp.get("name", imp) if isinstance(imp, dict) else imp
+            short = _short_type_name(str(raw))
+            if short and short not in imports:
+                imports.append(short)
+    except RuntimeError:
+        pass
+
+    return {
+        "file": args.file,
+        "fullPath": full_path,
+        "totalSymbols": len(symbols),
+        "symbols": [{"name": s["name"], "type": s["type"], "lineRange": s["lineRange"]} for s in symbols],
+        "imports": imports,
+        "callers": callers,
+        "callees": callees,
+        "blastRadius": {"inbound": inbound, "outbound": outbound},
+    }
+
+
 def cmd_kg(args: argparse.Namespace) -> Any:
     if not args.service:
         raise SystemExit("kg requires --service")
+    if args.file and args.summary:
+        return _cmd_kg_file_summary(args)
     if args.neighbors:
         params: dict[str, str] = {"service": args.service, "graph": "kg", "node": args.neighbors, "direction": args.direction, "depth": str(args.depth)}
         if args.edge_type:
@@ -534,6 +787,68 @@ def _search_api(server: str, query: str, service: str | None = None, scope: str 
         params["fusion"] = fusion
     data = fetch_json(build_url(server, "/api/search", params))
     return data.get("results", [])
+
+
+def _find_symbol_node(server: str, service: str, symbol: str) -> dict[str, Any]:
+    """Search KG for a symbol and return the best-matching node."""
+    results = _search_api(server, symbol, service=service, scope="kg", limit=30)
+    if not results:
+        raise RuntimeError(f"No KG node found for symbol '{symbol}' in service '{service}'")
+    results.sort(key=lambda n: _score_node_relevance(n, symbol), reverse=True)
+    return results[0]
+
+
+def _fetch_neighbors(
+    server: str,
+    service: str,
+    node_id: str,
+    direction: str = "both",
+    depth: int = 1,
+    edge_type: str | None = None,
+) -> dict[str, Any]:
+    params: dict[str, str] = {
+        "service": service,
+        "graph": "kg",
+        "node": node_id,
+        "direction": direction,
+        "depth": str(depth),
+    }
+    if edge_type:
+        params["edgeType"] = edge_type
+    return fetch_json(build_url(server, "/api/graph-query/neighbors", params))
+
+
+def _neighbor_entries(nbr_data: dict[str, Any]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for n in nbr_data.get("neighbors", []):
+        node = n.get("node") or {}
+        edge = n.get("edge") or {}
+        entries.append({
+            "id": node.get("id", ""),
+            "name": node.get("name", node.get("id", "?")),
+            "type": node.get("type", ""),
+            "filePath": node.get("filePath", ""),
+            "direction": n.get("direction", ""),
+            "edgeType": edge.get("type", ""),
+        })
+    return entries
+
+
+def _nodes_for_file(nodes: list[dict[str, Any]], file_path: str) -> list[dict[str, Any]]:
+    fp_norm = file_path.replace("\\", "/").lower()
+    matched: list[dict[str, Any]] = []
+    for n in nodes:
+        nfp = n.get("filePath", "").replace("\\", "/")
+        if not nfp:
+            continue
+        nfp_lower = nfp.lower()
+        if nfp_lower == fp_norm or nfp_lower.endswith("/" + fp_norm) or fp_norm in nfp_lower or nfp_lower.endswith(fp_norm):
+            matched.append(n)
+    return matched
+
+
+def _is_test_path(file_path: str) -> bool:
+    return any(marker in file_path for marker in ("test", "Test", "spec"))
 
 
 def _auto_discover_service(server: str, query: str) -> tuple[str | None, list[dict]]:
@@ -785,6 +1100,16 @@ def cmd_trace(args: argparse.Namespace) -> Any:
         for n in matched
     ]
 
+    for node_entry in result["matchedNodes"][1:3]:
+        try:
+            nbr_params = {"service": service, "graph": "kg", "node": node_entry["id"], "direction": "both", "depth": "1"}
+            nbr = fetch_json(build_url(args.server, "/api/graph-query/neighbors", nbr_params))
+            inbound = sum(1 for n in nbr.get("neighbors", []) if n.get("direction") == "inbound")
+            outbound = sum(1 for n in nbr.get("neighbors", []) if n.get("direction") == "outbound")
+            node_entry["blastRadius"] = {"inbound": inbound, "outbound": outbound, "total": inbound + outbound}
+        except RuntimeError:
+            pass
+
     # Empty result guidance
     if not matched:
         result["hint"] = (
@@ -803,6 +1128,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
 
     # Step 2: Get neighbors for top match (most relevant node)
     top = matched[0]
+    nbr_data = None
     try:
         nbr_params: dict[str, str] = {"service": service, "graph": "kg", "node": top["id"], "direction": "both", "depth": "1"}
         nbr_data = fetch_json(build_url(args.server, "/api/graph-query/neighbors", nbr_params))
@@ -823,6 +1149,80 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     except RuntimeError:
         result["neighbors"] = None
 
+    if result.get("matchedNodes") and nbr_data:
+        inbound = sum(1 for n in nbr_data.get("neighbors", []) if n.get("direction") == "inbound")
+        outbound = sum(1 for n in nbr_data.get("neighbors", []) if n.get("direction") == "outbound")
+        result["matchedNodes"][0]["blastRadius"] = {"inbound": inbound, "outbound": outbound, "total": inbound + outbound}
+
+    if getattr(args, "grouped", False) and matched and args.source:
+        matched_ids = {n.get("id") for n in matched}
+        by_file: dict[str, list[dict[str, Any]]] = {}
+        for node in matched:
+            fp = node.get("filePath")
+            if not fp:
+                continue
+            by_file.setdefault(fp, []).append(node)
+
+        source_by_file: dict[str, dict[str, Any]] = {}
+        for fp, file_nodes in by_file.items():
+            symbols = [
+                {
+                    "id": n.get("id", ""),
+                    "name": n.get("name", ""),
+                    "type": n.get("type", ""),
+                    "lineRange": n.get("lineRange"),
+                }
+                for n in file_nodes
+            ]
+            starts: list[int] = []
+            ends: list[int] = []
+            for n in file_nodes:
+                lr = n.get("lineRange")
+                if lr and isinstance(lr, list) and len(lr) == 2:
+                    starts.append(lr[0])
+                    ends.append(lr[1])
+            src_params: dict[str, str] = {"file": fp, "service": service, "mode": "graph"}
+            file_line_range: list[int] | None = None
+            if starts and ends:
+                start = max(1, min(starts) - 3)
+                end = max(ends) + 2
+                if end - start > 495:
+                    end = start + 495
+                src_params["start"] = str(start)
+                src_params["end"] = str(end)
+                file_line_range = [start, end]
+            try:
+                src_data = fetch_json(build_url(args.server, "/api/source", src_params))
+                entry: dict[str, Any] = {
+                    "symbols": symbols,
+                    "source": src_data.get("content", ""),
+                    "lineCount": src_data.get("lineCount", 0),
+                }
+                if file_line_range:
+                    entry["lineRange"] = file_line_range
+                source_by_file[fp] = entry
+            except RuntimeError:
+                source_by_file[fp] = {"symbols": symbols, "source": None, "error": "failed to read source"}
+
+        result["sourceByFile"] = source_by_file
+
+        relationship_map: list[dict[str, Any]] = []
+        if nbr_data:
+            for n in nbr_data.get("neighbors", []):
+                node = n.get("node") or {}
+                nid = node.get("id", "")
+                if nid not in matched_ids or nid == top.get("id"):
+                    continue
+                relationship_map.append({
+                    "from": top.get("id", ""),
+                    "fromName": top.get("name", ""),
+                    "to": nid,
+                    "toName": node.get("name", node.get("id", "?")),
+                    "direction": n.get("direction", ""),
+                    "edgeType": (n.get("edge") or {}).get("type", ""),
+                })
+        result["relationshipMap"] = relationship_map
+
     # Step 3: Read source — use lineRange from KG for precision
     file_path = top.get("filePath")
     line_range = top.get("lineRange")
@@ -837,7 +1237,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
                 if "/" in candidate and "." in candidate.split("/")[-1]:
                     file_path = candidate
 
-    if file_path and args.source:
+    if file_path and args.source and not getattr(args, "grouped", False):
         try:
             src_params: dict[str, str] = {"file": file_path, "service": service, "mode": "graph"}
             if line_range and isinstance(line_range, list) and len(line_range) == 2:
@@ -1000,9 +1400,139 @@ def cmd_ask(args: argparse.Namespace) -> Any:
     return result
 
 
+def cmd_impact(args: argparse.Namespace) -> Any:
+    center = _find_symbol_node(args.server, args.service, args.symbol)
+    center_id = center["id"]
+    max_depth = min(max(args.depth, 1), 10)
+    direction = args.direction
+
+    params: dict[str, str] = {
+        "service": args.service,
+        "graph": "kg",
+        "node": center_id,
+        "direction": direction,
+        "depth": str(max_depth),
+    }
+    if args.edge_type:
+        params["edgeType"] = args.edge_type
+    data = fetch_json(build_url(args.server, "/api/graph-query/impact", params))
+    affected = [
+        {
+            "id": n.get("id", ""),
+            "name": n.get("name", ""),
+            "type": n.get("type", ""),
+            "distance": n.get("depth", 0),
+            "path": [center.get("name", center_id), n.get("name", "")],
+        }
+        for n in data.get("impacted", [])
+    ]
+    return {
+        "service": args.service,
+        "center": {"id": center_id, "name": center.get("name", ""), "type": center.get("type", "")},
+        "depth": max_depth,
+        "direction": direction,
+        "impactRadius": len(affected),
+        "affectedNodes": affected,
+    }
+
+
+def cmd_callers(args: argparse.Namespace) -> Any:
+    center = _find_symbol_node(args.server, args.service, args.symbol)
+    depth = min(max(args.depth, 1), 3)
+    nbr_data = _fetch_neighbors(args.server, args.service, center["id"], "inbound", depth, "calls")
+    callers = _neighbor_entries(nbr_data)
+    return {
+        "service": args.service,
+        "center": {"id": center["id"], "name": center.get("name", ""), "type": center.get("type", "")},
+        "depth": depth,
+        "callers": callers,
+        "total": len(callers),
+    }
+
+
+def cmd_callees(args: argparse.Namespace) -> Any:
+    center = _find_symbol_node(args.server, args.service, args.symbol)
+    depth = min(max(args.depth, 1), 3)
+    nbr_data = _fetch_neighbors(args.server, args.service, center["id"], "outbound", depth, "calls")
+    callees = _neighbor_entries(nbr_data)
+    return {
+        "service": args.service,
+        "center": {"id": center["id"], "name": center.get("name", ""), "type": center.get("type", "")},
+        "depth": depth,
+        "callees": callees,
+        "total": len(callees),
+    }
+
+
+def cmd_hotspots(args: argparse.Namespace) -> Any:
+    params: dict[str, str] = {
+        "service": args.service,
+        "graph": "kg",
+        "limit": str(max(args.limit, 1)),
+    }
+    if args.type:
+        params["type"] = args.type
+    data = fetch_json(build_url(args.server, "/api/graph-query/hotspots", params))
+    return {
+        "service": args.service,
+        "totalNodes": data.get("total", 0),
+        "hotspots": data.get("hotspots", []),
+    }
+
+
+def cmd_affected(args: argparse.Namespace) -> Any:
+    files = [f.strip() for f in args.files.split(",") if f.strip()]
+    if not files:
+        raise SystemExit("affected requires --files with at least one path")
+
+    depth = max(args.depth, 1)
+    graph_data = fetch_json(build_url(args.server, "/api/graph", {"service": args.service, "file": "knowledge-graph.json"}))
+    nodes = graph_data.get("nodes", [])
+
+    affected_tests: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for file_path in files:
+        matching = _nodes_for_file(nodes, file_path)
+        if not matching:
+            continue
+        for node in matching:
+            try:
+                nbr_data = _fetch_neighbors(args.server, args.service, node["id"], "inbound", depth)
+            except RuntimeError:
+                continue
+            for n in nbr_data.get("neighbors", []):
+                neighbor = n.get("node") or {}
+                edge = n.get("edge") or {}
+                edge_type = edge.get("type", "")
+                nbr_fp = neighbor.get("filePath", "")
+                if not nbr_fp:
+                    continue
+                is_tested_by = edge_type == "tested_by"
+                is_test_file = _is_test_path(nbr_fp)
+                if not (is_test_file or is_tested_by):
+                    continue
+                if nbr_fp in seen:
+                    continue
+                seen.add(nbr_fp)
+                if is_tested_by:
+                    reason = f"tested_by edge from {file_path}"
+                else:
+                    reason = f"inbound dependency on changed file {file_path}"
+                affected_tests.append({
+                    "testFile": nbr_fp,
+                    "reason": reason,
+                    "relatedSymbol": neighbor.get("name", neighbor.get("id", "")),
+                })
+
+    return {"service": args.service, "changedFiles": files, "affectedTests": affected_tests}
+
+
 def cmd_structure(args: argparse.Namespace) -> Any:
     if not args.service:
         raise SystemExit("structure requires --service")
+    if args.symbol:
+        return _cmd_structure_symbol(args)
     if args.chain:
         params: dict[str, str] = {"service": args.service, "class": args.chain, "direction": args.direction}
         return fetch_json(build_url(args.server, "/api/structure/chain", params))
@@ -1066,7 +1596,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     args.server = _detect_server(args.server)
     try:
-        handlers = {"kg": cmd_kg, "domain": cmd_domain, "wiki": cmd_wiki, "business": cmd_business, "services": cmd_services, "meta": cmd_meta, "trace": cmd_trace, "structure": cmd_structure, "ask": cmd_ask}
+        handlers = {
+            "kg": cmd_kg, "domain": cmd_domain, "wiki": cmd_wiki, "business": cmd_business,
+            "services": cmd_services, "meta": cmd_meta, "trace": cmd_trace, "structure": cmd_structure,
+            "ask": cmd_ask, "impact": cmd_impact, "callers": cmd_callers, "callees": cmd_callees,
+            "hotspots": cmd_hotspots, "affected": cmd_affected,
+        }
         data = handlers[args.command](args)
         print(format_output(data, args.format))
         return 0

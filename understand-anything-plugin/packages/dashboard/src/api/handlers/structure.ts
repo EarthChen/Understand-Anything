@@ -1,9 +1,12 @@
 import fs from "fs"
+import path from "path"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
 import {
   resolveServiceDataPath,
   validateServiceNameRequired,
+  resolveServiceBasePath,
 } from "../service-resolver"
+import { readSource } from "../../../source-reader"
 
 interface FunctionEntry {
   name: string
@@ -195,6 +198,7 @@ function handleSearch(
   const returnType = searchParams.get("returnType")
   const iface = searchParams.get("interface")
   const propertyType = searchParams.get("propertyType")
+  const symbol = searchParams.get("symbol")
   const pathPattern = searchParams.get("pathPattern")
   const limitStr = searchParams.get("limit")
   const limit = limitStr === null ? 50 : Number.parseInt(limitStr, 10)
@@ -202,11 +206,11 @@ function handleSearch(
     return { statusCode: 400, body: { error: "limit must be between 1 and 500" } }
   }
 
-  if (!annotation && !paramType && !returnType && !iface && !propertyType) {
+  if (!annotation && !paramType && !returnType && !iface && !propertyType && !symbol) {
     return {
       statusCode: 400,
       body: {
-        error: "At least one search filter required: annotation, paramType, returnType, interface, propertyType",
+        error: "At least one search filter required: annotation, paramType, returnType, interface, propertyType, symbol",
       },
     }
   }
@@ -218,6 +222,7 @@ function handleSearch(
   if (returnType) query.returnType = returnType
   if (iface) query.interface = iface
   if (propertyType) query.propertyType = propertyType
+  if (symbol) query.symbol = symbol
 
   for (const [filePath, fileData] of Object.entries(data)) {
     if (pathPattern && !filePath.toLowerCase().includes(pathPattern.toLowerCase())) {
@@ -303,6 +308,32 @@ function handleSearch(
             kind: "class",
             lineRange: [cls.startLine, cls.endLine],
             match: { propertyType },
+          })
+        }
+      }
+    }
+
+    if (symbol) {
+      const symbolLower = symbol.toLowerCase()
+      for (const cls of classes) {
+        if (cls.name.toLowerCase().includes(symbolLower)) {
+          results.push({
+            filePath,
+            name: cls.name,
+            kind: "class",
+            lineRange: [cls.startLine, cls.endLine],
+            match: { symbol: cls.name },
+          })
+        }
+      }
+      for (const fn of functions) {
+        if (fn.name.toLowerCase().includes(symbolLower)) {
+          results.push({
+            filePath,
+            name: fn.name,
+            kind: "function",
+            lineRange: [fn.startLine, fn.endLine],
+            match: { symbol: fn.name },
           })
         }
       }
@@ -453,6 +484,122 @@ function handleImplementors(service: string, interfaceName: string): ApiResponse
   }
 }
 
+function handleSymbolSource(
+  service: string,
+  searchParams: URLSearchParams,
+): ApiResponse {
+  const symbol = searchParams.get("symbol")
+  if (!symbol) {
+    return { statusCode: 400, body: { error: "symbol parameter required" } }
+  }
+
+  const data = loadStructuralAnalysis(service)
+  if (!data) {
+    return {
+      statusCode: 404,
+      body: { error: `structural-analysis.json not found for service "${service}"` },
+    }
+  }
+
+  const limitStr = searchParams.get("limit")
+  const limit = limitStr === null ? 5 : Number.parseInt(limitStr, 10)
+  if (!Number.isFinite(limit) || limit < 1 || limit > 20) {
+    return { statusCode: 400, body: { error: "limit must be between 1 and 20" } }
+  }
+
+  const pathPattern = searchParams.get("pathPattern")
+  const symbolLower = symbol.toLowerCase()
+
+  interface SymbolMatch {
+    name: string
+    kind: "class" | "function"
+    filePath: string
+    lineRange: [number, number]
+  }
+
+  const matches: SymbolMatch[] = []
+
+  for (const [filePath, fileData] of Object.entries(data)) {
+    if (pathPattern && !filePath.toLowerCase().includes(pathPattern.toLowerCase())) {
+      continue
+    }
+    const classes = Array.isArray(fileData.classes) ? fileData.classes : []
+    const functions = Array.isArray(fileData.functions) ? fileData.functions : []
+
+    for (const cls of classes) {
+      if (cls.name.toLowerCase().includes(symbolLower)) {
+        matches.push({
+          name: cls.name,
+          kind: "class",
+          filePath,
+          lineRange: [cls.startLine, cls.endLine],
+        })
+      }
+    }
+    for (const fn of functions) {
+      if (fn.name.toLowerCase().includes(symbolLower)) {
+        matches.push({
+          name: fn.name,
+          kind: "function",
+          filePath,
+          lineRange: [fn.startLine, fn.endLine],
+        })
+      }
+    }
+    if (matches.length >= limit * 3) break
+  }
+
+  const seen = new Set<string>()
+  const deduped = matches.filter((m) => {
+    const key = `${m.filePath}::${m.name}::${m.kind}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).slice(0, limit)
+
+  const graphDir = process.env.GRAPH_DIR
+  const basePath = resolveServiceBasePath(service)
+  let projectRoot: string
+  if (basePath) {
+    projectRoot = graphDir
+      ? path.resolve(graphDir, basePath)
+      : path.resolve(process.cwd(), basePath)
+  } else {
+    projectRoot = graphDir
+      ? path.resolve(graphDir, service)
+      : path.resolve(process.cwd(), service)
+  }
+
+  const results = deduped.map((m) => {
+    let source: string | null = null
+    const startLine = Math.max(1, m.lineRange[0] - 2)
+    const endLine = Math.min(m.lineRange[1] + 2, m.lineRange[0] + 497)
+
+    const srcResult = readSource({
+      projectRoot,
+      filePath: m.filePath,
+      startLine: String(startLine),
+      endLine: String(endLine),
+    })
+    if (srcResult.statusCode === 200 && "content" in srcResult.payload) {
+      source = srcResult.payload.content
+    }
+
+    return {
+      name: m.name,
+      kind: m.kind,
+      filePath: m.filePath,
+      lineRange: m.lineRange,
+      source,
+    }
+  })
+
+  return {
+    statusCode: 200,
+    body: { symbol, results, total: results.length },
+  }
+}
+
 export async function handleStructureRequest(
   req: ApiRequest,
   _ctx: ApiContext,
@@ -508,6 +655,13 @@ export async function handleStructureRequest(
     const err = validateServiceNameRequired(service)
     if (err) return err
     return handleChain(service, className, direction)
+  }
+
+  if (pathname === "/api/structure/symbol-source") {
+    const service = searchParams.get("service")
+    const err = validateServiceNameRequired(service)
+    if (err) return err
+    return handleSymbolSource(service!, searchParams)
   }
 
   if (pathname === "/api/structure/implementors") {

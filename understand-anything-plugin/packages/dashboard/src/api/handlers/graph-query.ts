@@ -46,20 +46,20 @@ function parseGraphKind(graph: string | null): GraphKind | ApiResponse {
 function findNodeByIdOrName(graph: KnowledgeGraph, nodeRef: string): GraphNode | null {
   const byId = graph.nodes.find((n) => n.id === nodeRef)
   if (byId) return byId
-  return graph.nodes.find((n) => n.name === nodeRef) ?? null
+  return graph.nodes.find((n) => (n.name || "") === nodeRef) ?? null
 }
 
 function fuzzyMatchNodes(graph: KnowledgeGraph, query: string, limit = 10): GraphNode[] {
   const q = query.toLowerCase()
   const tokens = tokenize(query)
 
-  const exact = graph.nodes.filter((n) => n.name.toLowerCase().includes(q) || n.id.toLowerCase().includes(q))
+  const exact = graph.nodes.filter((n) => (n.name || "").toLowerCase().includes(q) || n.id.toLowerCase().includes(q))
   if (exact.length > 0) return exact.slice(0, limit)
 
   if (tokens.length === 0) return []
   const scored = graph.nodes
     .map((n) => {
-      const haystack = (n.name + " " + n.id).toLowerCase()
+      const haystack = ((n.name || "") + " " + n.id).toLowerCase()
       const hits = tokens.filter((t) => haystack.includes(t)).length
       return { node: n, score: hits / tokens.length }
     })
@@ -80,10 +80,10 @@ function parseDirection(value: string | null): NeighborDirection | ApiResponse {
   return direction
 }
 
-function parseDepth(value: string | null): number | ApiResponse {
+function parseDepth(value: string | null, max = 3): number | ApiResponse {
   const depth = value === null ? 1 : Number.parseInt(value, 10)
-  if (!Number.isFinite(depth) || depth < 1 || depth > 3) {
-    return { statusCode: 400, body: { error: "depth must be between 1 and 3" } }
+  if (!Number.isFinite(depth) || depth < 1 || depth > max) {
+    return { statusCode: 400, body: { error: `depth must be between 1 and ${max}` } }
   }
   return depth
 }
@@ -302,6 +302,128 @@ function handleTour(searchParams: URLSearchParams): ApiResponse {
   return { statusCode: 200, body: { steps } }
 }
 
+function handleImpact(searchParams: URLSearchParams): ApiResponse {
+  const serviceErr = validateServiceNameRequired(searchParams.get("service"))
+  if (serviceErr) return serviceErr
+
+  const graphKind = parseGraphKind(searchParams.get("graph"))
+  if (isApiResponse(graphKind)) return graphKind
+
+  const nodeRef = searchParams.get("node")
+  if (!nodeRef) return { statusCode: 400, body: { error: "node parameter required" } }
+
+  const direction = parseDirection(searchParams.get("direction"))
+  if (isApiResponse(direction)) return direction
+
+  const depth = parseDepth(searchParams.get("depth"), 10)
+  if (isApiResponse(depth)) return depth
+
+  const edgeType = searchParams.get("edgeType") ?? undefined
+
+  const serviceName = searchParams.get("service")!
+  const loaded = loadServiceGraph(serviceName, graphKind)
+  if (isApiResponse(loaded)) return loaded
+
+  const center = findNodeByIdOrName(loaded, nodeRef)
+  if (!center) {
+    const suggestions = fuzzyMatchNodes(loaded, nodeRef)
+    return { statusCode: 404, body: { error: "node not found", code: "NODE_NOT_FOUND", query: nodeRef, suggestions: suggestions.map((n) => ({ id: n.id, name: n.name, type: n.type })) } }
+  }
+
+  const neighbors = traverseNeighbors(loaded, center.id, direction, edgeType, depth)
+
+  const seen = new Map<string, { node: GraphNode; edge: GraphEdge; direction: "inbound" | "outbound"; depth: number }>()
+  for (const entry of neighbors) {
+    if (!seen.has(entry.node.id)) {
+      seen.set(entry.node.id, entry)
+    }
+  }
+
+  const impacted = Array.from(seen.values()).map((e) => ({
+    id: e.node.id,
+    name: e.node.name || e.node.id,
+    type: e.node.type,
+    filePath: e.node.filePath,
+    depth: e.depth,
+    direction: e.direction,
+    edgeType: e.edge.type,
+  }))
+
+  return {
+    statusCode: 200,
+    body: {
+      center: { id: center.id, name: center.name || center.id, type: center.type, filePath: center.filePath },
+      impacted,
+      totalImpacted: impacted.length,
+      maxDepth: depth,
+    },
+  }
+}
+
+function handleHotspots(searchParams: URLSearchParams): ApiResponse {
+  const serviceErr = validateServiceNameRequired(searchParams.get("service"))
+  if (serviceErr) return serviceErr
+
+  const graphKind = parseGraphKind(searchParams.get("graph"))
+  if (isApiResponse(graphKind)) return graphKind
+
+  const limit = parseLimit(searchParams.get("limit"))
+  if (isApiResponse(limit)) return limit
+
+  const nodeType = searchParams.get("type") ?? undefined
+  const edgeType = searchParams.get("edgeType") ?? undefined
+
+  const serviceName = searchParams.get("service")!
+  const loaded = loadServiceGraph(serviceName, graphKind)
+  if (isApiResponse(loaded)) return loaded
+
+  const fanIn = new Map<string, number>()
+  const fanOut = new Map<string, number>()
+
+  for (const edge of loaded.edges) {
+    if (edgeType && edge.type !== edgeType) continue
+    fanIn.set(edge.target, (fanIn.get(edge.target) ?? 0) + 1)
+    fanOut.set(edge.source, (fanOut.get(edge.source) ?? 0) + 1)
+  }
+
+  const nodesById = new Map(loaded.nodes.map((n) => [n.id, n]))
+  const scored: Array<{
+    id: string
+    name: string
+    type: string
+    filePath?: string
+    fanIn: number
+    fanOut: number
+    score: number
+  }> = []
+
+  for (const node of loaded.nodes) {
+    if (nodeType && node.type !== nodeType) continue
+    const inCount = fanIn.get(node.id) ?? 0
+    const outCount = fanOut.get(node.id) ?? 0
+    if (inCount === 0 && outCount === 0) continue
+    scored.push({
+      id: node.id,
+      name: node.name || node.id,
+      type: node.type,
+      filePath: node.filePath,
+      fanIn: inCount,
+      fanOut: outCount,
+      score: inCount + outCount,
+    })
+  }
+
+  scored.sort((a, b) => b.score - a.score)
+
+  return {
+    statusCode: 200,
+    body: {
+      hotspots: scored.slice(0, limit),
+      total: scored.length,
+    },
+  }
+}
+
 export async function handleGraphQueryRequest(
   req: ApiRequest,
   _ctx: ApiContext,
@@ -317,6 +439,10 @@ export async function handleGraphQueryRequest(
       return handleLayers(searchParams)
     case "/api/graph-query/tour":
       return handleTour(searchParams)
+    case "/api/graph-query/impact":
+      return handleImpact(searchParams)
+    case "/api/graph-query/hotspots":
+      return handleHotspots(searchParams)
     default:
       return null
   }

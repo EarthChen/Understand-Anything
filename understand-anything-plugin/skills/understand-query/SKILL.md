@@ -87,10 +87,10 @@ Return: file paths, class names, method signatures, and key source excerpts.
 ```
 Execute in sequence:
 1. python ua_query.py trace --service S --query "X" --source --business
-2. python ua_query.py kg --service S --neighbors <top_match_id> --direction inbound
+2. python ua_query.py impact --service S --symbol <ClassName> --depth 3 --direction inbound
 3. python ua_query.py structure --service S --property-type <ClassName>
 
-Return: dependency graph, affected callers, and risk assessment.
+Return: transitive dependency graph (with distance + path), affected callers, and risk assessment.
 ```
 
 #### Intent D: Cross-Service Investigation
@@ -153,10 +153,15 @@ python ua_query.py trace --service svc-b --query "keyword" --source --verify-sou
 
 | Subcommand | Purpose | Detail Doc |
 |------------|---------|------------|
-| `ask` | **NEW: Start here for business questions.** Auto-discover → trace → wiki → domain → source-verify | This file |
-| `trace` | Search→neighbors→source in one call (with optional wiki/domain/verify) | [source-code.md](docs/source-code.md) |
-| `kg` | Source-level KG: classes, calls, RPC, file annotations | [source-code.md](docs/source-code.md) |
-| `structure` | Code structure: signatures, annotations, param types | [source-code.md](docs/source-code.md) |
+| `ask` | **Start here for business questions.** Auto-discover → trace → wiki → domain → source-verify | This file |
+| `trace` | Search→neighbors→source in one call (with optional wiki/domain/verify/grouped) | [kg-trace.md](docs/kg-trace.md#trace--aggregated-searchneighborssource-recommended-for-agents) |
+| `kg` | Source-level KG: classes, calls, RPC, file annotations, file summary | [kg-trace.md](docs/kg-trace.md#kg--knowledge-graph-queries) |
+| `structure` | Code structure: signatures, annotations, types, cross-file symbol search + source | [structure-commands.md](docs/structure-commands.md) |
+| `impact` | Server-side BFS impact analysis from a symbol (depth 1–10) | [graph-analysis.md](docs/graph-analysis.md#impact--transitive-impact-analysis) |
+| `callers` | Who calls this symbol? (inbound `calls` edges) | [graph-analysis.md](docs/graph-analysis.md#callers--callees--call-graph-navigation) |
+| `callees` | What does this symbol call? (outbound `calls` edges) | [graph-analysis.md](docs/graph-analysis.md#callers--callees--call-graph-navigation) |
+| `hotspots` | Server-side fan-in/fan-out scoring for critical nodes | [graph-analysis.md](docs/graph-analysis.md#hotspots--code-hotspot-scoring) |
+| `affected` | Find test files affected by changes to given source files | [graph-analysis.md](docs/graph-analysis.md#affected--affected-test-discovery) |
 | `business` | Business landscape: domains, interactions, rules | [business-domain.md](docs/business-domain.md) |
 | `wiki` | Wiki pages, architecture, endpoints, flows | [business-domain.md](docs/business-domain.md) |
 | `domain` | Domain graph: flows, steps, neighbors | [business-domain.md](docs/business-domain.md) |
@@ -233,11 +238,53 @@ New flags added to `trace` for richer context:
 | `--domain-flows` | Include domain flow steps |
 | `--verify-source` | Read actual source code for top 3 matches — returns full content for agent reasoning |
 | `--auto-discover` | Auto-detect service via business+wiki+KG search (omit `--service`) |
+| `--grouped` | With `--source`: return source for all matched nodes grouped by file, plus `relationshipMap` |
+| `--symbol NAME` | With `--source`: extract a specific method/class block from the top match's file |
+
+**`matchedNodes` blast radius:** Top 3 matches include `blastRadius: {"inbound": N, "outbound": M, "total": N+M}` — direct dependent/callee counts for quick risk triage.
 
 **Full trace example:**
 
 ```bash
 python ua_query.py trace --auto-discover --query "火箭,rocket" --source --business --wiki --domain-flows --verify-source --format md
+```
+
+**Grouped source across matches:**
+
+```bash
+python ua_query.py trace --service S --query "Order" --source --grouped --format md
+```
+
+---
+
+## Impact & Call Graph Commands (NEW)
+
+Quick reference for dependency and impact analysis:
+
+```bash
+# Transitive impact: all nodes affected within 3 hops (inbound)
+python ua_query.py impact --service S --symbol OrderService --depth 3 --direction inbound
+
+# Direct and transitive callers (calls edges only)
+python ua_query.py callers --service S --symbol OrderService --depth 2
+
+# Direct and transitive callees
+python ua_query.py callees --service S --symbol OrderService --depth 1
+
+# Most critical nodes by fan-in/fan-out score
+python ua_query.py hotspots --service S --limit 20 --type class
+
+# Test files to run after editing source files
+python ua_query.py affected --service S --files src/OrderService.java,src/PaymentRpc.java --depth 2
+
+# Cross-file symbol search (signatures, params, annotations)
+python ua_query.py structure --service S --symbol createOrder
+
+# Symbol search with source code included
+python ua_query.py structure --service S --symbol createOrder --source
+
+# File overview: symbols, imports, callers, callees, blast radius
+python ua_query.py kg --service S --file OrderServiceImpl.java --summary
 ```
 
 ---
@@ -266,8 +313,12 @@ python ua_query.py trace --auto-discover --query "火箭,rocket" --source --busi
 |------|------|------------|
 | Business Understanding | "What is X?" "Complete flow of X?" | `ask --depth full` |
 | Feature Location | "Where is X implemented?" | `trace --auto-discover --query "X" --source --verify-source` |
+| Symbol + Source | "Show me the code for createOrder" | `structure --symbol createOrder --source` |
 | Bug Investigation | "API returns wrong data" | `wiki --type endpoint` → `kg --neighbors` → `trace --verify-source` |
-| Impact Analysis | "What will changing X break?" | `kg --neighbors X --direction inbound` + `structure --property-type X` |
+| Impact Analysis | "What will changing X break?" | `impact --symbol X --direction inbound --depth 3` → `callers` / `structure --property-type X` |
+| Call Graph | "Who calls X?" / "What does X call?" | `callers --symbol X` or `callees --symbol X` |
+| Code Hotspots | "What are the most critical classes?" | `hotspots --type class --limit 20` |
+| Test Impact | "Which tests break if I change these files?" | `affected --files path1,path2` |
 | Cross-Platform | "Client/server don't sync" | `business --panorama` → `trace` per service |
 | Architecture | "How is system structured?" | `wiki --architecture` → `services --list` |
 | Data Quality | "Is KB data reliable?" | `meta --stale` |
@@ -296,6 +347,11 @@ The CLI uses `http://172.18.228.71:3001` as the default API server.
 | `services --list` | 200 | Always safe |
 | `business --search Q` | 300 | Prefer over `--list` |
 | `kg --neighbors X` (depth=1) | 500–1500 | Primary traversal |
+| `impact --depth 3` | 800–3000 | Transitive impact (prefer over manual BFS) |
+| `callers` / `callees` (depth=1) | 300–800 | Direct call graph |
+| `hotspots --limit 20` | 500–2000 | Service-wide critical nodes |
+| `structure --symbol X` | 200–1000 | Symbol metadata only |
+| `structure --symbol X --source` | 500–5000 | Symbol + source code (varies by match count) |
 | `kg` full graph (no filter) | 5000–50000 | **AVOID** |
 
 ---
@@ -307,14 +363,23 @@ The CLI uses `http://172.18.228.71:3001` as the default API server.
 | "What is X business function?" | **1** | `ask --query "X,英文" --depth full` |
 | "How does X work?" | **1** | `trace --auto-discover --query "X" --source --business --wiki --verify-source` |
 | "Find RPC endpoints + types" | 2 | `structure --annotation` → `kg --edges --type consumes_rpc` |
-| "Impact of changing X" | 2 | `kg --neighbors X --direction both` → `structure --property-type X` |
+| "Impact of changing X" | 2 | `impact --symbol X --direction inbound --depth 3` → `structure --property-type X` |
+| "Who calls X?" | 1 | `callers --service S --symbol X --depth 2` |
+| "What does X call?" | 1 | `callees --service S --symbol X --depth 2` |
+| "Blast radius of X" | 2 | `trace --query X` (check `blastRadius` on matches) → `impact --symbol X --depth 3` |
+| "Which tests to run after edit?" | 1 | `affected --files src/A.java,src/B.java --depth 2` |
+| "Most critical classes in service" | 1 | `hotspots --type class --limit 20` |
+| "Show me source of createOrder" | 1 | `structure --symbol createOrder --source --limit 3` |
 | "Cross-service dep" | 3 | `business --panorama` → `trace` in source svc → `trace` in target svc |
 
 ---
 
 ## Detail Documentation
 
-- **[Source-Level Queries](docs/source-code.md)** — `kg`, `trace`, `structure`, `kg --file` TOC pattern
+- **[Source-Level Queries](docs/source-code.md)** — strategy overview, query paths, and combination recipes
+- **[KG & Trace](docs/kg-trace.md)** — `kg`, `trace`, file reading patterns
+- **[Graph Analysis](docs/graph-analysis.md)** — `impact`, `callers`, `callees`, `hotspots`, `affected`
+- **[Structure](docs/structure-commands.md)** — `structure` (annotations, types, symbol search + source)
 - **[Business & Domain Queries](docs/business-domain.md)** — `business`, `wiki`, `domain`, cross-platform recipe
 - **[Technical Reference](docs/reference.md)** — `services`, `meta`, search algorithm, error handling
 
@@ -326,7 +391,7 @@ The CLI uses `http://172.18.228.71:3001` as the default API server.
 
 1. **Business question:** `ask --depth full` → synthesize → present to user
 2. **Code change:** `trace --verify-source` → confirm implementation → edit files
-3. **Impact check:** `kg --neighbors` + `structure --property-type` → assess risk
+3. **Impact check:** `impact --symbol X --direction inbound` + `affected --files` → assess risk and test scope
 4. **Freshness gate:** `meta --stale` → decide if data is trustworthy
 5. **Cross-reference:** Check `sourceVerification` output before modifying domain logic
 
