@@ -1,6 +1,5 @@
 import fs from "fs";
 import path from "path";
-import Fuse, { type IFuseOptions } from "fuse.js";
 import type {
   WikiMeta,
   WikiIndex,
@@ -15,17 +14,8 @@ import type {
   WikiTopologyFacet,
   ServiceEndpointDoc,
 } from "@understand-anything/core";
+import { WikiIndex as WikiSearchIndex } from "./src/api/handlers/wiki-index";
 import { sanitizeSlug } from "./src/utils/sanitize";
-
-interface WikiSearchDocument {
-  id: string;
-  name: string;
-  type: WikiIndexEntry["type"];
-  service?: string;
-  domain?: string;
-  summary: string;
-  content?: string;
-}
 
 export interface WikiDataServiceOptions {
   /** TTL for JSON file cache entries (default: 5 minutes). */
@@ -46,18 +36,6 @@ interface SearchCacheEntry {
   cachedAt: number;
 }
 
-const SEARCH_FUSE_OPTIONS: IFuseOptions<WikiSearchDocument> = {
-  keys: [
-    { name: "name", weight: 0.35 },
-    { name: "summary", weight: 0.35 },
-    { name: "content", weight: 0.2 },
-    { name: "service", weight: 0.1 },
-  ],
-  threshold: 0.4,
-  includeScore: true,
-  ignoreLocation: true,
-};
-
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_CACHE_SIZE = 100;
 const SEARCH_CACHE_TTL_MS = 30 * 1000;
@@ -71,8 +49,7 @@ export class WikiDataService {
   private topology: WikiTopology | null = null;
   private topologyCachedAt: number | null = null;
   private jsonCache = new Map<string, JsonCacheEntry>();
-  private searchIndex: Fuse<WikiSearchDocument> | null = null;
-  private searchDocs: WikiSearchDocument[] = [];
+  private searchIndex: WikiSearchIndex | null = null;
   private searchResultCache = new Map<string, SearchCacheEntry>();
 
   constructor(projectRoot: string, options?: WikiDataServiceOptions) {
@@ -411,24 +388,23 @@ export class WikiDataService {
     this.ensureSearchIndex();
     if (!this.searchIndex) return [];
 
-    const rawResults = this.searchIndex.search(trimmed);
-    const sliced = rawResults.slice(0, limit);
+    const searchResult = this.searchIndex.search({ q: trimmed, limit });
 
     const results: WikiSearchResult[] = [];
-    for (let i = 0; i < sliced.length; i++) {
+    for (let i = 0; i < searchResult.results.length; i++) {
       if (i > 0 && i % SEARCH_YIELD_CHUNK_SIZE === 0) {
         await new Promise<void>((resolve) => setImmediate(resolve));
       }
-      const r = sliced[i];
+      const r = searchResult.results[i];
       results.push({
-        id: r.item.id,
-        name: r.item.name,
-        type: r.item.type,
-        service: r.item.service,
-        domain: r.item.domain,
-        summary: r.item.summary,
-        score: r.score ?? 0,
-        matchSnippet: r.item.summary.slice(0, 120),
+        id: r.id,
+        name: r.name,
+        type: r.type as WikiIndexEntry["type"],
+        service: r.service,
+        domain: r.domain,
+        summary: r.summary,
+        score: r.score,
+        matchSnippet: r.summary.slice(0, 120),
       });
     }
 
@@ -490,7 +466,6 @@ export class WikiDataService {
     this.topologyCachedAt = null;
     this.jsonCache.clear();
     this.searchIndex = null;
-    this.searchDocs = [];
     this.searchResultCache.clear();
   }
 
@@ -556,35 +531,25 @@ export class WikiDataService {
     if (this.searchIndex) return;
 
     const topo = this.discoverWikis();
-    this.searchDocs = [];
+    this.searchIndex = new WikiSearchIndex({ entries: [] });
+
+    const extraDocs: Array<{ id: string; name: string; summary: string; content?: string; type: string; service?: string; domain?: string }> = [];
 
     if (topo.parentWikiDir) {
       const parentIndex = this.readJson<WikiIndex>(path.join(topo.parentWikiDir, "index.json"));
       if (parentIndex?.entries) {
-        for (const entry of parentIndex.entries) {
-          this.searchDocs.push({
-            id: entry.id,
-            name: entry.name,
-            type: entry.type,
-            summary: entry.summary,
-          });
-        }
+        extraDocs.push(...parentIndex.entries.map((e) => ({
+          id: e.id, name: e.name, type: e.type, summary: e.summary,
+        })));
       }
     }
 
     for (const svc of topo.services) {
       const svcIndex = this.readJson<WikiIndex>(path.join(svc.wikiDir, "index.json"));
       if (svcIndex?.entries) {
-        for (const entry of svcIndex.entries) {
-          this.searchDocs.push({
-            id: entry.id,
-            name: entry.name,
-            type: entry.type,
-            service: svc.name,
-            domain: entry.domain,
-            summary: entry.summary,
-          });
-        }
+        extraDocs.push(...svcIndex.entries.map((e) => ({
+          id: e.id, name: e.name, type: e.type, service: svc.name, domain: e.domain, summary: e.summary,
+        })));
       }
 
       // Also index domain page content for deeper search
@@ -602,7 +567,7 @@ export class WikiDataService {
                   contentParts.push(step.name, step.description);
                 }
               }
-              this.searchDocs.push({
+              extraDocs.push({
                 id: page.id ?? `${svc.name}:${file.replace(".json", "")}`,
                 name: page.name,
                 type: "domain",
@@ -618,7 +583,7 @@ export class WikiDataService {
       }
     }
 
-    this.searchIndex = new Fuse(this.searchDocs, SEARCH_FUSE_OPTIONS);
+    this.searchIndex.addDocs(extraDocs);
   }
 
   private readJson<T>(filePath: string): T | null {

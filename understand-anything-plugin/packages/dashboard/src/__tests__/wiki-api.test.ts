@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import Fuse from "fuse.js";
+import { WikiIndex as WikiSearchIndex } from "../api/handlers/wiki-index";
 import { WikiDataService } from "../../wiki-api";
 
 function createTempDir(): string {
@@ -363,7 +363,7 @@ describe("WikiDataService", () => {
       vi.useFakeTimers();
       setupSearchWiki();
       const svc = new WikiDataService(tmpDir);
-      const fuseSearch = vi.spyOn(Fuse.prototype, "search");
+      const fuseSearch = vi.spyOn(WikiSearchIndex.prototype, "search");
 
       const first = await svc.search("order");
       const second = await svc.search("order");
@@ -382,7 +382,7 @@ describe("WikiDataService", () => {
     it("clears search cache when wiki cache is invalidated", async () => {
       setupSearchWiki();
       const svc = new WikiDataService(tmpDir);
-      const fuseSearch = vi.spyOn(Fuse.prototype, "search");
+      const fuseSearch = vi.spyOn(WikiSearchIndex.prototype, "search");
 
       await svc.search("order");
       svc.invalidateCache();

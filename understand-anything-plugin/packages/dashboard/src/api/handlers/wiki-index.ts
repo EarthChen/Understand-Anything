@@ -21,6 +21,7 @@ interface WikiDoc {
   content: string
   type: string
   service: string
+  domain?: string
 }
 
 export interface WikiSearchResult {
@@ -30,6 +31,7 @@ export interface WikiSearchResult {
   summary: string
   score: number
   service?: string
+  domain?: string
 }
 
 export interface WikiSearchOptions {
@@ -50,7 +52,7 @@ export interface WikiSearchResponse {
 
 const MINI_SEARCH_OPTIONS = {
   fields: ["name", "summary", "content"],
-  storeFields: ["name", "type", "service", "summary"],
+  storeFields: ["name", "type", "service", "summary", "domain"],
   tokenize: codeTokenize,
 }
 
@@ -86,6 +88,22 @@ export class WikiIndex {
   isEmpty(): boolean { return this.docs.length === 0 }
   docCount(): number { return this.docs.length }
 
+  addDocs(docs: Array<{ id: string; name: string; summary: string; content?: string; type: string; service?: string; domain?: string }>): void {
+    const newDocs = docs.map((d) => ({
+      id: d.id,
+      name: d.name,
+      summary: d.summary ?? "",
+      content: d.content ?? "",
+      type: d.type,
+      service: d.service ?? "",
+      domain: d.domain,
+    }))
+    if (newDocs.length > 0) {
+      this.docs.push(...newDocs)
+      this.miniSearch.addAll(newDocs)
+    }
+  }
+
   search(opts: WikiSearchOptions): WikiSearchResponse {
     const limit = opts.limit ?? 20
     const offset = opts.offset ?? 0
@@ -120,6 +138,7 @@ export class WikiIndex {
       summary: r.summary as string,
       score: r.score,
       service: r.service as string | undefined,
+      domain: r.domain as string | undefined,
     }))
 
     return {
