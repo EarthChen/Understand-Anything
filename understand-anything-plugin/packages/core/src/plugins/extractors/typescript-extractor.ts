@@ -1,6 +1,6 @@
 import type { StructuralAnalysis, CallGraphEntry } from "../../types.js";
 import type { LanguageExtractor, TreeSitterNode } from "./types.js";
-import { getStringValue } from "./base-extractor.js";
+import { getStringValue, findChild, findChildren } from "./base-extractor.js";
 
 /**
  * Extract parameter names from a formal_parameters node.
@@ -219,6 +219,18 @@ export class TypeScriptExtractor implements LanguageExtractor {
 
       case "import_statement":
         this.extractImport(node, imports);
+        break;
+
+      case "interface_declaration":
+        this.extractInterface(node, classes);
+        break;
+
+      case "enum_declaration":
+        this.extractEnum(node, classes);
+        break;
+
+      case "type_alias_declaration":
+        this.extractTypeAlias(node, classes);
         break;
 
       case "export_statement":
@@ -467,6 +479,56 @@ export class TypeScriptExtractor implements LanguageExtractor {
           break;
         }
 
+        case "interface_declaration": {
+          this.extractInterface(child, classes);
+          const nameNode = child.children.find(
+            (c) => c.type === "type_identifier",
+          );
+          const isDefault = node.children.some(
+            (c) => c.type === "default",
+          );
+          if (nameNode && !exportedNames.has(nameNode.text)) {
+            const exportName = isDefault
+              ? "default"
+              : nameNode.text;
+            exports.push({
+              name: exportName,
+              lineNumber: node.startPosition.row + 1,
+              isDefault,
+            });
+            exportedNames.add(exportName);
+          }
+          break;
+        }
+
+        case "enum_declaration": {
+          this.extractEnum(child, classes);
+          const nameNode =
+            findChild(child, "identifier") ??
+            findChild(child, "type_identifier");
+          if (nameNode && !exportedNames.has(nameNode.text)) {
+            exports.push({
+              name: nameNode.text,
+              lineNumber: node.startPosition.row + 1,
+            });
+            exportedNames.add(nameNode.text);
+          }
+          break;
+        }
+
+        case "type_alias_declaration": {
+          this.extractTypeAlias(child, classes);
+          const nameNode = findChild(child, "type_identifier");
+          if (nameNode && !exportedNames.has(nameNode.text)) {
+            exports.push({
+              name: nameNode.text,
+              lineNumber: node.startPosition.row + 1,
+            });
+            exportedNames.add(nameNode.text);
+          }
+          break;
+        }
+
         case "export_clause": {
           for (let k = 0; k < child.childCount; k++) {
             const spec = child.child(k);
@@ -491,5 +553,97 @@ export class TypeScriptExtractor implements LanguageExtractor {
         }
       }
     }
+  }
+
+  private extractInterface(
+    node: TreeSitterNode,
+    classes: StructuralAnalysis["classes"],
+  ): void {
+    const nameNode = findChild(node, "type_identifier");
+    if (!nameNode) return;
+
+    const methods: string[] = [];
+    const properties: string[] = [];
+
+    const body = findChild(node, "interface_body");
+    if (body) {
+      for (const methodSig of findChildren(body, "method_signature")) {
+        const methName = findChild(methodSig, "property_identifier");
+        if (methName) methods.push(methName.text);
+      }
+      for (const propSig of findChildren(body, "property_signature")) {
+        const propName = findChild(propSig, "property_identifier");
+        if (propName) properties.push(propName.text);
+      }
+    }
+
+    const interfaces: string[] = [];
+    const extendsClause = findChild(node, "extends_type_clause");
+    if (extendsClause) {
+      for (const typeNode of findChildren(extendsClause, "type_identifier")) {
+        interfaces.push(typeNode.text);
+      }
+    }
+
+    const entry: StructuralAnalysis["classes"][0] = {
+      name: nameNode.text,
+      lineRange: [
+        node.startPosition.row + 1,
+        node.endPosition.row + 1,
+      ],
+      methods,
+      properties,
+      kind: "interface",
+    };
+    if (interfaces.length > 0) entry.interfaces = interfaces;
+    classes.push(entry);
+  }
+
+  private extractEnum(
+    node: TreeSitterNode,
+    classes: StructuralAnalysis["classes"],
+  ): void {
+    const nameNode =
+      findChild(node, "identifier") ??
+      findChild(node, "type_identifier");
+    if (!nameNode) return;
+
+    const properties: string[] = [];
+    const body = findChild(node, "enum_body");
+    if (body) {
+      for (const member of findChildren(body, "property_identifier")) {
+        properties.push(member.text);
+      }
+    }
+
+    classes.push({
+      name: nameNode.text,
+      lineRange: [
+        node.startPosition.row + 1,
+        node.endPosition.row + 1,
+      ],
+      methods: [],
+      properties,
+      kind: "enum",
+    });
+  }
+
+  private extractTypeAlias(
+    node: TreeSitterNode,
+    classes: StructuralAnalysis["classes"],
+  ): void {
+    const nameNode = findChild(node, "type_identifier");
+    if (!nameNode) return;
+
+    classes.push({
+      name: nameNode.text,
+      lineRange: [
+        node.startPosition.row + 1,
+        node.endPosition.row + 1,
+      ],
+      methods: [],
+      properties: [],
+      kind: "type",
+    });
   }
 }
