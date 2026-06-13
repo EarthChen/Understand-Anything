@@ -1,7 +1,6 @@
 import path from "path"
 import fs from "fs"
 import jieba from "@node-rs/jieba"
-import { LumoSearch } from "@lumosearch/search"
 
 const { cut } = jieba
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
@@ -19,7 +18,11 @@ import {
   isApiResponse,
 } from "../service-resolver"
 import { rrfFuse } from "./rrf-fuse"
-import type { KnowledgeGraph, WikiIndex } from "@understand-anything/core"
+import { KgIndex } from "./kg-index"
+import type { KgSearchOptions } from "./kg-index"
+import { WikiIndex } from "./wiki-index"
+import type { WikiSearchOptions } from "./wiki-index"
+import type { KnowledgeGraph, WikiIndex as WikiIndexType } from "@understand-anything/core"
 
 export interface UnifiedSearchResult {
   id: string
@@ -37,36 +40,15 @@ export interface UnifiedSearchResult {
 type SearchLayer = UnifiedSearchResult["layer"]
 type SearchScope = SearchLayer | "all"
 
-export interface SearchIndexItem {
-  id: string
-  text: string
-  meta: Omit<UnifiedSearchResult, "id" | "score">
-}
-
-interface LumoDocument extends Record<string, unknown> {
-  id: string
-  name: string
-  summary: string
-  type: string
-  service: string
-  content: string
-  layer: string
-  tags: string  // 新增
-}
-
 interface KgEdgeEntry {
   source: string
   target: string
   type: string
 }
 
-export interface SearchIndexState {
-  items: SearchIndexItem[]
-  itemById: Map<string, SearchIndexItem>
-  tokenizedDocs: string[][]
-  tokenizedDocSets: Set<string>[]
-  cjkInvertedIndex: Map<string, number[]>
-  lumo: LumoSearch<LumoDocument>
+interface SearchIndexState {
+  kgIndex: KgIndex
+  wikiIndex: WikiIndex
   edges: KgEdgeEntry[]
   adjacency: Map<string, Set<string>>
   mtimes: Record<string, number>
@@ -75,18 +57,6 @@ export interface SearchIndexState {
 const DOMAIN_NODE_TYPES = new Set(["flow", "step", "domain"])
 
 const searchIndexCache = new Map<string, SearchIndexState>()
-
-const TYPE_BOOST: Record<string, number> = {
-  class: 2,
-  function: 1.5,
-  interface: 2,
-  module: 1,
-  endpoint: 2,
-  service: 2.5,
-  file: 0.5,
-  flow: 1,
-  domain: 1,
-}
 
 export function tokenize(text: string): string[] {
   const tokens: string[] = []
@@ -113,11 +83,11 @@ export function tokenize(text: string): string[] {
     }
   }
 
-  const cjk = text.match(/[\u4e00-\u9fff]+/g)
+  const cjk = text.match(/[一-鿿]+/g)
   if (cjk) {
     for (const segment of cjk) {
       try {
-        const words = cut(segment, true)  // \u7cbe\u786e\u6a21\u5f0f
+        const words = cut(segment, true)  // 精确模式
         for (const word of words) {
           if (word.length > 0) tokens.push(word)
         }
@@ -135,92 +105,9 @@ export function tokenize(text: string): string[] {
   return tokens
 }
 
-const LUMO_SEARCH_KEYS = [
-  { name: "name", weight: 3 },
-  { name: "summary", weight: 2 },
-  { name: "tags", weight: 2.5 },   // 新增：高于 summary
-  { name: "type", weight: 0.5 },
-  { name: "content", weight: 1 },
-] as const
-
 const LUMO_CANDIDATE_LIMIT = 500
 
-export const CJK_REGEX = /[\u4e00-\u9fff]/
-
-export function buildTokenizedDocs(items: SearchIndexItem[]): string[][] {
-  return items.map((item) => tokenize(item.text))
-}
-
-function applyResultBoosts(item: SearchIndexItem, baseScore: number, query: string): number {
-  const qLower = query.toLowerCase()
-  let score = baseScore
-
-  const nameLower = (item.meta.name ?? "").toLowerCase()
-  if (nameLower === qLower) score += 15
-  else if (nameLower.includes(qLower)) score += 5
-
-  score += TYPE_BOOST[item.meta.type] ?? 0
-  if (item.meta.filePath) score += 1.5
-  if (item.meta.lineRange) score += 1
-
-  return score
-}
-
-/** CJK bigram token overlap — uses inverted index instead of linear scan. */
-function cjkTokenScores(
-  state: SearchIndexState,
-  query: string,
-  scope: SearchScope,
-  serviceFilter?: string | null,
-): Map<string, number> {
-  const queryTokens = tokenize(query).filter((t) => CJK_REGEX.test(t))
-  if (queryTokens.length === 0) return new Map()
-
-  // Collect candidate item indices from inverted index
-  const candidateCounts = new Map<number, number>()
-  for (const qt of queryTokens) {
-    const postings = state.cjkInvertedIndex.get(qt)
-    if (!postings) continue
-    for (const idx of postings) {
-      candidateCounts.set(idx, (candidateCounts.get(idx) ?? 0) + 1)
-    }
-  }
-
-  const scores = new Map<string, number>()
-
-  for (const [i, matchCount] of candidateCounts) {
-    const item = state.items[i]
-    if (scope !== "all" && item.meta.layer !== scope) continue
-    if (serviceFilter && item.meta.service !== serviceFilter) continue
-
-    let score = (matchCount / queryTokens.length) * 10
-    if ((item.meta.summary ?? "").includes(query) || (item.meta.name ?? "").includes(query)) score += 10
-
-    score = applyResultBoosts(item, score, query)
-    scores.set(item.id, score)
-  }
-
-  return scores
-}
-
-export function buildLumoIndex(items: SearchIndexItem[]): LumoSearch<LumoDocument> {
-  const lumoDocs: LumoDocument[] = items.map((item) => ({
-    id: item.id,
-    name: item.meta.name,
-    summary: item.meta.summary,
-    type: item.meta.type,
-    service: item.meta.service ?? "",
-    content: item.text,
-    layer: item.meta.layer,
-    tags: item.meta.tags ?? "",
-  }))
-
-  return new LumoSearch(lumoDocs, {
-    keys: [...LUMO_SEARCH_KEYS],
-    candidateLimit: LUMO_CANDIDATE_LIMIT,
-  })
-}
-
+export const CJK_REGEX = /[一-鿿]/
 
 function kgGraphExpansion(
   state: SearchIndexState,
@@ -267,52 +154,89 @@ function kgGraphExpansion(
 }
 
 
-function lumoSearch(
+function unifiedSearch(
   state: SearchIndexState,
   query: string,
   limit: number,
   scope: SearchScope = "all",
   fusion: "none" | "rrf" = "none",
+  typeFilter?: string | null,
+  tagFilter?: string | null,
   serviceFilter?: string | null,
-): { results: UnifiedSearchResult[]; total: number } {
-  if (!query.trim() || state.items.length === 0) {
-    return { results: [], total: 0 }
+  offset: number = 0,
+): { results: UnifiedSearchResult[]; total: number; facets: Record<string, Record<string, number>> } {
+  if (!query.trim()) {
+    return { results: [], total: 0, facets: {} }
   }
 
-  const predicate = (doc: LumoDocument) => {
-    if (scope !== "all" && doc.layer !== scope) return false
-    if (serviceFilter && doc.service !== serviceFilter) return false
-    return true
-  }
-
-  const lumoResults = state.lumo.search(query, {
+  const kgOpts: KgSearchOptions = {
+    q: query,
+    scope: scope === "all" ? undefined : scope,
+    type: typeFilter ?? undefined,
+    tag: tagFilter ?? undefined,
+    service: serviceFilter ?? undefined,
     limit: LUMO_CANDIDATE_LIMIT,
-    candidateLimit: LUMO_CANDIDATE_LIMIT,
-    predicate,
-  })
+    offset: 0,
+  }
 
+  const wikiOpts: WikiSearchOptions = {
+    q: query,
+    service: serviceFilter ?? undefined,
+    limit: LUMO_CANDIDATE_LIMIT,
+    offset: 0,
+  }
+
+  const kgResult = scope !== "wiki" ? state.kgIndex.search(kgOpts) : { results: [] as Array<{ id: string; name: string; type: string; layer: string; summary: string; score: number; service?: string; filePath?: string; lineRange?: [number, number]; tags?: string }>, total: 0, facets: {} as Record<string, Record<string, number>> }
+  const wikiResult = scope !== "kg" && scope !== "domain" && scope !== "business"
+    ? state.wikiIndex.search(wikiOpts)
+    : { results: [] as Array<{ id: string; name: string; type: string; summary: string; score: number; service?: string }>, total: 0, facets: {} as Record<string, Record<string, number>> }
+
+  // Merge results
   const scoreById = new Map<string, UnifiedSearchResult>()
 
-  for (const r of lumoResults) {
-    const item = state.items[r.refIndex]
-    if (!item) continue
-
-    const score = applyResultBoosts(item, r.score, query)
-    scoreById.set(item.id, { id: item.id, score, ...item.meta })
-  }
-
-  for (const [id, cjkScore] of cjkTokenScores(state, query, scope, serviceFilter)) {
-    const existing = scoreById.get(id)
-    if (existing) {
-      existing.score = Math.max(existing.score, cjkScore)
-    } else {
-      const item = state.itemById.get(id)
-      if (item) scoreById.set(id, { id, score: cjkScore, ...item.meta })
+  for (const r of kgResult.results) {
+    const existing = scoreById.get(r.id)
+    if (!existing || r.score > existing.score) {
+      scoreById.set(r.id, {
+        id: r.id,
+        name: r.name,
+        type: r.type,
+        layer: r.layer as UnifiedSearchResult["layer"],
+        summary: r.summary,
+        score: r.score,
+        service: r.service,
+        filePath: r.filePath,
+        lineRange: r.lineRange,
+        tags: r.tags,
+      })
     }
   }
 
-  const scored = [...scoreById.values()]
-  scored.sort((a, b) => b.score - a.score)
+  for (const r of wikiResult.results) {
+    const existing = scoreById.get(r.id)
+    if (!existing || r.score > existing.score) {
+      scoreById.set(r.id, {
+        id: r.id,
+        name: r.name,
+        type: r.type,
+        layer: "wiki",
+        summary: r.summary,
+        score: r.score,
+        service: r.service,
+      })
+    }
+  }
+
+  const scored = [...scoreById.values()].sort((a, b) => b.score - a.score)
+
+  // Merge facets from both indices
+  const facets: Record<string, Record<string, number>> = {}
+  for (const [key, vals] of Object.entries(kgResult.facets ?? {})) {
+    facets[key] = { ...vals }
+  }
+  for (const [key, vals] of Object.entries(wikiResult.facets ?? {})) {
+    facets[key] = { ...(facets[key] ?? {}), ...vals }
+  }
 
   if (fusion === "rrf" && state.edges.length > 0) {
     const seedIds = scored.slice(0, 10).map((r) => r.id)
@@ -323,17 +247,26 @@ function lumoSearch(
         {
           rankMap: kgRanks,
           resolve: (id) => {
-            const item = state.itemById.get(id)
-            return item ? { id, score: 0, ...item.meta } : undefined
+            const existing = scoreById.get(id)
+            if (existing) return existing
+            // Try to resolve from KG index
+            const kgSearch = state.kgIndex.search({ q: id, limit: 1 })
+            if (kgSearch.results.length > 0) {
+              const r = kgSearch.results[0]
+              return { id, name: r.name, type: r.type, layer: r.layer as UnifiedSearchResult["layer"], summary: r.summary, score: 0, service: r.service, filePath: r.filePath, lineRange: r.lineRange, tags: r.tags }
+            }
+            return undefined
           },
         },
       ],
-      limit,
+      limit + offset,
     )
-    return { results: fused, total: fused.length }
+    const paginated = fused.slice(offset, offset + limit)
+    return { results: paginated, total: fused.length, facets }
   }
 
-  return { results: scored.slice(0, limit), total: scored.length }
+  const paginated = scored.slice(offset, offset + limit)
+  return { results: paginated, total: scored.length, facets }
 }
 
 function getFileMtime(filePath: string | null): number {
@@ -354,99 +287,6 @@ function resolveProjectDataPath(projectRoot: string, relativePath: string): stri
     if (fs.existsSync(candidate)) return candidate
   }
   return null
-}
-
-export function pushKgItems(
-  items: SearchIndexItem[],
-  edges: KgEdgeEntry[],
-  graph: KnowledgeGraph,
-  serviceName: string,
-  projectRoot: string,
-): void {
-  if (!Array.isArray(graph?.nodes)) {
-    console.warn(`[search] KG data missing nodes array for service "${serviceName}"`)
-    return
-  }
-  if (Array.isArray(graph.edges)) {
-    for (const edge of graph.edges) {
-      edges.push({ source: edge.source, target: edge.target, type: edge.type ?? "unknown" })
-    }
-  }
-  for (const node of graph.nodes) {
-    const fp = node.filePath
-      ? normalizeGraphPath(node.filePath, projectRoot) ?? undefined
-      : undefined
-    items.push({
-      id: node.id,
-      text: [node.name, node.summary, node.type].join(" "),  // 不再包含 tags
-      meta: {
-        name: node.name,
-        type: node.type,
-        layer: "kg",
-        summary: node.summary,
-        service: serviceName,
-        filePath: fp,
-        lineRange: node.lineRange,
-        tags: (node.tags ?? []).join(" "),  // 新增：tags 字段
-      },
-    })
-  }
-}
-
-export function pushWikiItems(items: SearchIndexItem[], index: WikiIndex, serviceName?: string): void {
-  for (const entry of index.entries ?? []) {
-    items.push({
-      id: entry.id,
-      text: [entry.name, entry.summary, entry.type, entry.service, entry.domain].filter(Boolean).join(" "),
-      meta: {
-        name: entry.name,
-        type: entry.type,
-        layer: "wiki",
-        summary: entry.summary,
-        service: entry.service ?? serviceName,
-      },
-    })
-  }
-}
-
-function pushDomainItems(items: SearchIndexItem[], graph: KnowledgeGraph, serviceName: string): void {
-  if (!Array.isArray(graph?.nodes)) {
-    console.warn(`[search] Domain graph data missing nodes array for service "${serviceName}"`)
-    return
-  }
-  for (const node of graph.nodes) {
-    if (!DOMAIN_NODE_TYPES.has(node.type)) continue
-    items.push({
-      id: node.id,
-      text: [node.name, node.summary, node.type].join(" "),
-      meta: {
-        name: node.name,
-        type: node.type,
-        layer: "domain",
-        summary: node.summary,
-        service: serviceName,
-        filePath: node.filePath,
-        lineRange: node.lineRange,
-      },
-    })
-  }
-}
-
-function pushBusinessItems(items: SearchIndexItem[], blDir: string): void {
-  const domainsPath = path.join(blDir, "domains.json")
-  const data = readJsonFile<{ domains?: Array<{ id: string; name: string; summary: string }> }>(domainsPath)
-  for (const domain of data?.domains ?? []) {
-    items.push({
-      id: `business:${domain.id}`,
-      text: `${domain.name} ${domain.summary}`,
-      meta: {
-        name: domain.name,
-        type: "domain",
-        layer: "business",
-        summary: domain.summary,
-      },
-    })
-  }
 }
 
 function collectIndexMtimes(projectRoot: string, serviceFilter: string | null): Record<string, number> {
@@ -481,52 +321,86 @@ function mtimesEqual(a: Record<string, number>, b: Record<string, number>): bool
 }
 
 function buildSearchIndex(projectRoot: string, serviceFilter: string | null): SearchIndexState {
-  const items: SearchIndexItem[] = []
   const edges: KgEdgeEntry[] = []
   const mtimes = collectIndexMtimes(projectRoot, serviceFilter)
 
+  // Collect all KG items for KgIndex
+  const kgGraph: KnowledgeGraph = { nodes: [], edges: [] }
+  const wikiEntries: Array<{ id: string; name: string; summary: string; content?: string; type: string; service?: string }> = []
+
   const parentWikiPath = resolveProjectDataPath(projectRoot, "wiki/index.json")
-  const parentWiki = parentWikiPath ? readJsonFile<WikiIndex>(parentWikiPath) : null
-  if (parentWiki) pushWikiItems(items, parentWiki)
+  const parentWiki = parentWikiPath ? readJsonFile<WikiIndexType>(parentWikiPath) : null
+  if (parentWiki) {
+    for (const entry of parentWiki.entries ?? []) {
+      wikiEntries.push(entry)
+    }
+  }
 
   for (const serviceName of listServiceNames(serviceFilter)) {
     try {
       const kgPath = resolveServiceDataPath(serviceName, "knowledge-graph.json")
       const kg = kgPath ? readJsonFile<KnowledgeGraph>(kgPath) : null
-      if (kg) pushKgItems(items, edges, kg, serviceName, projectRoot)
+      if (kg) {
+        if (!Array.isArray(kg.nodes)) {
+          console.warn(`[search] KG data missing nodes array for service "${serviceName}"`)
+          continue
+        }
+        for (const node of kg.nodes) {
+          const fp = node.filePath
+            ? normalizeGraphPath(node.filePath, projectRoot) ?? undefined
+            : undefined
+          kgGraph.nodes.push({ ...node, filePath: fp })
+        }
+        if (Array.isArray(kg.edges)) {
+          for (const edge of kg.edges) {
+            edges.push({ source: edge.source, target: edge.target, type: edge.type ?? "unknown" })
+            kgGraph.edges.push(edge)
+          }
+        }
+      }
 
       const wikiPath = resolveServiceDataPath(serviceName, "wiki/index.json")
-      const wiki = wikiPath ? readJsonFile<WikiIndex>(wikiPath) : null
-      if (wiki) pushWikiItems(items, wiki, serviceName)
+      const wiki = wikiPath ? readJsonFile<WikiIndexType>(wikiPath) : null
+      if (wiki) {
+        for (const entry of wiki.entries ?? []) {
+          wikiEntries.push({ ...entry, service: entry.service ?? serviceName })
+        }
+      }
 
+      // Domain graph nodes go into KG index with layer="domain"
       const domainPath = resolveServiceDataPath(serviceName, "domain-graph.json")
       const domainGraph = domainPath ? readJsonFile<KnowledgeGraph>(domainPath) : null
-      if (domainGraph) pushDomainItems(items, domainGraph, serviceName)
+      if (domainGraph && Array.isArray(domainGraph.nodes)) {
+        for (const node of domainGraph.nodes) {
+          if (DOMAIN_NODE_TYPES.has(node.type)) {
+            kgGraph.nodes.push({ ...node, tags: [...(node.tags ?? []), "domain"] })
+          }
+        }
+      }
     } catch (err) {
       console.warn(`[search] Failed to load index data for service "${serviceName}":`, err)
     }
   }
 
+  // Business landscape
   const blDir = businessLandscapeDir(projectRoot)
   if (fs.existsSync(blDir)) {
-    pushBusinessItems(items, blDir)
-  }
-
-  const lumo = buildLumoIndex(items)
-  const itemById = new Map<string, SearchIndexItem>()
-  for (const item of items) itemById.set(item.id, item)
-  const tokenizedDocs = buildTokenizedDocs(items)
-  const tokenizedDocSets = tokenizedDocs.map((tokens) => new Set(tokens))
-  const cjkInvertedIndex = new Map<string, number[]>()
-  for (let i = 0; i < tokenizedDocs.length; i++) {
-    for (const token of tokenizedDocSets[i]) {
-      if (CJK_REGEX.test(token)) {
-        let postings = cjkInvertedIndex.get(token)
-        if (!postings) { postings = []; cjkInvertedIndex.set(token, postings) }
-        postings.push(i)
-      }
+    const domainsPath = path.join(blDir, "domains.json")
+    const data = readJsonFile<{ domains?: Array<{ id: string; name: string; summary: string }> }>(domainsPath)
+    for (const domain of data?.domains ?? []) {
+      kgGraph.nodes.push({
+        id: `business:${domain.id}`,
+        name: domain.name,
+        type: "domain",
+        summary: domain.summary,
+        tags: ["business"],
+      })
     }
   }
+
+  const kgIndex = new KgIndex(kgGraph, serviceFilter ?? "all")
+  const wikiIndex = new WikiIndex({ entries: wikiEntries })
+
   const adjacency = new Map<string, Set<string>>()
   for (const edge of edges) {
     if (!adjacency.has(edge.source)) adjacency.set(edge.source, new Set())
@@ -534,13 +408,14 @@ function buildSearchIndex(projectRoot: string, serviceFilter: string | null): Se
     adjacency.get(edge.source)!.add(edge.target)
     adjacency.get(edge.target)!.add(edge.source)
   }
-  return { items, itemById, tokenizedDocs, tokenizedDocSets, cjkInvertedIndex, lumo, edges, adjacency, mtimes }
+
+  return { kgIndex, wikiIndex, edges, adjacency, mtimes }
 }
 
 function getOrBuildIndex(projectRoot: string, serviceFilter: string | null): SearchIndexState {
   // Prefer the full ("__all__") index — it contains all services and avoids
-  // rebuilding per-service indexes. Service filtering happens in Lumo search
-  // via predicate, not at index build time.
+  // rebuilding per-service indexes. Service filtering happens in search
+  // via filter options, not at index build time.
   const allMtimes = collectIndexMtimes(projectRoot, null)
   const allCached = searchIndexCache.get("__all__")
   if (allCached && mtimesEqual(allCached.mtimes, allMtimes)) {
@@ -597,6 +472,15 @@ function handleSearch(searchParams: URLSearchParams): ApiResponse {
   const fusion = parseFusion(searchParams.get("fusion"))
   if (isApiResponse(fusion)) return fusion
 
+  const typeFilter = searchParams.get("type") || null
+  const tagFilter = searchParams.get("tag") || null
+
+  const offsetStr = searchParams.get("offset")
+  const offset = offsetStr === null ? 0 : Number.parseInt(offsetStr, 10)
+  if (!Number.isFinite(offset) || offset < 0) {
+    return { statusCode: 400, body: { error: "offset must be >= 0" } }
+  }
+
   const serviceName = searchParams.get("service")
   const serviceErr = validateServiceName(serviceName)
   if (serviceErr) return serviceErr
@@ -604,12 +488,14 @@ function handleSearch(searchParams: URLSearchParams): ApiResponse {
   const projectRoot = resolveProjectRoot()
   const indexState = getOrBuildIndex(projectRoot, serviceName)
 
-  if (indexState.items.length === 0) {
-    return { statusCode: 200, body: { results: [], total: 0, query } }
+  if (indexState.kgIndex.isEmpty() && indexState.wikiIndex.isEmpty()) {
+    return { statusCode: 200, body: { results: [], total: 0, query, facets: {} } }
   }
 
-  const { results, total } = lumoSearch(indexState, query, limit, scope, fusion, serviceName)
-  return { statusCode: 200, body: { results, total, query } }
+  const { results, total, facets } = unifiedSearch(
+    indexState, query, limit, scope, fusion, typeFilter, tagFilter, serviceName, offset,
+  )
+  return { statusCode: 200, body: { results, total, query, limit, offset, hasMore: offset + limit < total, facets } }
 }
 
 export function handleUnifiedSearch(
@@ -640,10 +526,10 @@ export function warmupSearchIndex(projectRoot?: string): void {
   const t0 = Date.now()
   const state = getOrBuildIndex(root, null)
   const tBuild = Date.now() - t0
-  // Trigger V8 JIT on the hot search path (Lumo + CJK + RRF + graph expansion)
-  lumoSearch(state, "warmup test", 5, "all", "rrf")
-  lumoSearch(state, "预热测试", 5, "kg", "rrf")
+  // Trigger V8 JIT on the hot search path (KgIndex + WikiIndex + RRF + graph expansion)
+  unifiedSearch(state, "warmup test", 5, "all", "rrf")
+  unifiedSearch(state, "预热测试", 5, "kg", "rrf")
   console.log(
-    `  Search index warmed: ${state.items.length} items, ${state.edges.length} edges (${tBuild}ms build, ${Date.now() - t0}ms total)`,
+    `  Search index warmed: ${state.kgIndex.docCount()} KG docs, ${state.wikiIndex.docCount()} wiki docs, ${state.edges.length} edges (${tBuild}ms build, ${Date.now() - t0}ms total)`,
   )
 }

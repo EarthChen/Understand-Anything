@@ -84,9 +84,14 @@ export class KgIndex {
       filePath: node.filePath ?? "",
       startLine: node.lineRange?.[0] ?? 0,
       endLine: node.lineRange?.[1] ?? 0,
-      layer: "kg",
+      layer: (node.tags ?? []).includes("business") ? "business"
+        : (node.tags ?? []).includes("domain") ? "domain"
+        : "kg",
     }))
   }
+
+  isEmpty(): boolean { return this.docs.length === 0 }
+  docCount(): number { return this.docs.length }
 
   search(opts: KgSearchOptions): KgSearchResponse {
     const limit = opts.limit ?? 20

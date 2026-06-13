@@ -83,6 +83,9 @@ export class WikiIndex {
     }))
   }
 
+  isEmpty(): boolean { return this.docs.length === 0 }
+  docCount(): number { return this.docs.length }
+
   search(opts: WikiSearchOptions): WikiSearchResponse {
     const limit = opts.limit ?? 20
     const offset = opts.offset ?? 0
