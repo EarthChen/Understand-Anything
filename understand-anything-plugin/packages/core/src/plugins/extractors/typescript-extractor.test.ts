@@ -108,3 +108,58 @@ describe("TypeScriptExtractor type alias extraction", () => {
     expect(result.exports.some((e) => e.name === "Callback")).toBe(true);
   });
 });
+
+describe("TypeScriptExtractor decorator extraction", () => {
+  it("extracts class decorators", () => {
+    const code = `
+@Component({ selector: 'app-root' })
+class App {}
+`;
+    const root = parse(code);
+    const result = extractor.extractStructure(root);
+    expect(result.classes[0].annotations).toBeDefined();
+    expect(result.classes[0].annotations![0].name).toBe("Component");
+    expect(result.classes[0].annotations![0].arguments).toEqual({ selector: "app-root" });
+  });
+
+  it("extracts method decorators", () => {
+    const code = `
+class Controller {
+  @Get('/api')
+  handle() {}
+}`;
+    const root = parse(code);
+    const result = extractor.extractStructure(root);
+    expect(result.classes[0].methods).toContain("handle");
+  });
+});
+
+describe("TypeScriptExtractor heritage extraction", () => {
+  it("extracts extends", () => {
+    const code = `class AdminService extends BaseService { }`;
+    const root = parse(code);
+    const result = extractor.extractStructure(root);
+    expect(result.classes[0].superclass).toBe("BaseService");
+  });
+
+  it("extracts implements", () => {
+    const code = `class MyService implements Service, Serializable { }`;
+    const root = parse(code);
+    const result = extractor.extractStructure(root);
+    expect(result.classes[0].interfaces).toEqual(expect.arrayContaining(["Service", "Serializable"]));
+  });
+});
+
+describe("TypeScriptExtractor typed properties", () => {
+  it("extracts typed class fields", () => {
+    const code = `
+class User {
+  name: string;
+  age: number;
+}`;
+    const root = parse(code);
+    const result = extractor.extractStructure(root);
+    expect(result.classes[0].typedProperties).toBeDefined();
+    expect(result.classes[0].typedProperties!.map((p) => p.name)).toEqual(expect.arrayContaining(["name", "age"]));
+  });
+});

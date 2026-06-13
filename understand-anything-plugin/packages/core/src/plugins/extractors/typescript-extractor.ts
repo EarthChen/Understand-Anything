@@ -1,4 +1,4 @@
-import type { StructuralAnalysis, CallGraphEntry } from "../../types.js";
+import type { StructuralAnalysis, CallGraphEntry, AnnotationInfo, PropertyInfo } from "../../types.js";
 import type { LanguageExtractor, TreeSitterNode } from "./types.js";
 import { getStringValue, findChild, findChildren } from "./base-extractor.js";
 
@@ -95,6 +95,85 @@ function extractImportSpecifiers(
   }
 
   return specifiers;
+}
+
+/**
+ * Extract decorators from a node's children.
+ *
+ * TypeScript decorators appear as `decorator` child nodes before
+ * class/method/property declarations. Each decorator may be a simple
+ * identifier (`@Injectable`) or a call expression with arguments
+ * (`@Component({ selector: 'app' })`).
+ */
+function extractDecorators(node: TreeSitterNode): AnnotationInfo[] {
+  const annotations: AnnotationInfo[] = [];
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child || child.type !== "decorator") continue;
+
+    // Find the name: could be identifier, member_expression, or inside call_expression
+    let name: string | undefined;
+    let argsNode: TreeSitterNode | null = null;
+
+    const callExpr = findChild(child, "call_expression");
+    if (callExpr) {
+      // @Decorator(args) form
+      const funcNode = callExpr.childForFieldName("function");
+      if (funcNode) {
+        name = funcNode.text;
+      }
+      argsNode = callExpr.childForFieldName("arguments");
+    } else {
+      // @Decorator form (no args)
+      const ident =
+        findChild(child, "identifier") ??
+        findChild(child, "member_expression");
+      if (ident) {
+        name = ident.text;
+      }
+    }
+
+    if (!name) continue;
+
+    const info: AnnotationInfo = { name };
+
+    if (argsNode) {
+      const args: Record<string, string> = {};
+      for (let j = 0; j < argsNode.childCount; j++) {
+        const arg = argsNode.child(j);
+        if (!arg) continue;
+        if (arg.type === "pair") {
+          // { key: value } pairs directly in arguments
+          const key = arg.childForFieldName("key");
+          const value = arg.childForFieldName("value");
+          if (key && value) {
+            args[key.text] = value.text.replace(/^["']|["']$/g, "");
+          }
+        } else if (arg.type === "object") {
+          // Object literal: iterate children for pair nodes
+          for (let k = 0; k < arg.childCount; k++) {
+            const pair = arg.child(k);
+            if (pair && pair.type === "pair") {
+              const key = pair.childForFieldName("key");
+              const value = pair.childForFieldName("value");
+              if (key && value) {
+                args[key.text] = value.text.replace(/^["']|["']$/g, "");
+              }
+            }
+          }
+        } else if (arg.type !== "(" && arg.type !== ")" && arg.type !== ",") {
+          // Single positional argument
+          args["value"] = arg.text.replace(/^["']|["']$/g, "");
+        }
+      }
+      if (Object.keys(args).length > 0) {
+        info.arguments = args;
+      }
+    }
+
+    annotations.push(info);
+  }
+  return annotations;
 }
 
 /**
@@ -287,6 +366,7 @@ export class TypeScriptExtractor implements LanguageExtractor {
 
     const methods: string[] = [];
     const properties: string[] = [];
+    const typedProperties: PropertyInfo[] = [];
 
     const classBody = node.children.find(
       (c) => c.type === "class_body",
@@ -308,12 +388,65 @@ export class TypeScriptExtractor implements LanguageExtractor {
           const propName = member.children.find(
             (c) => c.type === "property_identifier",
           );
-          if (propName) properties.push(propName.text);
+          if (propName) {
+            properties.push(propName.text);
+            // Extract type annotation for typed properties
+            const typeAnnotation = member.children.find(
+              (c) => c.type === "type_annotation",
+            );
+            if (typeAnnotation) {
+              const typeText = typeAnnotation.text;
+              const typeName = typeText.startsWith(":")
+                ? typeText.slice(1).trim()
+                : typeText;
+              typedProperties.push({
+                name: propName.text,
+                type: typeName,
+              });
+            }
+          }
         }
       }
     }
 
-    classes.push({
+    // Extract decorators
+    const annotations = extractDecorators(node);
+
+    // Extract heritage (extends / implements)
+    let superclass: string | undefined;
+    let interfaces: string[] | undefined;
+
+    const classHeritage = node.children.find(
+      (c) => c.type === "class_heritage",
+    );
+    if (classHeritage) {
+      for (let i = 0; i < classHeritage.childCount; i++) {
+        const child = classHeritage.child(i);
+        if (!child) continue;
+        if (child.type === "extends_clause") {
+          const typeNode =
+            findChild(child, "type_identifier") ??
+            findChild(child, "identifier") ??
+            findChild(child, "generic_type");
+          if (typeNode) superclass = typeNode.text;
+        } else if (child.type === "implements_clause") {
+          const ifaces: string[] = [];
+          for (let j = 0; j < child.childCount; j++) {
+            const typeChild = child.child(j);
+            if (
+              typeChild &&
+              (typeChild.type === "type_identifier" ||
+                typeChild.type === "generic_type")
+            ) {
+              ifaces.push(typeChild.text);
+            }
+          }
+          if (ifaces.length > 0) interfaces = ifaces;
+        }
+      }
+    }
+
+    const classEntry: StructuralAnalysis["classes"][0] = {
       name: nameNode.text,
       lineRange: [
         node.startPosition.row + 1,
@@ -322,7 +455,12 @@ export class TypeScriptExtractor implements LanguageExtractor {
       methods,
       properties,
       kind: "class",
-    });
+    };
+    if (annotations.length > 0) classEntry.annotations = annotations;
+    if (superclass) classEntry.superclass = superclass;
+    if (interfaces) classEntry.interfaces = interfaces;
+    if (typedProperties.length > 0) classEntry.typedProperties = typedProperties;
+    classes.push(classEntry);
   }
 
   private extractVariableDeclarations(
