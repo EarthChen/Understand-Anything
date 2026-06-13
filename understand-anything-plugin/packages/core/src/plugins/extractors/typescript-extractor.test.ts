@@ -205,3 +205,39 @@ class User {
     expect(result.classes[0].typedProperties!.map((p) => p.name)).toEqual(expect.arrayContaining(["name", "age"]));
   });
 });
+
+describe("TypeScriptExtractor call graph extraction", () => {
+  it("extracts function calls", () => {
+    const code = `
+function caller() {
+  helper();
+}`;
+    const root = parse(code);
+    const result = extractor.extractCallGraph(root);
+    expect(result.length).toBeGreaterThan(0);
+    expect(result[0].caller).toBe("caller");
+    expect(result[0].callee).toBe("helper");
+  });
+
+  it("extracts method calls", () => {
+    const code = `
+class Service {
+  process() {
+    this.validate();
+  }
+}`;
+    const root = parse(code);
+    const result = extractor.extractCallGraph(root);
+    expect(result.some((e) => e.caller === "process" && e.callee.includes("validate"))).toBe(true);
+  });
+
+  it("extracts new expression calls", () => {
+    const code = `
+function create() {
+  return new UserService();
+}`;
+    const root = parse(code);
+    const result = extractor.extractCallGraph(root);
+    expect(result.some((e) => e.callee.includes("UserService"))).toBe(true);
+  });
+});

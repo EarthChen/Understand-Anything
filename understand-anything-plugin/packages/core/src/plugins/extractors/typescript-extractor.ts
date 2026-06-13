@@ -246,8 +246,8 @@ export class TypeScriptExtractor implements LanguageExtractor {
         }
       }
 
-      if (node.type === "call_expression") {
-        const callee = node.childForFieldName("function");
+      if (node.type === "call_expression" || node.type === "new_expression") {
+        const callee = node.childForFieldName("constructor") ?? node.childForFieldName("function");
         if (callee && functionStack.length > 0) {
           entries.push({
             caller: functionStack[functionStack.length - 1],
