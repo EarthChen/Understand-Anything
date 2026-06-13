@@ -9,8 +9,11 @@
  * Usage:
  *   node extract-structure.mjs <input.json> <output.json>
  *
- * Input JSON:
- *   { projectRoot, batchFiles: [{path, language, sizeLines, fileCategory}], batchImportData }
+ * Input JSON (supports both per-batch and full-mode formats):
+ *   Per-batch:  { projectRoot, batchFiles: [{path, language, sizeLines, fileCategory}], batchImportData }
+ *   Full-mode:  { projectRoot, fileList:   [{path, language, sizeLines, fileCategory}], importData }
+ *
+ * In full-mode, files are processed in chunks of 500 to manage memory.
  *
  * Output JSON:
  *   { scriptCompleted, filesAnalyzed, filesSkipped, results: [...] }
@@ -56,10 +59,14 @@ async function main() {
   // Read input
   const inputRaw = readFileSync(inputPath, 'utf-8');
   const input = JSON.parse(inputRaw);
-  const { projectRoot, batchFiles, batchImportData } = input;
+  const { projectRoot } = input;
 
-  if (!projectRoot || !Array.isArray(batchFiles)) {
-    throw new Error('Invalid input: must contain projectRoot and batchFiles array');
+  // Support both old (per-batch) and new (full-mode) input formats
+  const files = input.fileList || input.batchFiles;
+  const importData = input.importData || input.batchImportData;
+
+  if (!projectRoot || !Array.isArray(files)) {
+    throw new Error('Invalid input: must contain projectRoot and batchFiles/fileList array');
   }
 
   // Create tree-sitter plugin with all configs that have WASM grammars
@@ -72,10 +79,51 @@ async function main() {
   registry.register(tsPlugin);
   registerAllParsers(registry);
 
+  // Chunked processing for full-mode to manage memory
+  const CHUNK_SIZE = 500;
+  const isFullMode = !!input.fileList;
+
+  let allResults = [];
+  let allFilesSkipped = [];
+
+  if (isFullMode && files.length > CHUNK_SIZE) {
+    for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+      const chunk = files.slice(i, i + CHUNK_SIZE);
+      const { results, filesSkipped } = processFiles(chunk, projectRoot, registry, importData);
+      allResults.push(...results);
+      allFilesSkipped.push(...filesSkipped);
+    }
+  } else {
+    const processed = processFiles(files, projectRoot, registry, importData);
+    allResults = processed.results;
+    allFilesSkipped = processed.filesSkipped;
+  }
+
+  // Write output
+  const output = buildOutput(allResults, allFilesSkipped);
+
+  writeFileSync(outputPath, JSON.stringify(output, null, 2), 'utf-8');
+
+  if (!existsSync(outputPath)) {
+    throw new Error(`output file missing after write: ${outputPath}`);
+  }
+
+  // Hard abort when any file was skipped — weak output is not acceptable
+  if (allFilesSkipped.length > 0) {
+    process.stderr.write(`extract-structure.mjs: ${allFilesSkipped.length} file(s) skipped, aborting\n`);
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Process a batch of files through the registry. Extracted from main() to
+// support both per-batch mode and chunked full-mode processing.
+// ---------------------------------------------------------------------------
+function processFiles(files, projectRoot, registry, importData) {
   const results = [];
   const filesSkipped = [];
 
-  for (const file of batchFiles) {
+  for (const file of files) {
     const absolutePath = join(projectRoot, file.path);
 
     // Read file content
@@ -120,24 +168,11 @@ async function main() {
     }
 
     // Build result object
-    const result = buildResult(file, totalLines, nonEmptyLines, analysis, callGraph, batchImportData);
+    const result = buildResult(file, totalLines, nonEmptyLines, analysis, callGraph, importData);
     results.push(result);
   }
 
-  // Write output
-  const output = buildOutput(results, filesSkipped);
-
-  writeFileSync(outputPath, JSON.stringify(output, null, 2), 'utf-8');
-
-  if (!existsSync(outputPath)) {
-    throw new Error(`output file missing after write: ${outputPath}`);
-  }
-
-  // Hard abort when any file was skipped — weak output is not acceptable
-  if (filesSkipped.length > 0) {
-    process.stderr.write(`extract-structure.mjs: ${filesSkipped.length} file(s) skipped, aborting\n`);
-    process.exit(1);
-  }
+  return { results, filesSkipped };
 }
 
 // ---------------------------------------------------------------------------
