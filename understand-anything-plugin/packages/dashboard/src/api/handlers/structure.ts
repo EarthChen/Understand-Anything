@@ -7,6 +7,7 @@ import {
   resolveServiceBasePath,
 } from "../service-resolver"
 import { readSource } from "../../../source-reader"
+import { StructureIndex } from "./structure-index"
 
 interface FunctionEntry {
   name: string
@@ -47,7 +48,13 @@ interface StructureCache {
   mtime: number
 }
 
+interface StructureIndexCache {
+  index: StructureIndex
+  mtime: number
+}
+
 const cache = new Map<string, StructureCache>()
+const indexCache = new Map<string, StructureIndexCache>()
 
 function loadStructuralAnalysis(serviceName: string): StructuralAnalysis | null {
   const filePath = resolveServiceDataPath(
@@ -123,69 +130,43 @@ function handleFile(service: string, filePath: string): ApiResponse {
   }
 }
 
-interface TypeRef {
-  name: string
-  filePath: string
-  lineRange?: [number, number]
-}
-
-interface SearchResult {
-  filePath: string
-  name: string
-  kind: string
-  lineRange: [number, number]
-  match: Record<string, string>
-  typeRef?: TypeRef
-}
-
-function buildClassIndex(data: StructuralAnalysis): Map<string, TypeRef> {
-  const index = new Map<string, TypeRef>()
-  for (const [fp, fileData] of Object.entries(data)) {
-    const classes = Array.isArray(fileData.classes) ? fileData.classes : []
-    for (const cls of classes) {
-      if (!index.has(cls.name)) {
-        index.set(cls.name, {
-          name: cls.name,
-          filePath: fp,
-          lineRange: [cls.startLine, cls.endLine],
-        })
-      }
-    }
-  }
-  return index
-}
-
-interface ClassIndexCache {
-  index: Map<string, TypeRef>
-  mtime: number
-}
-
-const classIndexCache = new Map<string, ClassIndexCache>()
-
-function getClassIndex(service: string, data: StructuralAnalysis): Map<string, TypeRef> {
-  const cached = cache.get(service)
-  const mtime = cached?.mtime ?? 0
-  const idxCached = classIndexCache.get(service)
-  if (idxCached && idxCached.mtime === mtime) return idxCached.index
-
-  const index = buildClassIndex(data)
-  classIndexCache.set(service, { index, mtime })
-  return index
-}
-
-function stripGenericWrapper(typeName: string): string {
-  const match = typeName.match(/^(?:List|Set|Map|Collection|Optional|Iterable)<(.+)>$/)
-  if (match) {
-    const inner = match[1].includes(",") ? match[1].split(",")[1].trim() : match[1].trim()
-    return stripGenericWrapper(inner)
-  }
-  return typeName
-}
 
 function handleSearch(
   service: string,
   searchParams: URLSearchParams,
 ): ApiResponse {
+  const q = searchParams.get("q")?.trim() || undefined
+  const annotation = searchParams.get("annotation") || undefined
+  const paramType = searchParams.get("paramType") || undefined
+  const returnType = searchParams.get("returnType") || undefined
+  const iface = searchParams.get("interface") || undefined
+  const propertyType = searchParams.get("propertyType") || undefined
+  const symbol = searchParams.get("symbol") || undefined
+  const pathPattern = searchParams.get("pathPattern") || undefined
+  const sectionKey = searchParams.get("sectionKey") || undefined
+  const sectionValue = searchParams.get("sectionValue") || undefined
+
+  const limitStr = searchParams.get("limit")
+  const limit = limitStr === null ? 50 : Number.parseInt(limitStr, 10)
+  if (!Number.isFinite(limit) || limit < 1 || limit > 500) {
+    return { statusCode: 400, body: { error: "limit must be between 1 and 500" } }
+  }
+
+  const offsetStr = searchParams.get("offset")
+  const offset = offsetStr === null ? 0 : Number.parseInt(offsetStr, 10)
+  if (!Number.isFinite(offset) || offset < 0) {
+    return { statusCode: 400, body: { error: "offset must be >= 0" } }
+  }
+
+  if (!q && !annotation && !paramType && !returnType && !iface && !propertyType && !symbol && !sectionKey && !sectionValue) {
+    return {
+      statusCode: 400,
+      body: {
+        error: "At least one search filter required: q, annotation, paramType, returnType, interface, propertyType, symbol, sectionKey, sectionValue",
+      },
+    }
+  }
+
   const data = loadStructuralAnalysis(service)
   if (!data) {
     return {
@@ -194,181 +175,32 @@ function handleSearch(
     }
   }
 
-  const annotation = searchParams.get("annotation")
-  const paramType = searchParams.get("paramType")
-  const returnType = searchParams.get("returnType")
-  const iface = searchParams.get("interface")
-  const propertyType = searchParams.get("propertyType")
-  const symbol = searchParams.get("symbol")
-  const pathPattern = searchParams.get("pathPattern")
-  const limitStr = searchParams.get("limit")
-  const limit = limitStr === null ? 50 : Number.parseInt(limitStr, 10)
-  if (!Number.isFinite(limit) || limit < 1 || limit > 500) {
-    return { statusCode: 400, body: { error: "limit must be between 1 and 500" } }
+  const filePath = resolveServiceDataPath(service, "intermediate/extraction/structural-analysis.json")
+  const mtime = filePath ? fs.statSync(filePath).mtimeMs : 0
+  const cachedIndex = indexCache.get(service)
+  let index: StructureIndex
+  if (cachedIndex && cachedIndex.mtime === mtime) {
+    index = cachedIndex.index
+  } else {
+    index = new StructureIndex(service, data)
+    indexCache.set(service, { index, mtime })
   }
-
-  if (!annotation && !paramType && !returnType && !iface && !propertyType && !symbol) {
-    return {
-      statusCode: 400,
-      body: {
-        error: "At least one search filter required: annotation, paramType, returnType, interface, propertyType, symbol",
-      },
-    }
-  }
-
-  const results: SearchResult[] = []
-  const query: Record<string, string> = {}
-  if (annotation) query.annotation = annotation
-  if (paramType) query.paramType = paramType
-  if (returnType) query.returnType = returnType
-  if (iface) query.interface = iface
-  if (propertyType) query.propertyType = propertyType
-  if (symbol) query.symbol = symbol
-
-  for (const [filePath, fileData] of Object.entries(data)) {
-    if (pathPattern && !filePath.toLowerCase().includes(pathPattern.toLowerCase())) {
-      continue
-    }
-
-    const classes = Array.isArray(fileData.classes) ? fileData.classes : []
-    const functions = Array.isArray(fileData.functions) ? fileData.functions : []
-
-    if (annotation) {
-      for (const cls of classes) {
-        if (cls.annotations?.some((a) => a.name === annotation)) {
-          results.push({
-            filePath,
-            name: cls.name,
-            kind: cls.kind ?? "class",
-            lineRange: [cls.startLine, cls.endLine],
-    match: { annotation },
-          })
-        }
-      }
-      for (const fn of functions) {
-        if (fn.annotations?.some((a) => a.name === annotation)) {
-          results.push({
-            filePath,
-            name: fn.name,
-            kind: "function",
-            lineRange: [fn.startLine, fn.endLine],
-            match: { annotation },
-          })
-        }
-      }
-    }
-
-    if (paramType) {
-      for (const fn of functions) {
-        if (fn.params?.some((p) => p.type === paramType)) {
-          results.push({
-            filePath,
-            name: fn.name,
-            kind: "function",
-            lineRange: [fn.startLine, fn.endLine],
-            match: { paramType },
-          })
-        }
-      }
-    }
-
-    if (returnType) {
-      for (const fn of functions) {
-        if (fn.returnType === returnType) {
-          results.push({
-            filePath,
-            name: fn.name,
-            kind: "function",
-            lineRange: [fn.startLine, fn.endLine],
-            match: { returnType },
-          })
-        }
-      }
-    }
-
-    if (iface) {
-      for (const cls of classes) {
-        if (cls.interfaces?.includes(iface)) {
-          results.push({
-            filePath,
-            name: cls.name,
-            kind: cls.kind ?? "class",
-            lineRange: [cls.startLine, cls.endLine],
-    match: { interface: iface },
-          })
-        }
-      }
-    }
-
-    if (propertyType) {
-      for (const cls of classes) {
-        if (cls.typedProperties?.some((p) => p.type === propertyType)) {
-          results.push({
-            filePath,
-            name: cls.name,
-            kind: cls.kind ?? "class",
-            lineRange: [cls.startLine, cls.endLine],
-    match: { propertyType },
-          })
-        }
-      }
-    }
-
-    if (symbol) {
-      const symbolLower = symbol.toLowerCase()
-      for (const cls of classes) {
-        if (cls.name.toLowerCase().includes(symbolLower)) {
-          results.push({
-            filePath,
-            name: cls.name,
-            kind: cls.kind ?? "class",
-            lineRange: [cls.startLine, cls.endLine],
-    match: { symbol: cls.name },
-          })
-        }
-      }
-      for (const fn of functions) {
-        if (fn.name.toLowerCase().includes(symbolLower)) {
-          results.push({
-            filePath,
-            name: fn.name,
-            kind: "function",
-            lineRange: [fn.startLine, fn.endLine],
-            match: { symbol: fn.name },
-          })
-        }
-      }
-    }
-  }
-
-  const seen = new Set<string>()
-  const deduped = results.filter((r) => {
-    const key = `${r.filePath}::${r.name}::${r.kind}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
+  const result = index.search({
+    q, annotation, paramType, returnType, iface, propertyType,
+    symbol, pathPattern, sectionKey, sectionValue, limit, offset,
   })
 
-  const resolveTypes = searchParams.get("resolveTypes") !== "false"
-  if (resolveTypes && (paramType || returnType || propertyType || iface)) {
-    const classIndex = getClassIndex(service, data)
-    for (const r of deduped) {
-      const typeToResolve =
-        r.match.paramType || r.match.returnType || r.match.propertyType || r.match.interface
-      if (!typeToResolve) continue
-      const coreName = stripGenericWrapper(typeToResolve)
-      const ref = classIndex.get(coreName)
-      if (ref && ref.filePath !== r.filePath) {
-        r.typeRef = ref
-      }
-    }
-  }
-
-  const total = deduped.length
-  const hasMore = total > limit
   return {
     statusCode: 200,
-    body: { results: deduped.slice(0, limit), total, hasMore, query },
+    body: {
+      results: result.results,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
+      hasMore: result.hasMore,
+      facets: result.facets,
+      query: { q, annotation, paramType, returnType },
+    },
   }
 }
 
@@ -680,4 +512,15 @@ export async function handleStructureRequest(
   }
 
   return null
+}
+
+export async function handleStructureSearchRequest(
+  req: ApiRequest,
+  _ctx: ApiContext,
+): Promise<ApiResponse | null> {
+  if (req.pathname !== "/api/structure/search") return null
+  const service = req.searchParams.get("service")
+  const err = validateServiceNameRequired(service)
+  if (err) return err
+  return handleSearch(service!, req.searchParams)
 }

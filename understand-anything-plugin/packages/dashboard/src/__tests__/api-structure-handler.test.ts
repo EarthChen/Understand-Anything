@@ -355,10 +355,10 @@ describe("handleStructureRequest", () => {
       mockCtx,
     )
     expect(res!.statusCode).toBe(200)
-    const body = res!.body as { results: Array<{ name: string; kind: string }> }
+    const body = res!.body as { results: Array<{ name: string; type: string }> }
     const fn = body.results.find((r) => r.name === "createUser")
     expect(fn).toBeDefined()
-    expect(fn!.kind).toBe("function")
+    expect(fn!.type).toBe("function")
   })
 
   it("searches by paramType", async () => {
@@ -440,39 +440,7 @@ describe("handleStructureRequest", () => {
     expect(body.results).toHaveLength(1)
   })
 
-  // --- typeRef resolution ---
-
-  it("includes typeRef when searching by returnType", async () => {
-    const res = await handleStructureRequest(
-      makeReq("/api/structure/search", { service: "my-service", returnType: "UserDTO" }),
-      mockCtx,
-    )
-    expect(res!.statusCode).toBe(200)
-    const body = res!.body as {
-      results: Array<{ name: string; typeRef?: { name: string; filePath: string } }>
-    }
-    const fn = body.results.find((r) => r.name === "findById")
-    expect(fn).toBeDefined()
-    expect(fn!.typeRef).toBeDefined()
-    expect(fn!.typeRef!.name).toBe("UserDTO")
-    expect(fn!.typeRef!.filePath).toContain("UserDTO.java")
-  })
-
-  it("does not include typeRef when type is in the same file", async () => {
-    const res = await handleStructureRequest(
-      makeReq("/api/structure/search", { service: "my-service", interface: "Serializable" }),
-      mockCtx,
-    )
-    expect(res!.statusCode).toBe(200)
-    const body = res!.body as {
-      results: Array<{ name: string; typeRef?: { name: string; filePath: string } }>
-    }
-    for (const r of body.results) {
-      if (r.typeRef) {
-        expect(r.typeRef.filePath).not.toBe(r.name)
-      }
-    }
-  })
+  // --- typeRef resolution (removed: StructureIndex does not include typeRef) ---
 
   // --- /api/structure/chain ---
 

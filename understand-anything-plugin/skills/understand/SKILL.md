@@ -430,6 +430,108 @@ done
 
 If any extraction script exits non-zero or any output file is missing/empty or `scriptCompleted` is false, report the error and abort Phase 2. Do NOT proceed with agent dispatch without extraction results.
 
+#### Step 0c.5 — Run rule engine (deterministic annotation→edge mapping)
+
+Run the rule engine on each batch's extraction results to produce `ruleEngineEdges` for the file-analyzer agents. This is a deterministic step — do NOT delegate it to LLM agents.
+
+The rule engine maps annotations (e.g., `@Autowired`, `@DubboService`, `@FeignClient`) to graph edges (`injects`, `provides_rpc`, `consumes_rpc`) using built-in framework rules. It also expands meta-annotations and resolves cross-file call graphs.
+
+**Step 0c.5a — Run rule engine for all batches:**
+
+For each batch that has extraction results, run the rule engine CLI. **Rule engine failure is non-fatal** — file-analyzer can still produce edges from LLM semantic analysis.
+
+```bash
+RULE_ENGINE_SUCCESS=0
+RULE_ENGINE_FAILED=0
+
+for batchIndex in $(python3 -c "import json; print(' '.join(str(b['batchIndex']) for b in json.load(open('$PROJECT_ROOT/.understand-anything/intermediate/batches.json'))['batches']))"); do
+  EXTRACT_FILE="$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-$batchIndex.json"
+  RULE_OUTPUT="$PROJECT_ROOT/.understand-anything/tmp/ua-rule-engine-results-$batchIndex.json"
+
+  if [ ! -f "$EXTRACT_FILE" ]; then
+    echo "Skipping batch $batchIndex: extraction results not found"
+    continue
+  fi
+
+  # Validate extraction results have expected structure
+  node -e "
+    const d = JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));
+    if (!d.results && !d.extractionResults) { console.error('FATAL: extraction results missing results array'); process.exit(1); }
+    const results = d.results || d.extractionResults;
+    if (!Array.isArray(results)) { console.error('FATAL: results is not an array'); process.exit(1); }
+  " "$EXTRACT_FILE" || {
+    echo "WARNING: Batch $batchIndex extraction results invalid, skipping rule engine" >&2
+    echo '{"edges":[],"unresolved":[]}' > "$RULE_OUTPUT"
+    RULE_ENGINE_FAILED=$((RULE_ENGINE_FAILED + 1))
+    continue
+  }
+
+  # Run rule engine
+  node <PLUGIN_ROOT>/packages/core/dist/analyzer/rule-engine-postprocess.mjs \
+    "$EXTRACT_FILE" \
+    "$RULE_OUTPUT" \
+    --mode=extraction-input
+
+  if [ $? -ne 0 ]; then
+    echo "WARNING: Rule engine failed for batch $batchIndex, file-analyzer will proceed without ruleEngineEdges" >&2
+    echo '{"edges":[],"unresolved":[]}' > "$RULE_OUTPUT"
+    RULE_ENGINE_FAILED=$((RULE_ENGINE_FAILED + 1))
+  else
+    # Validate output structure
+    node -e "
+      const d = JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));
+      if (!Array.isArray(d.edges)) { console.error('FATAL: rule engine output missing edges array'); process.exit(1); }
+    " "$RULE_OUTPUT" || {
+      echo "WARNING: Batch $batchIndex rule engine output invalid, using empty edges" >&2
+      echo '{"edges":[],"unresolved":[]}' > "$RULE_OUTPUT"
+      RULE_ENGINE_FAILED=$((RULE_ENGINE_FAILED + 1))
+      continue
+    }
+    RULE_ENGINE_SUCCESS=$((RULE_ENGINE_SUCCESS + 1))
+  fi
+done
+
+echo "Rule engine: $RULE_ENGINE_SUCCESS succeeded, $RULE_ENGINE_FAILED failed"
+```
+
+**Step 0c.5b — Verify rule engine outputs and compute statistics:**
+
+```bash
+TOTAL_RULE_EDGES=0
+BATCHES_WITH_EDGES=0
+
+for batchIndex in $(python3 -c "import json; print(' '.join(str(b['batchIndex']) for b in json.load(open('$PROJECT_ROOT/.understand-anything/intermediate/batches.json'))['batches']))"); do
+  RULE_OUTPUT="$PROJECT_ROOT/.understand-anything/tmp/ua-rule-engine-results-$batchIndex.json"
+  if [ -f "$RULE_OUTPUT" ]; then
+    STATS=$(node -e "
+      const d = JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));
+      const edges = d.edges || [];
+      console.log(JSON.stringify({ edges: edges.length, unresolved: (d.unresolved || []).length }));
+    " "$RULE_OUTPUT")
+    EDGES_COUNT=$(echo "$STATS" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.edges)")
+    UNRESOLVED_COUNT=$(echo "$STATS" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.unresolved)")
+    echo "  Batch $batchIndex: $EDGES_COUNT edges, $UNRESOLVED_COUNT unresolved"
+    TOTAL_RULE_EDGES=$((TOTAL_RULE_EDGES + EDGES_COUNT))
+    if [ "$EDGES_COUNT" -gt 0 ]; then
+      BATCHES_WITH_EDGES=$((BATCHES_WITH_EDGES + 1))
+    fi
+  fi
+done
+
+echo "Rule engine summary: $TOTAL_RULE_EDGES total edges across $BATCHES_WITH_EDGES batches"
+```
+
+**Step 0c.5c — Sanity check (warn if suspiciously low):**
+
+```bash
+TOTAL_BATCHES=$(python3 -c "import json; print(len(json.load(open('$PROJECT_ROOT/.understand-anything/intermediate/batches.json'))['batches']))")
+if [ "$BATCHES_WITH_EDGES" -eq 0 ] && [ "$TOTAL_BATCHES" -gt 0 ]; then
+  echo "WARNING: Rule engine produced 0 edges across all batches. This is expected for projects without annotations (Python, Go, JS), but suspicious for Java/Kotlin/Spring projects." >&2
+fi
+```
+
+Report: `Rule engine complete. $TOTAL_RULE_EDGES annotation edges for $BATCHES_WITH_EDGES/$TOTAL_BATCHES batches.`
+
 Report: `[Phase 2/7] Structural extraction complete for <totalBatches> batches. Computing dispatch plan...`
 
 #### Step 0d — Compute dispatch plan (fusion groups + quality gate)
@@ -491,6 +593,7 @@ For EACH batch in the fusion group, include a batch section:
 > ---
 > ### Batch <batchIndex>/<totalBatches>
 > **Extraction results (already generated — do NOT re-run extract-structure.mjs):** `$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json`
+> **Rule engine edges (already generated — do NOT re-run rule engine):** Read from `$PROJECT_ROOT/.understand-anything/tmp/ua-rule-engine-results-<batchIndex>.json`
 > **Output:** write to `$PROJECT_ROOT/.understand-anything/intermediate/batch-<batchIndex>.json` (single-file mode) OR `batch-<batchIndex>-part-<k>.json` (split mode, per Step B of your output protocol).
 >
 > Pre-resolved import data for this batch (use directly — do NOT re-resolve imports from source):
@@ -501,6 +604,11 @@ For EACH batch in the fusion group, include a batch section:
 > Cross-batch neighbors with their exported symbols (confidence boost for cross-batch edges):
 > ```json
 > <neighborMap JSON from batches.json[i].neighborMap>
+> ```
+>
+> Rule engine edges for this batch (annotation→edge mapping, meta-annotation resolution, call graph resolution):
+> ```json
+> <Read from $PROJECT_ROOT/.understand-anything/tmp/ua-rule-engine-results-<batchIndex>.json — include the full "edges" and "unresolved" arrays>
 > ```
 >
 > Files to analyze in this batch (every entry MUST be passed through to `batchFiles` with all four fields — `path`, `language`, `sizeLines`, `fileCategory`):

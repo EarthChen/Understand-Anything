@@ -15,6 +15,10 @@ export type { LanguageExtractor } from "./plugins/extractors/types.js";
 export { builtinExtractors } from "./plugins/extractors/index.js";
 export { GraphBuilder } from "./analyzer/graph-builder.js";
 export {
+  traverseNeighbors,
+  type TraversalResult,
+} from "./analyzer/graph-traversal.js";
+export {
   buildFileAnalysisPrompt,
   buildProjectSummaryPrompt,
   parseFileAnalysisResponse,

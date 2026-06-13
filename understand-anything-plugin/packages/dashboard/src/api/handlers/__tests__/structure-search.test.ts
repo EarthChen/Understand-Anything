@@ -1,0 +1,69 @@
+import { describe, it, expect } from "vitest"
+import { handleStructureSearchRequest } from "../structure"
+import type { ApiRequest, ApiContext } from "../types"
+
+function makeRequest(params: Record<string, string>): ApiRequest {
+  const searchParams = new URLSearchParams(params)
+  return {
+    pathname: "/api/structure/search",
+    searchParams,
+    method: "GET",
+    url: `/api/structure/search?${searchParams.toString()}`,
+    headers: {},
+    body: undefined,
+  } as ApiRequest
+}
+
+const mockCtx = {} as ApiContext
+
+describe("structure search handler", () => {
+  it("returns 400 when no q and no filter", async () => {
+    const req = makeRequest({ service: "test-service" })
+    const res = await handleStructureSearchRequest(req, mockCtx)
+    expect(res?.statusCode).toBe(400)
+  })
+
+  it("accepts q parameter for fuzzy search", async () => {
+    const req = makeRequest({ service: "test-service", q: "getUser" })
+    const res = await handleStructureSearchRequest(req, mockCtx)
+    expect(res?.statusCode).not.toBe(400)
+  })
+
+  it("accepts sectionKey parameter", async () => {
+    const req = makeRequest({ service: "test-service", sectionKey: "spring.datasource.url" })
+    const res = await handleStructureSearchRequest(req, mockCtx)
+    expect(res?.statusCode).not.toBe(400)
+  })
+
+  it("accepts offset parameter", async () => {
+    const req = makeRequest({ service: "test-service", q: "getUser", offset: "0", limit: "10" })
+    const res = await handleStructureSearchRequest(req, mockCtx)
+    expect(res?.statusCode).not.toBe(400)
+  })
+
+  it("returns 400 for negative offset", async () => {
+    const req = makeRequest({ service: "test-service", q: "getUser", offset: "-1" })
+    const res = await handleStructureSearchRequest(req, mockCtx)
+    expect(res?.statusCode).toBe(400)
+  })
+
+  it("returns 400 for limit out of range", async () => {
+    const req = makeRequest({ service: "test-service", q: "getUser", limit: "999" })
+    const res = await handleStructureSearchRequest(req, mockCtx)
+    expect(res?.statusCode).toBe(400)
+  })
+
+  it("ignores requests for other paths", async () => {
+    const searchParams = new URLSearchParams({ service: "test-service", q: "foo" })
+    const req = {
+      pathname: "/api/structure/files",
+      searchParams,
+      method: "GET",
+      url: "/api/structure/files",
+      headers: {},
+      body: undefined,
+    } as ApiRequest
+    const res = await handleStructureSearchRequest(req, mockCtx)
+    expect(res).toBeNull()
+  })
+})

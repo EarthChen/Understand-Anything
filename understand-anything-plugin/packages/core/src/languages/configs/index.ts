@@ -42,6 +42,7 @@ import { powershellConfig } from "./powershell.js";
 import { batchConfig } from "./batch.js";
 import { jenkinsfileConfig } from "./jenkinsfile.js";
 import { plaintextConfig } from "./plaintext.js";
+import { propertiesConfig } from "./properties.js";
 
 export const builtinLanguageConfigs: LanguageConfig[] = [
   // Code languages
@@ -88,6 +89,7 @@ export const builtinLanguageConfigs: LanguageConfig[] = [
   batchConfig,
   jenkinsfileConfig,
   plaintextConfig,
+  propertiesConfig,
 ];
 
 export {
@@ -135,4 +137,5 @@ export {
   batchConfig,
   jenkinsfileConfig,
   plaintextConfig,
+  propertiesConfig,
 };

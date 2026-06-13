@@ -922,8 +922,8 @@ def _cmd_kg_file_summary(args: argparse.Namespace) -> Any:
                     if edge_type == "calls" and name not in seen_callees:
                         seen_callees.add(name)
                         callees.append(entry)
-        except RuntimeError:
-            pass
+        except RuntimeError as e:
+            sys.stderr.write(f"[ua_query] fetch_neighbors failed: {e}")
 
     imports: list[str] = []
     try:
@@ -936,8 +936,8 @@ def _cmd_kg_file_summary(args: argparse.Namespace) -> Any:
             short = _short_type_name(str(raw))
             if short and short not in imports:
                 imports.append(short)
-    except RuntimeError:
-        pass
+    except RuntimeError as e:
+        sys.stderr.write(f"[ua_query] structure/file fetch failed: {e}")
 
     return {
         "file": args.file,
@@ -1141,26 +1141,48 @@ def _score_node_relevance(node: dict[str, Any], query: str) -> float:
     name = node.get("name", "").lower()
     node_id = node.get("id", "").lower()
     score = 0.0
+
+    # 名称匹配
     if q == name:
         score += 15.0
     elif q in name:
         score += 5.0 + (len(q) / max(len(name), 1))
+
+    # ID 匹配
     if q in node_id:
         score += 2.0
+
+    # 类型加权
     node_type = node.get("type", "")
     type_bonus = {"class": 2, "function": 1.5, "interface": 2, "module": 1, "endpoint": 2, "service": 2.5}.get(node_type, 0)
     score += type_bonus
+
+    # 文件路径和行号
     if node.get("filePath"):
         score += 1.5
     if node.get("lineRange"):
         score += 1.0
 
+    # 实现类加权
     raw_name = node.get("name", "")
     if any(raw_name.endswith(s) for s in _IMPL_SUFFIXES):
         score += 3.0
     elif any(raw_name.endswith(s) for s in _CONFIG_SUFFIXES):
         score -= 2.0
-    return score
+
+    # 新增：标签匹配
+    tags = node.get("tags", [])
+    if tags:
+        tag_text = " ".join(tags).lower()
+        if q in tag_text:
+            score += 4.0
+
+    # 新增：摘要匹配
+    summary = node.get("summary", "").lower()
+    if summary and q in summary:
+        score += 3.0
+
+    return max(score, 0.0)
 
 
 def _extract_code_keywords(flow_name: str) -> list[str]:
@@ -1250,7 +1272,8 @@ def _cross_service_symbol_search(server: str, exclude_service: str, symbol: str,
     """Single global search to find a symbol across all services (O(1) HTTP call)."""
     try:
         hits = _search_api(server, symbol, scope="kg", limit=30)
-    except RuntimeError:
+    except RuntimeError as e:
+        sys.stderr.write(f"[ua_query] cross-service search failed: {e}")
         return None
 
     # Filter out results from the excluded service
@@ -1672,8 +1695,8 @@ def cmd_trace(args: argparse.Namespace) -> Any:
                     "targetService": target_svc,
                     "traceResult": follow_result,
                 }
-            except (RuntimeError, SystemExit):
-                pass
+            except (RuntimeError, SystemExit) as e:
+                sys.stderr.write(f"[ua_query] cross-service trace failed: {e}")
         else:
             result["hint"] = (
                 f"No KG nodes matched '{args.query}' in service '{service}'. "

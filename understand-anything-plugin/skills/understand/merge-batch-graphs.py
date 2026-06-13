@@ -1021,6 +1021,17 @@ def recover_imports_from_scan(
     return recovered, lines
 
 
+# ── Global extraction results reader ───────────────────────────────────────
+
+def read_global_extraction_results(global_file: Path) -> list[dict]:
+    """Read single global extraction results file."""
+    try:
+        data = json.loads(global_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"Failed to read global extraction results from {global_file}: {e}") from e
+    return data.get("results", [])
+
+
 # ── RPC/MQ annotation recovery from extraction results ───────────────────
 #
 # The file-analyzer agent is expected to emit provides_rpc, consumes_rpc,
@@ -1099,15 +1110,32 @@ def _topic_node_id(topic: str) -> str:
 def recover_rpc_mq_from_extraction(
     assembled: dict[str, Any],
     tmp_dir: Path,
+    global_results: list[dict] | None = None,
 ) -> tuple[int, list[str]]:
     """Read ua-file-extract-results-*.json files and create deterministic
     RPC/MQ edges + synthetic nodes from annotations.
 
     Returns (recovered_count, report_lines).
     """
-    extraction_files = sorted(tmp_dir.glob("ua-file-extract-results-*.json"))
-    if not extraction_files:
-        return 0, ["  RPC/MQ recovery skipped — no extraction result files found"]
+    if global_results is not None:
+        extraction_data = global_results
+    else:
+        extraction_files = sorted(tmp_dir.glob("ua-file-extract-results-*.json"))
+        if not extraction_files:
+            return 0, ["  RPC/MQ recovery skipped — no extraction result files found"]
+        extraction_data = []
+        for ext_file in extraction_files:
+            try:
+                data = json.loads(ext_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as e:
+                print(f"  WARNING: skipping unreadable extraction file {ext_file.name}: {e}", file=sys.stderr)
+                continue
+            results = data.get("results")
+            if isinstance(results, list):
+                extraction_data.extend(results)
+
+    if not extraction_data:
+        return 0, ["  RPC/MQ recovery skipped — no extraction results found"]
 
     node_ids: set[str] = {n["id"] for n in assembled["nodes"]}
     nodes_by_id: dict[str, dict[str, Any]] = {n["id"]: n for n in assembled["nodes"]}
@@ -1125,170 +1153,114 @@ def recover_rpc_mq_from_extraction(
     consumer_count = 0
     subscriber_count = 0
 
-    for ext_file in extraction_files:
-        try:
-            data = json.loads(ext_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
+    for file_result in extraction_data:
+        file_path = file_result.get("path", "")
+        classes = file_result.get("classes", [])
+        functions = file_result.get("functions", [])
 
-        results = data.get("results")
-        if not isinstance(results, list):
-            continue
+        if not isinstance(classes, list):
+            classes = []
+        if not isinstance(functions, list):
+            functions = []
 
-        for file_result in results:
-            file_path = file_result.get("path", "")
-            classes = file_result.get("classes", [])
-            functions = file_result.get("functions", [])
+        for cls in classes:
+            if not isinstance(cls, dict):
+                continue
+            cls_name = cls.get("name", "")
+            if not cls_name:
+                continue
 
-            if not isinstance(classes, list):
-                classes = []
-            if not isinstance(functions, list):
-                functions = []
+            cls_node_id = f"class:{file_path}:{cls_name}"
+            ann_names = _annotation_names(cls.get("annotations"))
+            interfaces = cls.get("interfaces", [])
+            if not isinstance(interfaces, list):
+                interfaces = []
+            typed_props = cls.get("typedProperties", [])
+            if not isinstance(typed_props, list):
+                typed_props = []
 
-            for cls in classes:
-                if not isinstance(cls, dict):
-                    continue
-                cls_name = cls.get("name", "")
-                if not cls_name:
-                    continue
-
-                cls_node_id = f"class:{file_path}:{cls_name}"
-                ann_names = _annotation_names(cls.get("annotations"))
-                interfaces = cls.get("interfaces", [])
-                if not isinstance(interfaces, list):
-                    interfaces = []
-                typed_props = cls.get("typedProperties", [])
-                if not isinstance(typed_props, list):
-                    typed_props = []
-
-                # Provider annotations on class
-                provider_anns = ann_names & _PROVIDER_ANNOTATIONS
-                if provider_anns and interfaces:
-                    for iface in interfaces:
-                        if not isinstance(iface, str) or not iface:
-                            continue
-                        target_id = _synthetic_node_id(iface)
-                        edge_key = (cls_node_id, target_id, "provides_rpc")
-                        if edge_key in existing_edges:
-                            continue
-                        # Also check if any existing edge has this source+type
-                        # with a target containing the interface name
-                        already_covered = any(
-                            s == cls_node_id and t == "provides_rpc" and iface in tgt
-                            for s, tgt, t in existing_edges
-                        )
-                        if already_covered:
-                            continue
-
-                        if target_id not in node_ids:
-                            assembled["nodes"].append({
-                                "id": target_id,
-                                "type": "endpoint",
-                                "name": iface,
-                                "summary": f"RPC interface (synthetic — recovered from annotation)",
-                                "tags": ["rpc-interface", "synthetic"],
-                                "complexity": "simple",
-                            })
-                            node_ids.add(target_id)
-
-                        framework = next(iter(provider_anns)).replace("Service", "").replace("Provider", "").lower()
-                        assembled["edges"].append({
-                            "source": cls_node_id,
-                            "target": target_id,
-                            "type": "provides_rpc",
-                            "direction": "forward",
-                            "weight": 0.9,
-                            "description": json.dumps({"interface": iface, "framework": framework}),
-                            "properties": {"protocol": _framework_to_protocol(framework)},
-                            "recoveredFromAnnotation": True,
-                        })
-                        existing_edges.add(edge_key)
-                        recovered += 1
-                        provider_count += 1
-
-                        if cls_node_id in nodes_by_id:
-                            _ensure_tag(nodes_by_id[cls_node_id], "rpc-provider")
-
-                # FeignClient on class
-                feign_anns = ann_names & _CONSUMER_CLASS_ANNOTATIONS
-                if feign_anns:
-                    feign_ann = _annotation_by_name(cls.get("annotations"), "FeignClient")
-                    service_name = ""
-                    if feign_ann and isinstance(feign_ann.get("arguments"), dict):
-                        args = feign_ann["arguments"]
-                        service_name = args.get("name", "") or args.get("value", "") or args.get("url", "")
-                    if not service_name:
-                        service_name = cls_name
-
-                    target_id = _synthetic_node_id(service_name)
-                    edge_key = (cls_node_id, target_id, "consumes_rpc")
-                    if edge_key not in existing_edges:
-                        if target_id not in node_ids:
-                            assembled["nodes"].append({
-                                "id": target_id,
-                                "type": "endpoint",
-                                "name": service_name,
-                                "summary": f"Remote service (synthetic — recovered from @FeignClient)",
-                                "tags": ["rpc-service", "synthetic"],
-                                "complexity": "simple",
-                            })
-                            node_ids.add(target_id)
-
-                        assembled["edges"].append({
-                            "source": cls_node_id,
-                            "target": target_id,
-                            "type": "consumes_rpc",
-                            "direction": "forward",
-                            "weight": 0.8,
-                            "description": json.dumps({"interface": service_name, "framework": "feign"}),
-                            "properties": {"protocol": _framework_to_protocol("feign")},
-                            "recoveredFromAnnotation": True,
-                        })
-                        existing_edges.add(edge_key)
-                        recovered += 1
-                        consumer_count += 1
-
-                        if cls_node_id in nodes_by_id:
-                            _ensure_tag(nodes_by_id[cls_node_id], "rpc-consumer")
-
-                # Consumer annotations on typedProperties
-                for prop in typed_props:
-                    if not isinstance(prop, dict):
+            # Provider annotations on class
+            provider_anns = ann_names & _PROVIDER_ANNOTATIONS
+            if provider_anns and interfaces:
+                for iface in interfaces:
+                    if not isinstance(iface, str) or not iface:
                         continue
-                    prop_ann_names = _annotation_names(prop.get("annotations"))
-                    consumer_anns = prop_ann_names & _CONSUMER_ANNOTATIONS
-                    if not consumer_anns:
-                        continue
-
-                    iface_type = prop.get("type", "")
-                    if not isinstance(iface_type, str) or not iface_type:
-                        continue
-
-                    target_id = _synthetic_node_id(iface_type)
-                    edge_key = (cls_node_id, target_id, "consumes_rpc")
+                    target_id = _synthetic_node_id(iface)
+                    edge_key = (cls_node_id, target_id, "provides_rpc")
                     if edge_key in existing_edges:
+                        continue
+                    # Also check if any existing edge has this source+type
+                    # with a target containing the interface name
+                    expected_target = _synthetic_node_id(iface)
+                    already_covered = any(
+                        s == cls_node_id and t == "provides_rpc" and tgt == expected_target
+                        for s, tgt, t in existing_edges
+                    )
+                    if already_covered:
                         continue
 
                     if target_id not in node_ids:
                         assembled["nodes"].append({
                             "id": target_id,
                             "type": "endpoint",
-                            "name": iface_type,
+                            "name": iface,
                             "summary": f"RPC interface (synthetic — recovered from annotation)",
                             "tags": ["rpc-interface", "synthetic"],
                             "complexity": "simple",
                         })
                         node_ids.add(target_id)
 
-                    framework = next(iter(consumer_anns)).replace("Reference", "").replace("Consumer", "").replace("Client", "").lower()
+                    framework = next(iter(provider_anns)).replace("Service", "").replace("Provider", "").lower()
+                    assembled["edges"].append({
+                        "source": cls_node_id,
+                        "target": target_id,
+                        "type": "provides_rpc",
+                        "direction": "forward",
+                        "weight": 0.9,
+                        "description": json.dumps({"interface": iface, "framework": framework}),
+                        "properties": {"protocol": _framework_to_protocol(framework)},
+                        "recoveredFromAnnotation": True,
+                    })
+                    existing_edges.add(edge_key)
+                    recovered += 1
+                    provider_count += 1
+
+                    if cls_node_id in nodes_by_id:
+                        _ensure_tag(nodes_by_id[cls_node_id], "rpc-provider")
+
+            # FeignClient on class
+            feign_anns = ann_names & _CONSUMER_CLASS_ANNOTATIONS
+            if feign_anns:
+                feign_ann = _annotation_by_name(cls.get("annotations"), "FeignClient")
+                service_name = ""
+                if feign_ann and isinstance(feign_ann.get("arguments"), dict):
+                    args = feign_ann["arguments"]
+                    service_name = args.get("name", "") or args.get("value", "") or args.get("url", "")
+                if not service_name:
+                    service_name = cls_name
+
+                target_id = _synthetic_node_id(service_name)
+                edge_key = (cls_node_id, target_id, "consumes_rpc")
+                if edge_key not in existing_edges:
+                    if target_id not in node_ids:
+                        assembled["nodes"].append({
+                            "id": target_id,
+                            "type": "endpoint",
+                            "name": service_name,
+                            "summary": f"Remote service (synthetic — recovered from @FeignClient)",
+                            "tags": ["rpc-service", "synthetic"],
+                            "complexity": "simple",
+                        })
+                        node_ids.add(target_id)
+
                     assembled["edges"].append({
                         "source": cls_node_id,
                         "target": target_id,
                         "type": "consumes_rpc",
                         "direction": "forward",
                         "weight": 0.8,
-                        "description": json.dumps({"interface": iface_type, "framework": framework}),
-                        "properties": {"protocol": _framework_to_protocol(framework)},
+                        "description": json.dumps({"interface": service_name, "framework": "feign"}),
+                        "properties": {"protocol": _framework_to_protocol("feign")},
                         "recoveredFromAnnotation": True,
                     })
                     existing_edges.add(edge_key)
@@ -1298,69 +1270,116 @@ def recover_rpc_mq_from_extraction(
                     if cls_node_id in nodes_by_id:
                         _ensure_tag(nodes_by_id[cls_node_id], "rpc-consumer")
 
-            # Subscriber annotations on functions/methods
-            for func in functions:
-                if not isinstance(func, dict):
+            # Consumer annotations on typedProperties
+            for prop in typed_props:
+                if not isinstance(prop, dict):
                     continue
-                func_ann_names = _annotation_names(func.get("annotations"))
-                sub_anns = func_ann_names & _SUBSCRIBER_ANNOTATIONS
-                if not sub_anns:
+                prop_ann_names = _annotation_names(prop.get("annotations"))
+                consumer_anns = prop_ann_names & _CONSUMER_ANNOTATIONS
+                if not consumer_anns:
                     continue
 
-                func_name = func.get("name", "")
-                # Find the containing class for this method
-                source_id = ""
-                for cls in classes:
-                    if not isinstance(cls, dict):
-                        continue
-                    cls_name = cls.get("name", "")
-                    methods = cls.get("methods", [])
-                    if isinstance(methods, list) and func_name in methods:
-                        source_id = f"class:{file_path}:{cls_name}"
-                        break
-                if not source_id:
-                    source_id = f"function:{file_path}:{func_name}"
+                iface_type = prop.get("type", "")
+                if not isinstance(iface_type, str) or not iface_type:
+                    continue
 
-                # Extract topic from annotation arguments
-                topic = ""
-                for ann_name in sub_anns:
-                    ann = _annotation_by_name(func.get("annotations"), ann_name)
-                    if ann and isinstance(ann.get("arguments"), dict):
-                        args = ann["arguments"]
-                        topic = args.get("topics", "") or args.get("topic", "") or args.get("topicPattern", "") or args.get("id", "")
-                        if topic:
-                            break
-                if not topic:
-                    topic = f"__unknown_topic__{func_name}"
-
-                target_id = _topic_node_id(topic)
-                edge_key = (source_id, target_id, "subscribes")
+                target_id = _synthetic_node_id(iface_type)
+                edge_key = (cls_node_id, target_id, "consumes_rpc")
                 if edge_key in existing_edges:
                     continue
 
                 if target_id not in node_ids:
                     assembled["nodes"].append({
                         "id": target_id,
-                        "type": "topic",
-                        "name": topic,
-                        "summary": f"Kafka topic (synthetic — recovered from @KafkaListener)",
-                        "tags": ["kafka-topic", "synthetic"],
+                        "type": "endpoint",
+                        "name": iface_type,
+                        "summary": f"RPC interface (synthetic — recovered from annotation)",
+                        "tags": ["rpc-interface", "synthetic"],
                         "complexity": "simple",
                     })
                     node_ids.add(target_id)
 
+                framework = next(iter(consumer_anns)).replace("Reference", "").replace("Consumer", "").replace("Client", "").lower()
                 assembled["edges"].append({
-                    "source": source_id,
+                    "source": cls_node_id,
                     "target": target_id,
-                    "type": "subscribes",
+                    "type": "consumes_rpc",
                     "direction": "forward",
                     "weight": 0.8,
-                    "description": f"Subscribes to topic '{topic}' (recovered from annotation)",
+                    "description": json.dumps({"interface": iface_type, "framework": framework}),
+                    "properties": {"protocol": _framework_to_protocol(framework)},
                     "recoveredFromAnnotation": True,
                 })
                 existing_edges.add(edge_key)
                 recovered += 1
-                subscriber_count += 1
+                consumer_count += 1
+
+                if cls_node_id in nodes_by_id:
+                    _ensure_tag(nodes_by_id[cls_node_id], "rpc-consumer")
+
+        # Subscriber annotations on functions/methods
+        for func in functions:
+            if not isinstance(func, dict):
+                continue
+            func_ann_names = _annotation_names(func.get("annotations"))
+            sub_anns = func_ann_names & _SUBSCRIBER_ANNOTATIONS
+            if not sub_anns:
+                continue
+
+            func_name = func.get("name", "")
+            # Find the containing class for this method
+            source_id = ""
+            for cls in classes:
+                if not isinstance(cls, dict):
+                    continue
+                cls_name = cls.get("name", "")
+                methods = cls.get("methods", [])
+                if isinstance(methods, list) and func_name in methods:
+                    source_id = f"class:{file_path}:{cls_name}"
+                    break
+            if not source_id:
+                source_id = f"function:{file_path}:{func_name}"
+
+            # Extract topic from annotation arguments
+            topic = ""
+            for ann_name in sub_anns:
+                ann = _annotation_by_name(func.get("annotations"), ann_name)
+                if ann and isinstance(ann.get("arguments"), dict):
+                    args = ann["arguments"]
+                    topic = args.get("topics", "") or args.get("topic", "") or args.get("topicPattern", "") or args.get("id", "")
+                    if topic:
+                        break
+            if not topic:
+                topic = f"__unknown_topic__{func_name}"
+
+            target_id = _topic_node_id(topic)
+            edge_key = (source_id, target_id, "subscribes")
+            if edge_key in existing_edges:
+                continue
+
+            if target_id not in node_ids:
+                assembled["nodes"].append({
+                    "id": target_id,
+                    "type": "topic",
+                    "name": topic,
+                    "summary": f"Kafka topic (synthetic — recovered from @KafkaListener)",
+                    "tags": ["kafka-topic", "synthetic"],
+                    "complexity": "simple",
+                })
+                node_ids.add(target_id)
+
+            assembled["edges"].append({
+                "source": source_id,
+                "target": target_id,
+                "type": "subscribes",
+                "direction": "forward",
+                "weight": 0.8,
+                "description": f"Subscribes to topic '{topic}' (recovered from annotation)",
+                "recoveredFromAnnotation": True,
+            })
+            existing_edges.add(edge_key)
+            recovered += 1
+            subscriber_count += 1
 
     # Quality gate: count total RPC/MQ/route edges in the final graph to detect
     # cases where annotations exist but zero edges were produced overall.
@@ -1376,7 +1395,7 @@ def recover_rpc_mq_from_extraction(
     lines: list[str] = []
     lines.append(
         f"  Recovered {recovered} RPC/MQ edges from annotation data "
-        f"({len(extraction_files)} extraction files scanned)"
+        f"({len(extraction_data)} extraction results scanned)"
     )
     if provider_count:
         lines.append(f"  {provider_count:>4} × provides_rpc edges")
@@ -1439,15 +1458,32 @@ _DI_ANNOTATIONS: frozenset[str] = frozenset({
 def recover_injects_from_extraction(
     assembled: dict[str, Any],
     tmp_dir: Path,
+    global_results: list[dict] | None = None,
 ) -> tuple[int, list[str]]:
     """Read ua-file-extract-results-*.json files and create deterministic
     `injects` edges from @Autowired/@Resource/@Inject annotations.
 
     Returns (recovered_count, report_lines).
     """
-    extraction_files = sorted(tmp_dir.glob("ua-file-extract-results-*.json"))
-    if not extraction_files:
-        return 0, ["  DI recovery skipped — no extraction result files found"]
+    if global_results is not None:
+        extraction_data = global_results
+    else:
+        extraction_files = sorted(tmp_dir.glob("ua-file-extract-results-*.json"))
+        if not extraction_files:
+            return 0, ["  DI recovery skipped — no extraction result files found"]
+        extraction_data = []
+        for ext_file in extraction_files:
+            try:
+                data = json.loads(ext_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as e:
+                print(f"  WARNING: skipping unreadable extraction file {ext_file.name}: {e}", file=sys.stderr)
+                continue
+            results = data.get("results")
+            if isinstance(results, list):
+                extraction_data.extend(results)
+
+    if not extraction_data:
+        return 0, ["  DI recovery skipped — no extraction results found"]
 
     node_ids: set[str] = {n["id"] for n in assembled["nodes"]}
     nodes_by_id: dict[str, dict[str, Any]] = {n["id"]: n for n in assembled["nodes"]}
@@ -1463,83 +1499,73 @@ def recover_injects_from_extraction(
     recovered = 0
     skipped_no_target = 0
 
-    for ext_file in extraction_files:
-        try:
-            data = json.loads(ext_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+    for file_result in extraction_data:
+        file_path = file_result.get("path", "")
+        classes = file_result.get("classes", [])
+        if not isinstance(classes, list):
             continue
 
-        results = data.get("results")
-        if not isinstance(results, list):
-            continue
-
-        for file_result in results:
-            file_path = file_result.get("path", "")
-            classes = file_result.get("classes", [])
-            if not isinstance(classes, list):
+        for cls in classes:
+            if not isinstance(cls, dict):
+                continue
+            cls_name = cls.get("name", "")
+            if not cls_name:
                 continue
 
-            for cls in classes:
-                if not isinstance(cls, dict):
+            cls_node_id = f"class:{file_path}:{cls_name}"
+            typed_props = cls.get("typedProperties", [])
+            if not isinstance(typed_props, list):
+                continue
+
+            for prop in typed_props:
+                if not isinstance(prop, dict):
                     continue
-                cls_name = cls.get("name", "")
-                if not cls_name:
+                prop_ann_names = _annotation_names(prop.get("annotations"))
+                di_anns = prop_ann_names & _DI_ANNOTATIONS
+                if not di_anns:
                     continue
 
-                cls_node_id = f"class:{file_path}:{cls_name}"
-                typed_props = cls.get("typedProperties", [])
-                if not isinstance(typed_props, list):
+                injected_type = prop.get("type", "")
+                if not isinstance(injected_type, str) or not injected_type:
                     continue
 
-                for prop in typed_props:
-                    if not isinstance(prop, dict):
-                        continue
-                    prop_ann_names = _annotation_names(prop.get("annotations"))
-                    di_anns = prop_ann_names & _DI_ANNOTATIONS
-                    if not di_anns:
-                        continue
+                # Find target node: search for class nodes matching the type name
+                target_id = ""
+                for nid in node_ids:
+                    if nid.endswith(f":{injected_type}") and nid.startswith("class:"):
+                        target_id = nid
+                        break
 
-                    injected_type = prop.get("type", "")
-                    if not isinstance(injected_type, str) or not injected_type:
-                        continue
+                if not target_id:
+                    skipped_no_target += 1
+                    continue
 
-                    # Find target node: search for class nodes matching the type name
-                    target_id = ""
-                    for nid in node_ids:
-                        if nid.endswith(f":{injected_type}") and nid.startswith("class:"):
-                            target_id = nid
-                            break
+                edge_key = (cls_node_id, target_id, "injects")
+                if edge_key in existing_edges:
+                    continue
 
-                    if not target_id:
-                        skipped_no_target += 1
-                        continue
+                if cls_node_id not in node_ids:
+                    continue
 
-                    edge_key = (cls_node_id, target_id, "injects")
-                    if edge_key in existing_edges:
-                        continue
+                assembled["edges"].append({
+                    "source": cls_node_id,
+                    "target": target_id,
+                    "type": "injects",
+                    "direction": "forward",
+                    "weight": 0.8,
+                    "description": f"DI: {cls_name}.{prop.get('name', '?')} ({injected_type})",
+                    "recoveredFromAnnotation": True,
+                })
+                existing_edges.add(edge_key)
+                recovered += 1
 
-                    if cls_node_id not in node_ids:
-                        continue
-
-                    assembled["edges"].append({
-                        "source": cls_node_id,
-                        "target": target_id,
-                        "type": "injects",
-                        "direction": "forward",
-                        "weight": 0.8,
-                        "description": f"DI: {cls_name}.{prop.get('name', '?')} ({injected_type})",
-                        "recoveredFromAnnotation": True,
-                    })
-                    existing_edges.add(edge_key)
-                    recovered += 1
-
-                    if cls_node_id in nodes_by_id:
-                        _ensure_tag(nodes_by_id[cls_node_id], "dependency-injection")
+                if cls_node_id in nodes_by_id:
+                    _ensure_tag(nodes_by_id[cls_node_id], "dependency-injection")
 
     lines: list[str] = []
     lines.append(
         f"  Recovered {recovered} `injects` edges from DI annotation data "
-        f"({len(extraction_files)} extraction files scanned)"
+        f"({len(extraction_data)} extraction results scanned)"
     )
     if skipped_no_target:
         lines.append(

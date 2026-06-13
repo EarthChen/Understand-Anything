@@ -220,17 +220,23 @@ export const DEFAULT_PORT = 3000;
       const result = plugin.analyzeFile("server.ts", code);
 
       expect(result.imports.length).toBeGreaterThanOrEqual(2);
-      expect(result.classes).toHaveLength(1);
-      expect(result.classes[0].name).toBe("Server");
-      expect(result.classes[0].methods).toContain("constructor");
-      expect(result.classes[0].methods).toContain("start");
-      expect(result.classes[0].methods).toContain("stop");
-      expect(result.classes[0].properties).toContain("port");
+      expect(result.classes).toHaveLength(2);
+      const serverClass = result.classes.find((c) => c.name === "Server");
+      expect(serverClass).toBeDefined();
+      expect(serverClass!.kind).toBe("class");
+      expect(serverClass!.methods).toContain("constructor");
+      expect(serverClass!.methods).toContain("start");
+      expect(serverClass!.methods).toContain("stop");
+      expect(serverClass!.properties).toContain("port");
+      const optionsInterface = result.classes.find((c) => c.name === "Options");
+      expect(optionsInterface).toBeDefined();
+      expect(optionsInterface!.kind).toBe("interface");
 
       expect(result.functions.some((f) => f.name === "createServer")).toBe(true);
 
       const exportNames = result.exports.map((e) => e.name);
       expect(exportNames).toContain("Server");
+      expect(exportNames).toContain("Options");
       expect(exportNames).toContain("createServer");
     });
   });

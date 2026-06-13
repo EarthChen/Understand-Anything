@@ -1,6 +1,6 @@
-import type { StructuralAnalysis, CallGraphEntry } from "../../types.js";
+import type { StructuralAnalysis, CallGraphEntry, AnnotationInfo, PropertyInfo } from "../../types.js";
 import type { LanguageExtractor, TreeSitterNode } from "./types.js";
-import { getStringValue } from "./base-extractor.js";
+import { getStringValue, findChild, findChildren } from "./base-extractor.js";
 
 /**
  * Extract parameter names from a formal_parameters node.
@@ -98,6 +98,85 @@ function extractImportSpecifiers(
 }
 
 /**
+ * Extract decorators from a node's children.
+ *
+ * TypeScript decorators appear as `decorator` child nodes before
+ * class/method/property declarations. Each decorator may be a simple
+ * identifier (`@Injectable`) or a call expression with arguments
+ * (`@Component({ selector: 'app' })`).
+ */
+function extractDecorators(node: TreeSitterNode): AnnotationInfo[] {
+  const annotations: AnnotationInfo[] = [];
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child || child.type !== "decorator") continue;
+
+    // Find the name: could be identifier, member_expression, or inside call_expression
+    let name: string | undefined;
+    let argsNode: TreeSitterNode | null = null;
+
+    const callExpr = findChild(child, "call_expression");
+    if (callExpr) {
+      // @Decorator(args) form
+      const funcNode = callExpr.childForFieldName("function");
+      if (funcNode) {
+        name = funcNode.text;
+      }
+      argsNode = callExpr.childForFieldName("arguments");
+    } else {
+      // @Decorator form (no args)
+      const ident =
+        findChild(child, "identifier") ??
+        findChild(child, "member_expression");
+      if (ident) {
+        name = ident.text;
+      }
+    }
+
+    if (!name) continue;
+
+    const info: AnnotationInfo = { name };
+
+    if (argsNode) {
+      const args: Record<string, string> = {};
+      for (let j = 0; j < argsNode.childCount; j++) {
+        const arg = argsNode.child(j);
+        if (!arg) continue;
+        if (arg.type === "pair") {
+          // { key: value } pairs directly in arguments
+          const key = arg.childForFieldName("key");
+          const value = arg.childForFieldName("value");
+          if (key && value) {
+            args[key.text] = value.text.replace(/^["']|["']$/g, "");
+          }
+        } else if (arg.type === "object") {
+          // Object literal: iterate children for pair nodes
+          for (let k = 0; k < arg.childCount; k++) {
+            const pair = arg.child(k);
+            if (pair && pair.type === "pair") {
+              const key = pair.childForFieldName("key");
+              const value = pair.childForFieldName("value");
+              if (key && value) {
+                args[key.text] = value.text.replace(/^["']|["']$/g, "");
+              }
+            }
+          }
+        } else if (arg.type !== "(" && arg.type !== ")" && arg.type !== ",") {
+          // Single positional argument
+          args["value"] = arg.text.replace(/^["']|["']$/g, "");
+        }
+      }
+      if (Object.keys(args).length > 0) {
+        info.arguments = args;
+      }
+    }
+
+    annotations.push(info);
+  }
+  return annotations;
+}
+
+/**
  * TypeScript/JavaScript extractor.
  *
  * Handles structural analysis and call-graph extraction for
@@ -167,8 +246,8 @@ export class TypeScriptExtractor implements LanguageExtractor {
         }
       }
 
-      if (node.type === "call_expression") {
-        const callee = node.childForFieldName("function");
+      if (node.type === "call_expression" || node.type === "new_expression") {
+        const callee = node.childForFieldName("constructor") ?? node.childForFieldName("function");
         if (callee && functionStack.length > 0) {
           entries.push({
             caller: functionStack[functionStack.length - 1],
@@ -214,11 +293,23 @@ export class TypeScriptExtractor implements LanguageExtractor {
 
       case "lexical_declaration":
       case "variable_declaration":
-        this.extractVariableDeclarations(node, functions);
+        this.extractVariableDeclarations(node, functions, imports);
         break;
 
       case "import_statement":
         this.extractImport(node, imports);
+        break;
+
+      case "interface_declaration":
+        this.extractInterface(node, classes);
+        break;
+
+      case "enum_declaration":
+        this.extractEnum(node, classes);
+        break;
+
+      case "type_alias_declaration":
+        this.extractTypeAlias(node, classes);
         break;
 
       case "export_statement":
@@ -230,6 +321,10 @@ export class TypeScriptExtractor implements LanguageExtractor {
           exports,
           exportedNames,
         );
+        break;
+
+      case "expression_statement":
+        this.extractCommonJSExport(node, exports, exportedNames);
         break;
     }
   }
@@ -275,6 +370,7 @@ export class TypeScriptExtractor implements LanguageExtractor {
 
     const methods: string[] = [];
     const properties: string[] = [];
+    const typedProperties: PropertyInfo[] = [];
 
     const classBody = node.children.find(
       (c) => c.type === "class_body",
@@ -296,12 +392,65 @@ export class TypeScriptExtractor implements LanguageExtractor {
           const propName = member.children.find(
             (c) => c.type === "property_identifier",
           );
-          if (propName) properties.push(propName.text);
+          if (propName) {
+            properties.push(propName.text);
+            // Extract type annotation for typed properties
+            const typeAnnotation = member.children.find(
+              (c) => c.type === "type_annotation",
+            );
+            if (typeAnnotation) {
+              const typeText = typeAnnotation.text;
+              const typeName = typeText.startsWith(":")
+                ? typeText.slice(1).trim()
+                : typeText;
+              typedProperties.push({
+                name: propName.text,
+                type: typeName,
+              });
+            }
+          }
         }
       }
     }
 
-    classes.push({
+    // Extract decorators
+    const annotations = extractDecorators(node);
+
+    // Extract heritage (extends / implements)
+    let superclass: string | undefined;
+    let interfaces: string[] | undefined;
+
+    const classHeritage = node.children.find(
+      (c) => c.type === "class_heritage",
+    );
+    if (classHeritage) {
+      for (let i = 0; i < classHeritage.childCount; i++) {
+        const child = classHeritage.child(i);
+        if (!child) continue;
+        if (child.type === "extends_clause") {
+          const typeNode =
+            findChild(child, "type_identifier") ??
+            findChild(child, "identifier") ??
+            findChild(child, "generic_type");
+          if (typeNode) superclass = typeNode.text;
+        } else if (child.type === "implements_clause") {
+          const ifaces: string[] = [];
+          for (let j = 0; j < child.childCount; j++) {
+            const typeChild = child.child(j);
+            if (
+              typeChild &&
+              (typeChild.type === "type_identifier" ||
+                typeChild.type === "generic_type")
+            ) {
+              ifaces.push(typeChild.text);
+            }
+          }
+          if (ifaces.length > 0) interfaces = ifaces;
+        }
+      }
+    }
+
+    const classEntry: StructuralAnalysis["classes"][0] = {
       name: nameNode.text,
       lineRange: [
         node.startPosition.row + 1,
@@ -310,12 +459,18 @@ export class TypeScriptExtractor implements LanguageExtractor {
       methods,
       properties,
       kind: "class",
-    });
+    };
+    if (annotations.length > 0) classEntry.annotations = annotations;
+    if (superclass) classEntry.superclass = superclass;
+    if (interfaces) classEntry.interfaces = interfaces;
+    if (typedProperties.length > 0) classEntry.typedProperties = typedProperties;
+    classes.push(classEntry);
   }
 
   private extractVariableDeclarations(
     node: TreeSitterNode,
     functions: StructuralAnalysis["functions"],
+    imports?: StructuralAnalysis["imports"],
   ): void {
     for (let j = 0; j < node.childCount; j++) {
       const child = node.child(j);
@@ -323,6 +478,31 @@ export class TypeScriptExtractor implements LanguageExtractor {
 
       const nameNode = child.childForFieldName("name");
       const valueNode = child.childForFieldName("value");
+
+      // Detect CommonJS require(): const x = require('module')
+      if (
+        imports &&
+        valueNode &&
+        valueNode.type === "call_expression"
+      ) {
+        const funcNode = valueNode.childForFieldName("function");
+        if (funcNode && funcNode.text === "require") {
+          const argsNode = valueNode.childForFieldName("arguments");
+          if (argsNode) {
+            const firstArg = argsNode.children.find(
+              (c) => c.type === "string",
+            );
+            if (firstArg) {
+              imports.push({
+                source: getStringValue(firstArg),
+                specifiers: [],
+                lineNumber: node.startPosition.row + 1,
+              });
+              continue;
+            }
+          }
+        }
+      }
 
       if (
         nameNode &&
@@ -383,7 +563,7 @@ export class TypeScriptExtractor implements LanguageExtractor {
     node: TreeSitterNode,
     functions: StructuralAnalysis["functions"],
     classes: StructuralAnalysis["classes"],
-    _imports: StructuralAnalysis["imports"],
+    imports: StructuralAnalysis["imports"],
     exports: StructuralAnalysis["exports"],
     exportedNames: Set<string>,
   ): void {
@@ -443,7 +623,7 @@ export class TypeScriptExtractor implements LanguageExtractor {
 
         case "lexical_declaration":
         case "variable_declaration": {
-          this.extractVariableDeclarations(child, functions);
+          this.extractVariableDeclarations(child, functions, imports);
           for (let k = 0; k < child.childCount; k++) {
             const declarator = child.child(k);
             if (
@@ -463,6 +643,56 @@ export class TypeScriptExtractor implements LanguageExtractor {
                 exportedNames.add(nameNode.text);
               }
             }
+          }
+          break;
+        }
+
+        case "interface_declaration": {
+          this.extractInterface(child, classes);
+          const nameNode = child.children.find(
+            (c) => c.type === "type_identifier",
+          );
+          const isDefault = node.children.some(
+            (c) => c.type === "default",
+          );
+          if (nameNode && !exportedNames.has(nameNode.text)) {
+            const exportName = isDefault
+              ? "default"
+              : nameNode.text;
+            exports.push({
+              name: exportName,
+              lineNumber: node.startPosition.row + 1,
+              isDefault,
+            });
+            exportedNames.add(exportName);
+          }
+          break;
+        }
+
+        case "enum_declaration": {
+          this.extractEnum(child, classes);
+          const nameNode =
+            findChild(child, "identifier") ??
+            findChild(child, "type_identifier");
+          if (nameNode && !exportedNames.has(nameNode.text)) {
+            exports.push({
+              name: nameNode.text,
+              lineNumber: node.startPosition.row + 1,
+            });
+            exportedNames.add(nameNode.text);
+          }
+          break;
+        }
+
+        case "type_alias_declaration": {
+          this.extractTypeAlias(child, classes);
+          const nameNode = findChild(child, "type_identifier");
+          if (nameNode && !exportedNames.has(nameNode.text)) {
+            exports.push({
+              name: nameNode.text,
+              lineNumber: node.startPosition.row + 1,
+            });
+            exportedNames.add(nameNode.text);
           }
           break;
         }
@@ -488,6 +718,145 @@ export class TypeScriptExtractor implements LanguageExtractor {
             }
           }
           break;
+        }
+      }
+    }
+  }
+
+  private extractInterface(
+    node: TreeSitterNode,
+    classes: StructuralAnalysis["classes"],
+  ): void {
+    const nameNode = findChild(node, "type_identifier");
+    if (!nameNode) return;
+
+    const methods: string[] = [];
+    const properties: string[] = [];
+
+    const body = findChild(node, "interface_body");
+    if (body) {
+      for (const methodSig of findChildren(body, "method_signature")) {
+        const methName = findChild(methodSig, "property_identifier");
+        if (methName) methods.push(methName.text);
+      }
+      for (const propSig of findChildren(body, "property_signature")) {
+        const propName = findChild(propSig, "property_identifier");
+        if (propName) properties.push(propName.text);
+      }
+    }
+
+    const interfaces: string[] = [];
+    const extendsClause = findChild(node, "extends_type_clause");
+    if (extendsClause) {
+      for (const typeNode of findChildren(extendsClause, "type_identifier")) {
+        interfaces.push(typeNode.text);
+      }
+    }
+
+    const entry: StructuralAnalysis["classes"][0] = {
+      name: nameNode.text,
+      lineRange: [
+        node.startPosition.row + 1,
+        node.endPosition.row + 1,
+      ],
+      methods,
+      properties,
+      kind: "interface",
+    };
+    if (interfaces.length > 0) entry.interfaces = interfaces;
+    classes.push(entry);
+  }
+
+  private extractEnum(
+    node: TreeSitterNode,
+    classes: StructuralAnalysis["classes"],
+  ): void {
+    const nameNode =
+      findChild(node, "identifier") ??
+      findChild(node, "type_identifier");
+    if (!nameNode) return;
+
+    const properties: string[] = [];
+    const body = findChild(node, "enum_body");
+    if (body) {
+      for (const member of findChildren(body, "property_identifier")) {
+        properties.push(member.text);
+      }
+    }
+
+    classes.push({
+      name: nameNode.text,
+      lineRange: [
+        node.startPosition.row + 1,
+        node.endPosition.row + 1,
+      ],
+      methods: [],
+      properties,
+      kind: "enum",
+    });
+  }
+
+  private extractTypeAlias(
+    node: TreeSitterNode,
+    classes: StructuralAnalysis["classes"],
+  ): void {
+    const nameNode = findChild(node, "type_identifier");
+    if (!nameNode) return;
+
+    classes.push({
+      name: nameNode.text,
+      lineRange: [
+        node.startPosition.row + 1,
+        node.endPosition.row + 1,
+      ],
+      methods: [],
+      properties: [],
+      kind: "type",
+    });
+  }
+
+  /**
+   * Detect CommonJS export patterns:
+   * - `module.exports = ...`
+   * - `exports.foo = ...`
+   */
+  private extractCommonJSExport(
+    node: TreeSitterNode,
+    exports: StructuralAnalysis["exports"],
+    exportedNames: Set<string>,
+  ): void {
+    // expression_statement wraps an assignment_expression
+    const assignment = node.children.find(
+      (c) => c.type === "assignment_expression",
+    );
+    if (!assignment) return;
+
+    const left = assignment.childForFieldName("left");
+    if (!left) return;
+
+    // module.exports = ...
+    if (left.type === "member_expression") {
+      const object = left.childForFieldName("object");
+      const property = left.childForFieldName("property");
+      if (!object || !property) return;
+
+      if (object.text === "module" && property.text === "exports") {
+        if (!exportedNames.has("module.exports")) {
+          exports.push({
+            name: "module.exports",
+            lineNumber: node.startPosition.row + 1,
+          });
+          exportedNames.add("module.exports");
+        }
+      } else if (object.text === "exports") {
+        // exports.foo = ...
+        const exportName = property.text;
+        if (!exportedNames.has(exportName)) {
+          exports.push({
+            name: exportName,
+            lineNumber: node.startPosition.row + 1,
+          });
+          exportedNames.add(exportName);
         }
       }
     }

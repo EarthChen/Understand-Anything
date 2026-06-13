@@ -115,6 +115,20 @@ Treat these the same as tree-sitter-derived functions for node creation (Step 2 
 
 ---
 
+## Phase 1.5 -- Read Rule Engine Output
+
+Your dispatch prompt includes a `ruleEngineEdges` array — edges already produced
+by the deterministic rule engine (annotation→edge mapping, meta-annotation
+resolution, call graph resolution). You MUST NOT emit duplicate edges for the
+same (source, target, type) combination.
+
+The `ruleEngineEdges` array also includes `unresolvedAnnotations` — annotations
+that the rule engine could not match to any built-in or user-defined rule. If
+you can determine the correct edge for an unresolved annotation through semantic
+analysis, you MAY emit it. Otherwise, skip it.
+
+---
+
 ## Phase 2 -- Semantic Analysis
 
 Read the pre-computed extraction results from the path in your dispatch prompt (`Extraction results` field). Use these structured results as the foundation for your analysis.
@@ -247,12 +261,12 @@ Using the script's structural data and file categories, create edges.
 | `implements` | A class implements an interface in the project. Use `classes[].interfaces` from structural data when available. | `0.9` | `forward` |
 | `exports` | File exports a function or class node you created (only for exported items — use IN ADDITION to `contains`, not instead of it) | `0.8` | `forward` |
 | `depends_on` | File has runtime dependency on another project file (broader than imports -- includes dynamic requires, lazy loads) | `0.6` | `forward` |
-| `provides_rpc` | Class/method exposes a **network** RPC service via provider annotation (Dubbo/gRPC/MOA — see RPC section below). Source: provider class. Target: interface node (`class:<path>:<InterfaceName>`). | `0.9` | `forward` |
-| `consumes_rpc` | Class/method consumes a **network** RPC via consumer annotation (Dubbo/Feign/gRPC — see RPC section below). Source: consumer class. Target: interface node. | `0.8` | `forward` |
-| `provides_route` | Class registers a module-local service via a **routing framework** (ARouter/TheRouter/WMRouter). Source: implementation class. Target: interface node. NOT for network RPC — use `provides_rpc` for Dubbo/gRPC. | `0.8` | `forward` |
-| `consumes_route` | Class discovers and invokes a module-local service via routing framework. Source: consumer class. Target: interface node or route path. | `0.7` | `forward` |
-| `publishes` | Class/method produces messages to a topic (e.g., `@KafkaTemplate`, event publisher). Source: producer class/method. Target: topic node or `class:<path>:<TopicConstant>`. | `0.8` | `forward` |
-| `subscribes` | Class/method consumes messages from a topic (e.g., `@KafkaListener`). Source: consumer class/method. Target: topic node. | `0.8` | `forward` |
+| `provides_rpc` | **规则引擎产出，LLM 不需要创建。** | `0.9` | `forward` |
+| `consumes_rpc` | **规则引擎产出，LLM 不需要创建。** | `0.8` | `forward` |
+| `provides_route` | **规则引擎产出，LLM 不需要创建。** | `0.8` | `forward` |
+| `consumes_route` | **规则引擎产出，LLM 不需要创建。** | `0.7` | `forward` |
+| `publishes` | **规则引擎产出，LLM 不需要创建。** | `0.8` | `forward` |
+| `subscribes` | **规则引擎产出，LLM 不需要创建。** | `0.8` | `forward` |
 | `tested_by` | Production file is exercised by a test file. Emit when you see the test importing/using the production file. Use direction `production → test` if you can; the merge script will flip inverted edges and dedupe. | `0.5` | `forward` |
 
 **Note on `tested_by`:** It's fine to emit even if you're unsure of the direction (you typically see the relationship while analyzing the *test* file, where the import points back at production). The merge script (`merge-batch-graphs.py`) canonicalizes direction to `production → test` and drops semantically broken edges (test↔test, prod↔prod, orphan endpoint). Path-convention pairing supplements anything you miss.
@@ -295,147 +309,6 @@ The `batchImportData` values contain only resolved project-internal paths — ex
 - **K8s manifests:** Create `serves` edges when a Service/Deployment exposes an endpoint or routes to a container. Create `deploys` edges to the application code that runs inside the container.
 - **Terraform files:** Create `provisions` edges from Terraform resource/module definitions to the infrastructure they create (e.g., database resources, VM instances).
 - **Routing configs (nginx, API gateway, ingress):** Create `routes` edges from routing configuration to the services they direct traffic to.
-
-### RPC and Message-Queue Annotation Detection
-
-**Built-in annotations** are **always** detected — no configuration required. When any of the annotations in the table below appear in Java/Kotlin/Spring source (or their framework equivalents in Dart/ObjC), emit the corresponding `provides_rpc`, `consumes_rpc`, `publishes`, or `subscribes` edge automatically.
-
-**`rpcAnnotations` in `config.json` is only needed for custom frameworks** that are NOT in the built-in list below. When present, custom entries are merged with the built-in list — they never override or disable built-in detection.
-
-**IMPORTANT — Using structural annotation data:** The `extract-structure.mjs` script extracts annotations, `superclass`, `interfaces`, and typed field info for **Java, Kotlin, Dart, and Objective-C** files. Use this data as your PRIMARY source for RPC/MQ edge generation:
-
-- `classes[].annotations` — class-level annotations/decorators (Java/Kotlin: `@DubboService`, `@RestController`; Dart: `@JsonSerializable`, `@immutable`; ObjC: protocol conformance)
-- `classes[].superclass` — the class this extends
-- `classes[].interfaces` — interfaces/protocols this class implements (critical for RPC provider→interface matching)
-- `classes[].typedProperties` — field names, types, and annotations (Java/Kotlin: `@DubboReference`, `@Autowired`; Dart: typed fields; ObjC: `@property` declarations with attributes)
-- `functions[].annotations` — method-level annotations (Java/Kotlin: `@KafkaListener`, `@RequestMapping`; Dart: `@override`; ObjC: method selectors)
-
-When `annotations` data is present in the structural extraction output, you MUST check it against the built-in annotation table below and emit corresponding edges. Do NOT skip this step even if the source file looks unfamiliar — the annotations are deterministically extracted by tree-sitter and are reliable.
-
-**Built-in annotation → edge mapping:**
-
-| Annotation | Framework | Edge type | Role |
-|---|---|---|---|
-| `@DubboService` | Dubbo | `provides_rpc` | RPC provider (class implements interface) |
-| `@DubboReference` | Dubbo | `consumes_rpc` | RPC consumer (injected field/parameter) |
-| `@MoaProvider` | MOA (internal) | `provides_rpc` | RPC provider |
-| `@MoaConsumer` | MOA (internal) | `consumes_rpc` | RPC consumer |
-| `@FeignClient` | Spring Cloud | `consumes_rpc` | HTTP/RPC client to remote service (use `name` or `value` as interface) |
-| `@GrpcService` | gRPC | `provides_rpc` | gRPC server implementation |
-| `@GrpcClient` | gRPC | `consumes_rpc` | gRPC client stub |
-| `@KafkaTemplate` | Spring Kafka | `publishes` | Message producer (topic from method args or constant) |
-| `@KafkaListener` | Spring Kafka | `subscribes` | Message consumer (`topics` / `topicPattern` attribute) |
-| `@Autowired` | Spring | `injects` | Dependency injection (field/constructor/method) |
-| `@Resource` | Spring/Jakarta | `injects` | Dependency injection (field) |
-| `@Inject` | CDI/Jakarta | `injects` | Dependency injection (field/constructor/method) |
-| `@Value` | Spring | `injects` | Configuration value injection |
-| `@GET` | Retrofit/JAX-RS | `consumes_api` | HTTP GET client endpoint (path from annotation value) |
-| `@POST` | Retrofit/JAX-RS | `consumes_api` | HTTP POST client endpoint (path from annotation value) |
-| `@PUT` | Retrofit/JAX-RS | `consumes_api` | HTTP PUT client endpoint (path from annotation value) |
-| `@DELETE` | Retrofit/JAX-RS | `consumes_api` | HTTP DELETE client endpoint (path from annotation value) |
-| `@PATCH` | Retrofit/JAX-RS | `consumes_api` | HTTP PATCH client endpoint (path from annotation value) |
-| `@HEAD` | Retrofit/JAX-RS | `consumes_api` | HTTP HEAD client endpoint (path from annotation value) |
-
-**Edge shape (RPC):**
-
-- **Source:** `class:<path>:<ClassName>` (or `function:<path>:<method>` when annotation is on a method)
-- **Target:** `class:<path>:<InterfaceName>` — the RPC interface being provided or consumed. Use the fully qualified interface name when visible (e.g., `com.example.PaymentService`); otherwise use the simple name from the annotation or `implements` clause.
-- **Weight:** `provides_rpc` = `0.9`, `consumes_rpc` = `0.8`
-- **Metadata** (encode in `description` as JSON when the interface is not a project node): `{ "interface": "com.example.OrderService", "framework": "dubbo" }` — use framework values: `dubbo`, `moa`, `feign`, `grpc`, `kafka`
-
-**Provider rules (`provides_rpc`):**
-
-1. Check `classes[].annotations` for `@DubboService`, `@MoaProvider`, or `@GrpcService`. When found, create edge from the annotated class → interface node.
-2. Use `classes[].interfaces` to identify the RPC interface the provider implements (e.g., if `interfaces: ["PaymentFacade"]`, the target is that interface node).
-3. Add tags `rpc-provider` and framework tag (`dubbo`, `moa`, `grpc`).
-4. In the provider node's `summary`, list the interface name and exposed RPC methods (e.g., "Implements PaymentFacade: createPayment(), refund()") for downstream cross-service matching.
-
-**Consumer rules (`consumes_rpc`):**
-
-1. Check `classes[].typedProperties[].annotations` for `@DubboReference`, `@MoaConsumer`, or `@GrpcClient`. The field's `type` gives the consumed interface name. Also check `classes[].annotations` for `@FeignClient`.
-2. Create edge from the containing class → target interface/service.
-3. For `@FeignClient`, resolve the target from annotation `arguments.name` / `arguments.value` / `arguments.url`; framework = `feign`.
-4. Add tag `rpc-consumer`. Use `consumes_rpc` exclusively — do NOT also emit `depends_on` for the same remote service.
-5. If the interface definition is not in this batch, emit the edge anyway (merge script resolves or drops dangling targets).
-
-**Module Routing rules (`provides_route` / `consumes_route`):**
-
-Use these edge types for **in-process module-to-module service routing** — NOT for network RPC. Common frameworks: ARouter, TheRouter, WMRouter, ServiceLoader pattern.
-
-1. When a class has `@Route(path="/service/xxx")` annotation AND implements a service interface, emit `provides_route` from the implementation class → interface node.
-2. When code uses `ARouter.getInstance().navigation(XxxService::class.java)` or similar routing discovery, emit `consumes_route` from the caller → interface node.
-3. Add tags `route-provider` and `arouter` (or the specific router framework).
-4. **NEVER use `provides_rpc` for ARouter/TheRouter/WMRouter** — these are in-process, not network calls.
-5. Weight: `provides_route` = `0.8`, `consumes_route` = `0.7`.
-
-**Dependency Injection rules (`injects`):**
-
-1. Check `classes[].typedProperties[].annotations` for `@Autowired`, `@Resource`, or `@Inject`. The field's `type` gives the injected type name.
-2. Create edge from the containing class → injected type class.
-3. For `@Autowired` with `required=false`, still emit the edge (the dependency exists, just optional).
-4. For `@Value` annotations, skip — these inject configuration values, not service dependencies.
-5. Add tag `dependency-injection` to the containing class.
-6. If the injected type is not in this batch, emit the edge anyway (merge script resolves or drops dangling targets).
-
-**Edge shape (injects):**
-
-- **Source:** `class:<path>:<ClassName>` (the class containing the injected field)
-- **Target:** `class:<path>:<InjectedType>` (the type being injected)
-- **Weight:** `0.8`
-- **Direction:** `forward`
-
-**Example injects edge:**
-
-```json
-{
-  "source": "class:src/main/java/com/example/OrderService.java:OrderService",
-  "target": "class:src/main/java/com/example/wrapper/UserIntimacyMoaWrapperService.java:UserIntimacyMoaWrapperService",
-  "type": "injects",
-  "direction": "forward",
-  "weight": 0.8
-}
-```
-
-**HTTP client endpoint rules (`consumes_api`):**
-
-When `functions[].annotations` or `classes[].annotations` contain Retrofit/JAX-RS HTTP method annotations (`@GET`, `@POST`, `@PUT`, `@DELETE`, `@PATCH`, `@HEAD`), AND the structural extraction output includes `endpoints[]` data for the file:
-
-1. The containing interface/class is an HTTP API client definition. Create `consumes_api` edges from the client interface → the target API (use the base URL or service name from class-level annotations like `@FeignClient`, `@Path`, or `@RequestMapping` when available).
-2. Each method annotated with `@GET`/`@POST`/etc. represents one HTTP endpoint call. The `endpoints[]` in extraction results already provides `method` and `path` for each.
-3. Add tags `http-client`, `api-consumer` to the client interface/class node.
-4. **Edge shape:** `{ "source": "class:<path>:<ClientInterface>", "target": "endpoint:<path>:<METHOD-apiPath>", "type": "consumes_api", "direction": "forward", "weight": 0.7, "description": "{\"method\": \"POST\", \"path\": \"/api/users\", \"framework\": \"retrofit\"}" }`. The `description` field with method/path/framework JSON is ALWAYS REQUIRED (even when the endpoint node exists in this batch).
-5. **Endpoint node:** Each endpoint MUST be emitted as a node with `type: "endpoint"`, `filePath`, and `lineRange` pointing to the annotated method's line range. The `name` field uses space separator: `"POST /api/users"` (NOT hyphen).
-6. For Retrofit interfaces, the interface name typically indicates the consumed service (e.g., `UserApiService`, `OrderApi`). Include this in the node summary.
-
-**Message-queue rules (`publishes` / `subscribes`):**
-
-1. `@KafkaListener`: `subscribes` from the annotated class/method → topic target. Extract topic from `topics`, `topicPattern`, or `id` attributes.
-2. `@KafkaTemplate` usage (e.g., `kafkaTemplate.send("order-events", ...)`): `publishes` from the calling class/method → topic. Infer topic from the first string literal argument when possible.
-3. Target ID: prefer `class:<path>:<TopicName>` when a topic constant exists; otherwise use a synthetic node id with the topic string in `name` and document the topic in `description`.
-
-**Example RPC edges:**
-
-```json
-{
-  "source": "class:src/main/java/com/example/OrderServiceImpl.java:OrderServiceImpl",
-  "target": "class:src/main/java/com/example/api/OrderService.java:OrderService",
-  "type": "provides_rpc",
-  "direction": "forward",
-  "weight": 0.9,
-  "description": "{\"interface\":\"com.example.api.OrderService\",\"framework\":\"dubbo\"}"
-}
-```
-
-```json
-{
-  "source": "class:src/main/java/com/example/PaymentClient.java:PaymentClient",
-  "target": "class:src/main/java/com/example/api/PaymentService.java:PaymentService",
-  "type": "consumes_rpc",
-  "direction": "forward",
-  "weight": 0.8,
-  "description": "{\"interface\":\"com.example.api.PaymentService\",\"framework\":\"moa\"}"
-}
-```
 
 Do NOT use edge types not listed in the tables above.
 
@@ -623,20 +496,11 @@ Use these hints for common edge patterns:
 | CI config runs test commands | `triggers` from CI config to test files |
 | SQL migration references table name | `migrates` from migration to table definition |
 | GraphQL resolver imports from code | `defines_schema` from schema to resolver |
-| `@DubboService` / `@MoaProvider` class implements interface | `provides_rpc` from class → interface node |
-| `@DubboReference` / `@MoaConsumer` injected field | `consumes_rpc` from containing class → interface node |
-| `@FeignClient` on interface or class | `consumes_rpc` from client → remote service name |
-| `@GET`/`@POST`/`@PUT`/`@DELETE` on interface methods (Retrofit/JAX-RS) | `consumes_api` from client interface → endpoint |
-| `@Route(path="/service/xxx")` + implements IProvider/service interface (ARouter/TheRouter/WMRouter) | `provides_route` from impl class → interface node |
-| `ARouter.getInstance().navigation(XxxService::class.java)` or `TheRouter.get(...)` | `consumes_route` from caller → interface/path |
-| `@GrpcService` / `@GrpcClient` | `provides_rpc` / `consumes_rpc` respectively |
-| `@KafkaListener` on method | `subscribes` from class/method → topic |
-| `kafkaTemplate.send("topic", ...)` | `publishes` from caller → topic |
 
 ## Critical Constraints
 
 - NEVER invent file paths. Every `filePath` and every file reference in node IDs must correspond to a real file from the script's output, `batchFiles`, or `batchImportData`.
-- NEVER create edges to nodes that do not exist — **except for RPC/MQ edges** (`provides_rpc`, `consumes_rpc`, `publishes`, `subscribes`). For these edge types, the target interface/topic may reside in another service or batch; emit the edge anyway and the merge script will either resolve the target or create a synthetic node. For `imports` edges, only use paths listed in `batchImportData`. For non-code edges (configures, documents, deploys, etc.), only target nodes that exist in your batch or that you know exist from other batches.
+- NEVER create edges to nodes that do not exist — **except for RPC/MQ edges** (`provides_rpc`, `consumes_rpc`, `publishes`, `subscribes`), which are now produced by the rule engine. For `imports` edges, only use paths listed in `batchImportData`. For non-code edges (configures, documents, deploys, etc.), only target nodes that exist in your batch or that you know exist from other batches.
 - ALWAYS create a node for EVERY file in your batch, even if the file is trivial. Use the appropriate node type based on fileCategory.
 - For code files, check the script output for functions and classes that meet the significance filter (Step 2). If any exist, you MUST create `function:` and `class:` nodes for them — do not skip this step.
 - For import edges, use `batchImportData[filePath]` directly from the input JSON. Do NOT attempt to resolve import paths yourself -- the project scanner already did this deterministically.
