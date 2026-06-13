@@ -4,7 +4,7 @@ import type { ApiRequest, ApiContext, ApiResponse } from "../types"
 import { codeTokenize } from "./code-tokenizer"
 
 export const tokenize = codeTokenize
-export const CJK_REGEX = /[一-鿿]/
+export const CJK_REGEX = /[一-鿿㐀-䶿]/
 import {
   graphFileCandidates,
   readJsonFile,

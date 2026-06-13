@@ -33,7 +33,7 @@ export function codeTokenize(text: string): string[] {
   }
 
   // CJK segmentation via jieba
-  const cjk = text.match(/[一-鿿]+/g)
+  const cjk = text.match(/[一-鿿㐀-䶿]+/g)
   if (cjk) {
     for (const segment of cjk) {
       try {

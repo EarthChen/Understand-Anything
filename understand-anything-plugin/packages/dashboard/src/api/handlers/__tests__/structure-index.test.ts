@@ -116,6 +116,17 @@ describe("StructureIndex", () => {
       const results = index.search({ propertyType: "UserRepository" })
       expect(results.results.some((r) => r.name === "UserService")).toBe(true)
     })
+    it("filters by sectionKey", () => {
+      const index = new StructureIndex("test-service", mockData)
+      const results = index.search({ sectionKey: "getUser" })
+      expect(results.results.some((r) => r.name === "getUser")).toBe(true)
+      expect(results.results.some((r) => r.name === "OrderService")).toBe(false)
+    })
+    it("filters by sectionValue", () => {
+      const index = new StructureIndex("test-service", mockData)
+      const results = index.search({ sectionValue: "UserService" })
+      expect(results.results.some((r) => r.name === "UserService")).toBe(true)
+    })
   })
 
   describe("combined fuzzy + precise", () => {
