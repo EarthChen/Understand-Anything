@@ -1,5 +1,6 @@
 import path from "path"
 import fs from "fs"
+import { cut } from "@node-rs/jieba"
 import { LumoSearch } from "@lumosearch/search"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
 import {
@@ -100,10 +101,18 @@ export function tokenize(text: string): string[] {
   const cjk = text.match(/[\u4e00-\u9fff]+/g)
   if (cjk) {
     for (const segment of cjk) {
-      for (let i = 0; i < segment.length - 1; i++) {
-        tokens.push(segment.slice(i, i + 2))
+      try {
+        const words = cut(segment, true)  // \u7cbe\u786e\u6a21\u5f0f
+        for (const word of words) {
+          if (word.length > 0) tokens.push(word)
+        }
+      } catch {
+        // Fallback to bigram if jieba fails
+        for (let i = 0; i < segment.length - 1; i++) {
+          tokens.push(segment.slice(i, i + 2))
+        }
+        if (segment.length === 1) tokens.push(segment)
       }
-      if (segment.length === 1) tokens.push(segment)
     }
   }
 
