@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^2.0.4",
-    "@lumosearch/search": "^1.0.2",
     "@node-rs/jieba": "^2.0.1",
     "@understand-anything/core": "workspace:*",
     "@xyflow/react": "^12.0.0",
@@ -23,7 +22,7 @@
     "devlop": "^1.1.0",
     "elkjs": "^0.9.3",
     "express": "^5.2.1",
-    "fuse.js": "^7.4.1",
+    "fuse.js": "^7.4.2",
     "graphology": "^0.25.4",
     "graphology-communities-louvain": "^2.0.1",
     "graphology-types": "^0.24.8",

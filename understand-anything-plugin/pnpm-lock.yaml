@@ -33,9 +33,6 @@ importers:
       '@tree-sitter-grammars/tree-sitter-kotlin':
         specifier: ^1.1.0
         version: 1.1.0
-      fuse.js:
-        specifier: ^7.1.0
-        version: 7.4.1
       ignore:
         specifier: ^7.0.5
         version: 7.0.5
@@ -106,9 +103,6 @@ importers:
       '@dagrejs/dagre':
         specifier: ^2.0.4
         version: 2.0.4
-      '@lumosearch/search':
-        specifier: ^1.0.2
-        version: 1.0.2
       '@node-rs/jieba':
         specifier: ^2.0.1
         version: 2.0.1
@@ -134,8 +128,8 @@ importers:
         specifier: ^5.2.1
         version: 5.2.1
       fuse.js:
-        specifier: ^7.4.1
-        version: 7.4.1
+        specifier: ^7.4.2
+        version: 7.4.2
       graphology:
         specifier: ^0.25.4
         version: 0.25.4(graphology-types@0.24.8)
@@ -771,9 +765,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
-
-  '@lumosearch/search@1.0.2':
-    resolution: {integrity: sha512-PoFu8ss2xAXoUyrcdKfzUyBKQsF0Xy5SCmg78goAVwf/igNt384PIO4Agm975VhHv3GFM0ixjhvG/qm2sWyhPg==}
 
   '@mermaid-js/parser@1.1.1':
     resolution: {integrity: sha512-VuHdsYMK1bT6X2JbcAaWAhugTRvRBRyuZgd+c22swUeI9g/ntaxF7CY7dYarhZovofCbUNO0G7JesfmNtjYOCw==}
@@ -2018,8 +2009,8 @@ packages:
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
 
-  fuse.js@7.4.1:
-    resolution: {integrity: sha512-AY7lKAXK71hi3WgUvDy6oZL67UEHOOtvCAwVdOXHyJd6ZzftBy7QqxuXt4HxmmAhYjmp/YCuOELZtIvAdlZ+fw==}
+  fuse.js@7.4.2:
+    resolution: {integrity: sha512-LVbzjD4WA6UP5B1UnP8wuaXJiLnqMdM/E4fiJXTJ5haJ5b/MBNsK29h2fm6swEoQaVQjvYFWKLE2RanyZIoRVQ==}
     engines: {node: '>=10'}
 
   gensync@1.0.0-beta.2:
@@ -3777,8 +3768,6 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@lumosearch/search@1.0.2': {}
-
   '@mermaid-js/parser@1.1.1':
     dependencies:
       '@chevrotain/types': 11.1.2
@@ -5069,7 +5058,7 @@ snapshots:
 
   function-bind@1.1.2: {}
 
-  fuse.js@7.4.1: {}
+  fuse.js@7.4.2: {}
 
   gensync@1.0.0-beta.2: {}
 
