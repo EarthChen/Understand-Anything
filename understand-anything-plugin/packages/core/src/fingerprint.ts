@@ -20,6 +20,11 @@ export interface ClassFingerprint {
   properties: string[];
   exported: boolean;
   lineCount: number;
+  kind?: string;
+  decorators?: string[];
+  superclass?: string;
+  interfaces?: string[];
+  typedPropertyNames?: string[];
 }
 
 export interface ImportFingerprint {
@@ -98,6 +103,11 @@ export function extractFileFingerprint(
     properties: [...cls.properties],
     exported: exportedNames.has(cls.name),
     lineCount: cls.lineRange[1] - cls.lineRange[0] + 1,
+    kind: cls.kind,
+    decorators: cls.annotations?.map((a) => a.name),
+    superclass: cls.superclass,
+    interfaces: cls.interfaces ? [...cls.interfaces] : undefined,
+    typedPropertyNames: cls.typedProperties?.map((p) => p.name),
   }));
 
   const imports: ImportFingerprint[] = analysis.imports.map((imp) => ({
@@ -214,6 +224,21 @@ export function compareFingerprints(
     }
     if (oldCls.exported !== newCls.exported) {
       details.push(`export status changed: ${newCls.name}`);
+    }
+    if (oldCls.kind !== newCls.kind) {
+      details.push(`kind changed: ${newCls.name} (${oldCls.kind ?? "class"} → ${newCls.kind ?? "class"})`);
+    }
+    if (JSON.stringify(oldCls.decorators ?? []) !== JSON.stringify(newCls.decorators ?? [])) {
+      details.push(`decorators changed: ${newCls.name}`);
+    }
+    if (oldCls.superclass !== newCls.superclass) {
+      details.push(`superclass changed: ${newCls.name}`);
+    }
+    if (JSON.stringify(oldCls.interfaces ?? []) !== JSON.stringify(newCls.interfaces ?? [])) {
+      details.push(`interfaces changed: ${newCls.name}`);
+    }
+    if (JSON.stringify(oldCls.typedPropertyNames ?? []) !== JSON.stringify(newCls.typedPropertyNames ?? [])) {
+      details.push(`typed properties changed: ${newCls.name}`);
     }
   }
 
