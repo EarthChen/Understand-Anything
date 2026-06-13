@@ -1,8 +1,9 @@
-import type {
-  KnowledgeGraph,
-  GraphNode,
-  GraphEdge,
-  Layer,
+import {
+  traverseNeighbors,
+  type KnowledgeGraph,
+  type GraphNode,
+  type GraphEdge,
+  type Layer,
 } from "@understand-anything/core";
 
 export interface DiffContext {
@@ -22,7 +23,9 @@ export interface DiffContext {
 export function buildDiffContext(
   graph: KnowledgeGraph,
   changedFiles: string[],
+  options?: { maxDepth?: number },
 ): DiffContext {
+  const maxDepth = options?.maxDepth ?? 1;
   const { nodes, edges, layers } = graph;
 
   const changedNodeIds = new Set<string>();
@@ -50,22 +53,40 @@ export function buildDiffContext(
 
   const changedNodes = nodes.filter((n) => changedNodeIds.has(n.id));
 
-  // Find affected nodes: 1-hop neighbors of changed nodes (excluding already changed)
+  // Find affected nodes via multi-hop BFS (excluding already changed)
   const affectedNodeIds = new Set<string>();
   const impactedEdges: GraphEdge[] = [];
 
+  // Collect all edges between changed nodes
   for (const edge of edges) {
-    const sourceChanged = changedNodeIds.has(edge.source);
-    const targetChanged = changedNodeIds.has(edge.target);
-
-    if (sourceChanged || targetChanged) {
+    if (changedNodeIds.has(edge.source) && changedNodeIds.has(edge.target)) {
       impactedEdges.push(edge);
-      if (sourceChanged && !changedNodeIds.has(edge.target)) {
-        affectedNodeIds.add(edge.target);
-      }
-      if (targetChanged && !changedNodeIds.has(edge.source)) {
-        affectedNodeIds.add(edge.source);
-      }
+    }
+  }
+
+  // Collect all edge types in the graph for unrestricted traversal
+  const allEdgeTypes = [...new Set(edges.map((e) => e.type))];
+
+  const traversalResults = traverseNeighbors(
+    graph,
+    [...changedNodeIds],
+    "both",
+    allEdgeTypes,
+    maxDepth,
+  );
+
+  // Build edge lookup for reconstructing full GraphEdge objects
+  const edgeLookup = new Map<string, GraphEdge>();
+  for (const edge of edges) {
+    edgeLookup.set(`${edge.source}|${edge.target}|${edge.type}`, edge);
+  }
+
+  for (const result of traversalResults) {
+    affectedNodeIds.add(result.nodeId);
+    const key = `${result.edge.source}|${result.edge.target}|${result.edge.type}`;
+    const fullEdge = edgeLookup.get(key);
+    if (fullEdge) {
+      impactedEdges.push(fullEdge);
     }
   }
 
