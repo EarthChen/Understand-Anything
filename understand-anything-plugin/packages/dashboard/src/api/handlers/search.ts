@@ -354,6 +354,50 @@ function rrfFuse(
   return fused.slice(0, limit)
 }
 
+interface QueryIntent {
+  type: 'exact' | 'fuzzy' | 'semantic' | 'structural'
+  entities: string[]
+  relations: string[]
+  scope: SearchScope
+}
+
+interface SearchStrategy {
+  methods: Array<{
+    type: 'bm25' | 'vector' | 'graph' | 'hybrid'
+    weight: number
+    params: Record<string, unknown>
+  }>
+  graphExpansion: {
+    enabled: boolean
+    depth: number
+    strategy: 'forward' | 'backward' | 'bidirectional'
+    pruning: boolean
+  }
+  fusion: {
+    method: 'rrf' | 'weighted' | 'learning-to-rank'
+    weights: Record<string, number>
+  }
+}
+
+function understandQuery(query: string): QueryIntent {
+  // 实现查询理解逻辑
+  return {
+    type: 'fuzzy',
+    entities: [],
+    relations: [],
+    scope: 'all'
+  }
+}
+
+function selectStrategy(intent: QueryIntent): SearchStrategy {
+  // 实现策略选择逻辑
+  return {
+    methods: [{ type: 'bm25', weight: 1, params: {} }],
+    graphExpansion: { enabled: true, depth: 2, strategy: 'forward', pruning: false },
+    fusion: { method: 'rrf', weights: {} }
+  }
+}
+
 function lumoSearch(
   state: SearchIndexState,
   query: string,
