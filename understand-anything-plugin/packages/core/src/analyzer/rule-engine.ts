@@ -88,6 +88,7 @@ export const BUILTIN_RULES: FrameworkRule[] = [
     annotations: {
       "MoaProvider": { edge: "provides_rpc", weight: 0.9, extractPath: "uri" },
       "MoaConsumer": { edge: "consumes_rpc", weight: 0.9, extractPath: "serviceUri" },
+      "MomoConfig": { edge: "configures", weight: 0.9, extractPath: "key" },
     },
   },
   {
@@ -242,6 +243,12 @@ export function mapAnnotationsToEdges(
           const path = ann.arguments.path || ann.arguments.value;
           if (path) {
             edges.push(makeEdge(classNodeId, `api:${path}`, mapping, ann));
+          }
+        } else if (mapping.edge === "configures" && ann.arguments) {
+          // Dynamic config providers (MoaConfig/MomoConfig): target from key argument
+          const key = ann.arguments.key || ann.arguments.value;
+          if (key) {
+            edges.push(makeEdge(classNodeId, `config:${key}`, mapping, ann));
           }
         } else {
           edges.push(makeEdge(classNodeId, `domain:${mapping.edge}`, mapping, ann));
