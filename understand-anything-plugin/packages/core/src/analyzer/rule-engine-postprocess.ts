@@ -10,11 +10,22 @@ import { runRuleEngine } from "./rule-engine.js";
 
 const graphPath = process.argv[2];
 if (!graphPath) {
-  console.error("Usage: npx tsx rule-engine-postprocess.ts <graph-path>");
+  console.error("Usage: npx tsx rule-engine-postprocess.ts <graph-path> [--dry-run]");
   process.exit(1);
 }
 
+const dryRun = process.argv.includes("--dry-run");
+
 const graph = JSON.parse(readFileSync(graphPath, "utf-8"));
+
+if (!graph.nodes || !Array.isArray(graph.nodes)) {
+  console.error("Error: graph JSON missing 'nodes' array");
+  process.exit(1);
+}
+if (!graph.edges || !Array.isArray(graph.edges)) {
+  console.error("Error: graph JSON missing 'edges' array");
+  process.exit(1);
+}
 
 // Extract annotations from existing nodes
 const extractionResults = graph.nodes
@@ -47,10 +58,16 @@ const newEdges = result.edges.filter(
 );
 
 graph.edges.push(...newEdges);
-writeFileSync(graphPath, JSON.stringify(graph, null, 2));
 
-console.log(JSON.stringify({
+const stats = {
   edgesAdded: newEdges.length,
   totalEdges: graph.edges.length,
   unresolved: result.unresolved.length,
-}));
+};
+
+if (dryRun) {
+  console.log(JSON.stringify({ ...stats, dryRun: true }));
+} else {
+  writeFileSync(graphPath, JSON.stringify(graph, null, 2));
+  console.log(JSON.stringify(stats));
+}
