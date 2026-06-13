@@ -1141,25 +1141,47 @@ def _score_node_relevance(node: dict[str, Any], query: str) -> float:
     name = node.get("name", "").lower()
     node_id = node.get("id", "").lower()
     score = 0.0
+
+    # 名称匹配
     if q == name:
         score += 15.0
     elif q in name:
         score += 5.0 + (len(q) / max(len(name), 1))
+
+    # ID 匹配
     if q in node_id:
         score += 2.0
+
+    # 类型加权
     node_type = node.get("type", "")
     type_bonus = {"class": 2, "function": 1.5, "interface": 2, "module": 1, "endpoint": 2, "service": 2.5}.get(node_type, 0)
     score += type_bonus
+
+    # 文件路径和行号
     if node.get("filePath"):
         score += 1.5
     if node.get("lineRange"):
         score += 1.0
 
+    # 实现类加权
     raw_name = node.get("name", "")
     if any(raw_name.endswith(s) for s in _IMPL_SUFFIXES):
         score += 3.0
     elif any(raw_name.endswith(s) for s in _CONFIG_SUFFIXES):
         score -= 2.0
+
+    # 新增：标签匹配
+    tags = node.get("tags", [])
+    if tags:
+        tag_text = " ".join(tags).lower()
+        if q in tag_text:
+            score += 4.0
+
+    # 新增：摘要匹配
+    summary = node.get("summary", "").lower()
+    if summary and q in summary:
+        score += 3.0
+
     return score
 
 
