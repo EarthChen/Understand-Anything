@@ -1,22 +1,69 @@
 #!/usr/bin/env npx tsx
 // packages/core/src/analyzer/rule-engine-postprocess.ts
 //
-// CLI script that applies the rule engine to an existing knowledge-graph.json
-// for incremental upgrade — reads annotations from existing graph nodes, runs
-// the rule engine, and merges new edges without duplicates.
+// CLI script that runs the rule engine to produce annotation→edge mappings.
+//
+// Two modes:
+//   1. KG mode:        npx tsx rule-engine-postprocess.ts <graph.json> [--dry-run]
+//                      Reads annotations from existing graph nodes, runs rule engine,
+//                      merges new edges into the graph.
+//
+//   2. Extraction mode: npx tsx rule-engine-postprocess.ts <extract-results.json> <output.json>
+//                       Reads extraction results from extract-structure.mjs, runs rule engine,
+//                       writes { edges, unresolved } to output file.
 
 import { readFileSync, writeFileSync } from "fs";
 import { runRuleEngine } from "./rule-engine.js";
 
-const graphPath = process.argv[2];
-if (!graphPath) {
-  console.error("Usage: npx tsx rule-engine-postprocess.ts <graph-path> [--dry-run]");
+const args = process.argv.slice(2);
+const positionalArgs = args.filter(a => !a.startsWith("--"));
+
+const inputPath = positionalArgs[0];
+const outputPath = positionalArgs[1];
+const extractionMode = args.includes("--mode=extraction-input");
+
+if (!inputPath) {
+  console.error("Usage:");
+  console.error("  KG mode:        npx tsx rule-engine-postprocess.ts <graph.json> [--dry-run]");
+  console.error("  Extraction mode: npx tsx rule-engine-postprocess.ts <extract-results.json> <output.json> --mode=extraction-input");
   process.exit(1);
 }
 
-const dryRun = process.argv.includes("--dry-run");
+const dryRun = args.includes("--dry-run");
 
-const graph = JSON.parse(readFileSync(graphPath, "utf-8"));
+// --- Extraction mode: read extraction results directly ---
+if (extractionMode) {
+  const inputData = JSON.parse(readFileSync(inputPath, "utf-8"));
+
+  // Support both formats: { results: [...] } from extract-structure.mjs
+  // and { extractionResults: [...] } from wrapper scripts
+  const extractionResults = inputData.results || inputData.extractionResults;
+
+  if (!Array.isArray(extractionResults)) {
+    console.error("Error: input JSON missing 'results' or 'extractionResults' array");
+    process.exit(1);
+  }
+
+  const result = runRuleEngine(extractionResults, { frameworks: [], packageJson: {} });
+
+  const output = {
+    edges: result.edges,
+    unresolved: result.unresolved,
+    stats: {
+      totalEdges: result.edges.length,
+      unresolved: result.unresolved.length,
+    },
+  };
+
+  if (outputPath) {
+    writeFileSync(outputPath, JSON.stringify(output, null, 2));
+  }
+  console.log(JSON.stringify(output.stats));
+  process.exit(0);
+}
+
+// --- KG mode: merge edges into existing graph ---
+const graph = JSON.parse(readFileSync(inputPath, "utf-8"));
 
 if (!graph.nodes || !Array.isArray(graph.nodes)) {
   console.error("Error: graph JSON missing 'nodes' array");
@@ -68,6 +115,6 @@ const stats = {
 if (dryRun) {
   console.log(JSON.stringify({ ...stats, dryRun: true }));
 } else {
-  writeFileSync(graphPath, JSON.stringify(graph, null, 2));
+  writeFileSync(inputPath, JSON.stringify(graph, null, 2));
   console.log(JSON.stringify(stats));
 }

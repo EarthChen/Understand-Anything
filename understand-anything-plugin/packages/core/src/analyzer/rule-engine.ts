@@ -34,7 +34,7 @@ const KNOWN_EDGE_TYPES = new Set<string>([
   "calls", "subscribes", "publishes", "middleware",
   "provides_rpc", "consumes_rpc",
   "provides_route", "consumes_route",
-  "consumes_api", "injects",
+  "provides_api", "consumes_api", "injects",
   "reads_from", "writes_to", "transforms", "validates",
   "depends_on", "tested_by", "configures",
   "related", "similar_to",
@@ -57,8 +57,13 @@ export const BUILTIN_RULES: FrameworkRule[] = [
       "Component": { edge: "related", weight: 0.5 },
       "Service": { edge: "related", weight: 0.5 },
       "Repository": { edge: "related", weight: 0.5 },
-      "Controller": { edge: "provides_route", weight: 0.8 },
-      "RestController": { edge: "provides_route", weight: 0.8 },
+      "Controller": { edge: "provides_api", weight: 0.8 },
+      "RestController": { edge: "provides_api", weight: 0.8 },
+      "GetMapping": { edge: "provides_api", weight: 0.8 },
+      "PostMapping": { edge: "provides_api", weight: 0.8 },
+      "PutMapping": { edge: "provides_api", weight: 0.8 },
+      "DeleteMapping": { edge: "provides_api", weight: 0.8 },
+      "PatchMapping": { edge: "provides_api", weight: 0.8 },
     },
     metaAnnotations: {
       "Service": ["Component"],
@@ -134,7 +139,12 @@ export const BUILTIN_RULES: FrameworkRule[] = [
     detectionKeywords: ["@nestjs/core", "@nestjs/common"],
     annotations: {
       "Injectable": { edge: "injects", weight: 0.9 },
-      "Controller": { edge: "provides_route", weight: 0.8 },
+      "Controller": { edge: "provides_api", weight: 0.8 },
+      "Get": { edge: "provides_api", weight: 0.8 },
+      "Post": { edge: "provides_api", weight: 0.8 },
+      "Put": { edge: "provides_api", weight: 0.8 },
+      "Delete": { edge: "provides_api", weight: 0.8 },
+      "Patch": { edge: "provides_api", weight: 0.8 },
     },
   },
 ];
@@ -222,10 +232,16 @@ export function mapAnnotationsToEdges(
             edges.push(makeEdge(classNodeId, `endpoint:${iface}`, mapping, ann));
           }
         } else if (mapping.edge === "provides_route" && ann.arguments) {
-          // Route providers: target from annotation path argument
+          // Route providers (ARouter/TheRouter): target from annotation path argument
           const path = ann.arguments.path || ann.arguments.value;
           if (path) {
             edges.push(makeEdge(classNodeId, `route:${path}`, mapping, ann));
+          }
+        } else if (mapping.edge === "provides_api" && ann.arguments) {
+          // HTTP API providers (Spring/NestJS): target from annotation path argument
+          const path = ann.arguments.path || ann.arguments.value;
+          if (path) {
+            edges.push(makeEdge(classNodeId, `api:${path}`, mapping, ann));
           }
         } else {
           edges.push(makeEdge(classNodeId, `domain:${mapping.edge}`, mapping, ann));
