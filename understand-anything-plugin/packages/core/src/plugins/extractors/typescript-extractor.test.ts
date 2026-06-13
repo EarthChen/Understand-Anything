@@ -150,6 +150,48 @@ describe("TypeScriptExtractor heritage extraction", () => {
   });
 });
 
+describe("TypeScriptExtractor CommonJS support", () => {
+  it("detects require() as import", () => {
+    const code = `const fs = require('fs');`;
+    const root = parse(code);
+    const result = extractor.extractStructure(root);
+    expect(result.imports).toHaveLength(1);
+    expect(result.imports[0].source).toBe("fs");
+  });
+
+  it("detects require() with destructuring", () => {
+    const code = `const { readFile, writeFile } = require('fs');`;
+    const root = parse(code);
+    const result = extractor.extractStructure(root);
+    expect(result.imports).toHaveLength(1);
+    expect(result.imports[0].source).toBe("fs");
+  });
+
+  it("detects module.exports as export", () => {
+    const code = `module.exports = { foo: 1 };`;
+    const root = parse(code);
+    const result = extractor.extractStructure(root);
+    expect(result.exports.length).toBeGreaterThan(0);
+    expect(result.exports.some((e) => e.name === "module.exports")).toBe(true);
+  });
+
+  it("detects exports.foo as export", () => {
+    const code = `exports.bar = function() {};`;
+    const root = parse(code);
+    const result = extractor.extractStructure(root);
+    expect(result.exports.length).toBeGreaterThan(0);
+    expect(result.exports.some((e) => e.name === "bar")).toBe(true);
+  });
+
+  it("detects multiple exports.foo assignments", () => {
+    const code = `exports.a = 1;\nexports.b = 2;`;
+    const root = parse(code);
+    const result = extractor.extractStructure(root);
+    expect(result.exports.length).toBe(2);
+    expect(result.exports.map((e) => e.name)).toEqual(expect.arrayContaining(["a", "b"]));
+  });
+});
+
 describe("TypeScriptExtractor typed properties", () => {
   it("extracts typed class fields", () => {
     const code = `

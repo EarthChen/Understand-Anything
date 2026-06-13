@@ -293,7 +293,7 @@ export class TypeScriptExtractor implements LanguageExtractor {
 
       case "lexical_declaration":
       case "variable_declaration":
-        this.extractVariableDeclarations(node, functions);
+        this.extractVariableDeclarations(node, functions, imports);
         break;
 
       case "import_statement":
@@ -321,6 +321,10 @@ export class TypeScriptExtractor implements LanguageExtractor {
           exports,
           exportedNames,
         );
+        break;
+
+      case "expression_statement":
+        this.extractCommonJSExport(node, exports, exportedNames);
         break;
     }
   }
@@ -466,6 +470,7 @@ export class TypeScriptExtractor implements LanguageExtractor {
   private extractVariableDeclarations(
     node: TreeSitterNode,
     functions: StructuralAnalysis["functions"],
+    imports?: StructuralAnalysis["imports"],
   ): void {
     for (let j = 0; j < node.childCount; j++) {
       const child = node.child(j);
@@ -473,6 +478,31 @@ export class TypeScriptExtractor implements LanguageExtractor {
 
       const nameNode = child.childForFieldName("name");
       const valueNode = child.childForFieldName("value");
+
+      // Detect CommonJS require(): const x = require('module')
+      if (
+        imports &&
+        valueNode &&
+        valueNode.type === "call_expression"
+      ) {
+        const funcNode = valueNode.childForFieldName("function");
+        if (funcNode && funcNode.text === "require") {
+          const argsNode = valueNode.childForFieldName("arguments");
+          if (argsNode) {
+            const firstArg = argsNode.children.find(
+              (c) => c.type === "string",
+            );
+            if (firstArg) {
+              imports.push({
+                source: getStringValue(firstArg),
+                specifiers: [],
+                lineNumber: node.startPosition.row + 1,
+              });
+              continue;
+            }
+          }
+        }
+      }
 
       if (
         nameNode &&
@@ -533,7 +563,7 @@ export class TypeScriptExtractor implements LanguageExtractor {
     node: TreeSitterNode,
     functions: StructuralAnalysis["functions"],
     classes: StructuralAnalysis["classes"],
-    _imports: StructuralAnalysis["imports"],
+    imports: StructuralAnalysis["imports"],
     exports: StructuralAnalysis["exports"],
     exportedNames: Set<string>,
   ): void {
@@ -593,7 +623,7 @@ export class TypeScriptExtractor implements LanguageExtractor {
 
         case "lexical_declaration":
         case "variable_declaration": {
-          this.extractVariableDeclarations(child, functions);
+          this.extractVariableDeclarations(child, functions, imports);
           for (let k = 0; k < child.childCount; k++) {
             const declarator = child.child(k);
             if (
@@ -783,5 +813,52 @@ export class TypeScriptExtractor implements LanguageExtractor {
       properties: [],
       kind: "type",
     });
+  }
+
+  /**
+   * Detect CommonJS export patterns:
+   * - `module.exports = ...`
+   * - `exports.foo = ...`
+   */
+  private extractCommonJSExport(
+    node: TreeSitterNode,
+    exports: StructuralAnalysis["exports"],
+    exportedNames: Set<string>,
+  ): void {
+    // expression_statement wraps an assignment_expression
+    const assignment = node.children.find(
+      (c) => c.type === "assignment_expression",
+    );
+    if (!assignment) return;
+
+    const left = assignment.childForFieldName("left");
+    if (!left) return;
+
+    // module.exports = ...
+    if (left.type === "member_expression") {
+      const object = left.childForFieldName("object");
+      const property = left.childForFieldName("property");
+      if (!object || !property) return;
+
+      if (object.text === "module" && property.text === "exports") {
+        if (!exportedNames.has("module.exports")) {
+          exports.push({
+            name: "module.exports",
+            lineNumber: node.startPosition.row + 1,
+          });
+          exportedNames.add("module.exports");
+        }
+      } else if (object.text === "exports") {
+        // exports.foo = ...
+        const exportName = property.text;
+        if (!exportedNames.has(exportName)) {
+          exports.push({
+            name: exportName,
+            lineNumber: node.startPosition.row + 1,
+          });
+          exportedNames.add(exportName);
+        }
+      }
+    }
   }
 }
