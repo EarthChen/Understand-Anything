@@ -47,7 +47,7 @@ interface KgEdgeEntry {
   type: string
 }
 
-interface SearchIndexState {
+export interface SearchIndexState {
   kgIndex: KgIndex
   wikiIndex: WikiIndex
   edges: KgEdgeEntry[]
@@ -61,7 +61,7 @@ const searchIndexCache = new Map<string, SearchIndexState>()
 
 const CANDIDATE_LIMIT = 500
 
-function kgGraphExpansion(
+export function kgGraphExpansion(
   state: SearchIndexState,
   seedIds: string[],
   maxNeighbors: number = 50,
@@ -106,7 +106,7 @@ function kgGraphExpansion(
 }
 
 
-function unifiedSearch(
+export function unifiedSearch(
   state: SearchIndexState,
   query: string,
   limit: number,

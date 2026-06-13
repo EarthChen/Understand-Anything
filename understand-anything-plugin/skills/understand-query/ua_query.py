@@ -688,6 +688,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     kg.add_argument("--type")
     kg.add_argument("--node")
     kg.add_argument("--search")
+    kg.add_argument("--tag", help="Filter by tag (e.g. 'auth', 'service')")
+    kg.add_argument("--offset", type=int, default=0, help="Pagination offset")
     kg.add_argument("--file")
     kg.add_argument("--start", type=int, help="Start line (for --file)")
     kg.add_argument("--end", type=int, help="End line (for --file)")
@@ -777,8 +779,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     struct.add_argument("--return-type", help="Search by function return type")
     struct.add_argument("--interface", help="Search by implemented interface")
     struct.add_argument("--property-type", help="Search by class property type")
+    struct.add_argument("--section-key", help="Filter by section name (function/class name substring)")
+    struct.add_argument("--section-value", help="Filter by section content (content substring)")
+    struct.add_argument("--q", help="Fuzzy search query (searches name, annotations, params, return type)")
     struct.add_argument("--path", help="Filter results by path pattern (substring match)")
     struct.add_argument("--limit", type=int, default=50, help="Max results to return")
+    struct.add_argument("--offset", type=int, default=0, help="Pagination offset")
     struct.add_argument("--chain", help="Traverse inheritance chain for a class name")
     struct.add_argument("--direction", choices=["up", "down"], default="up", help="Chain direction: up=superclasses, down=subclasses")
     struct.add_argument("--implementors", help="Find all classes implementing an interface")
@@ -993,9 +999,8 @@ def cmd_kg(args: argparse.Namespace) -> Any:
             params["end"] = str(args.end)
         return fetch_json(build_url(args.server, "/api/source", params))
     if args.search:
-        search_results = _search_api(args.server, args.search, service=args.service, scope="kg", limit=30)
-        if args.type and args.type != "node":
-            search_results = [n for n in search_results if n.get("type") == args.type]
+        type_filter = args.type if args.type and args.type != "node" else None
+        search_results = _search_api(args.server, args.search, service=args.service, scope="kg", limit=30, type=type_filter, tag=getattr(args, "tag", None), offset=getattr(args, "offset", 0))
         return {"nodes": search_results, "edges": None}
     params = {"service": args.service, "file": "knowledge-graph.json"}
     data = fetch_json(build_url(args.server, "/api/graph", params))
@@ -1205,13 +1210,19 @@ def _extract_code_keywords(flow_name: str) -> list[str]:
     return []
 
 
-def _search_api(server: str, query: str, service: str | None = None, scope: str = "kg", limit: int = 50, fusion: str = "none") -> list[dict]:
+def _search_api(server: str, query: str, service: str | None = None, scope: str = "kg", limit: int = 50, fusion: str = "none", type: str | None = None, tag: str | None = None, offset: int = 0) -> list[dict]:
     """Call the unified /api/search endpoint and return results."""
     params: dict[str, str] = {"q": query, "scope": scope, "limit": str(limit)}
     if service:
         params["service"] = service
     if fusion != "none":
         params["fusion"] = fusion
+    if type:
+        params["type"] = type
+    if tag:
+        params["tag"] = tag
+    if offset > 0:
+        params["offset"] = str(offset)
     data = fetch_json(build_url(server, "/api/search", params))
     return data.get("results", [])
 
@@ -1548,9 +1559,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
 
     batch_query = " ".join(keywords[:4])
     try:
-        batch_matched = _search_api(args.server, batch_query, service=service, scope="kg", limit=50, fusion=args.fusion)
-        if args.type:
-            batch_matched = [n for n in batch_matched if n.get("type") == args.type]
+        batch_matched = _search_api(args.server, batch_query, service=service, scope="kg", limit=50, fusion=args.fusion, type=args.type)
         for node in batch_matched:
             nid = node.get("id", "")
             score = _score_node_relevance(node, best_keyword)
@@ -1560,9 +1569,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
         # Batch query failed (e.g. server 500 on certain char combos) — fallback per keyword
         for kw in keywords[:3]:
             try:
-                kw_matched = _search_api(args.server, kw, service=service, scope="kg", limit=50, fusion=args.fusion)
-                if args.type:
-                    kw_matched = [n for n in kw_matched if n.get("type") == args.type]
+                kw_matched = _search_api(args.server, kw, service=service, scope="kg", limit=50, fusion=args.fusion, type=args.type)
                 for node in kw_matched:
                     nid = node.get("id", "")
                     score = _score_node_relevance(node, kw)
@@ -1578,9 +1585,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     eng_kws = [k for k in keywords if k.isascii() and len(k) > 3]
     if eng_kws and eng_kws[0] != batch_query and not seen_ids:
         try:
-            sup = _search_api(args.server, eng_kws[0], service=service, scope="kg", limit=50, fusion=args.fusion)
-            if args.type:
-                sup = [n for n in sup if n.get("type") == args.type]
+            sup = _search_api(args.server, eng_kws[0], service=service, scope="kg", limit=50, fusion=args.fusion, type=args.type)
             for node in sup:
                 nid = node.get("id", "")
                 score = _score_node_relevance(node, eng_kws[0])
@@ -2351,8 +2356,16 @@ def cmd_structure(args: argparse.Namespace) -> Any:
         search_params["propertyType"] = args.property_type
     if args.path:
         search_params["pathPattern"] = args.path
+    if getattr(args, "section_key", None):
+        search_params["sectionKey"] = args.section_key
+    if getattr(args, "section_value", None):
+        search_params["sectionValue"] = args.section_value
+    if getattr(args, "q", None):
+        search_params["q"] = args.q
+    if getattr(args, "offset", 0) > 0:
+        search_params["offset"] = str(args.offset)
     if len(search_params) <= 2:
-        raise SystemExit("structure search requires at least one filter: --annotation, --param-type, --return-type, --interface, --property-type")
+        raise SystemExit("structure search requires at least one filter: --q, --annotation, --param-type, --return-type, --interface, --property-type, --section-key, --section-value")
     return fetch_json(build_url(args.server, "/api/structure/search", search_params))
 
 
