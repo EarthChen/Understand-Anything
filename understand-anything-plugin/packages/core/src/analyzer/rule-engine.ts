@@ -1,4 +1,7 @@
-import type { EdgeType } from "../types.js";
+import type { EdgeType, AnnotationInfo } from "../types.js";
+import { resolveMetaAnnotations } from "./meta-annotation-resolver.js";
+import { resolveCallGraph } from "./call-graph-resolver.js";
+import type { FileExtraction } from "./call-graph-resolver.js";
 
 // --- Type definitions ---
 
@@ -157,6 +160,7 @@ export interface ExtractionResult {
   functions: Array<{ name: string; lineRange: [number, number] }>;
   imports: Array<{ source: string; specifiers: string[] }>;
   exports: Array<{ name: string }>;
+  callGraph?: Array<{ caller: string; callee: string; lineNumber: number }>;
 }
 
 export interface AnnotationEdge {
@@ -315,4 +319,117 @@ export function detectFrameworks(dependencies: string[]): string[] {
     }
   }
   return detected;
+}
+
+// --- Full pipeline orchestrator ---
+
+export interface RuleEngineResult {
+  edges: AnnotationEdge[];
+  unresolved: Array<UnresolvedAnnotation | { file: string; caller: string; callee: string; lineNumber: number }>;
+  stats: RuleEngineStats;
+}
+
+export interface RuleEngineStats {
+  totalFiles: number;
+  annotationsFound: number;
+  edgesProduced: number;
+  unresolvedAnnotations: number;
+  errors: number;
+  frameworkDetected: string[];
+  metaAnnotationsExpanded: number;
+  processingTimeMs: number;
+}
+
+export function runRuleEngine(
+  extractionResults: ExtractionResult[],
+  options: { frameworks: string[]; packageJson?: Record<string, unknown>; userRules?: RuleConfig },
+): RuleEngineResult {
+  const startTime = Date.now();
+  const allEdges: AnnotationEdge[] = [];
+  const allUnresolved: Array<UnresolvedAnnotation | { file: string; caller: string; callee: string; lineNumber: number }> = [];
+  let metaAnnotationsExpanded = 0;
+
+  // Step 1: Detect frameworks if not provided
+  const frameworks = options.frameworks.length > 0
+    ? options.frameworks
+    : detectFrameworks(Object.keys(options.packageJson?.dependencies ?? {}));
+
+  // Step 2: Map annotations to edges (per-file)
+  const annotationResult = mapAnnotationsToEdges(extractionResults, { frameworks, userRules: options.userRules });
+  allEdges.push(...annotationResult.edges);
+  allUnresolved.push(...annotationResult.unresolved);
+
+  // Step 3: Meta-annotation expansion (global, JVM only)
+  const allClasses = extractionResults.flatMap((f) =>
+    f.classes.map((c) => ({ name: c.name, annotations: (c.annotations ?? []) as AnnotationInfo[] })),
+  );
+
+  const classMap = new Map(allClasses.map((c) => [c.name, c]));
+
+  for (const file of extractionResults) {
+    for (const cls of file.classes) {
+      if (!cls.annotations?.length) continue;
+      const expanded = resolveMetaAnnotations(cls.name, classMap);
+      if (expanded.length > 0) {
+        metaAnnotationsExpanded += expanded.length;
+        const tempClass = { ...cls, annotations: [...(cls.annotations ?? []), ...expanded] };
+        const tempFile = { ...file, classes: [tempClass] };
+        const extraResult = mapAnnotationsToEdges([tempFile], { frameworks, userRules: options.userRules });
+        const existingKeys = new Set(allEdges.map((e) => `${e.source}|${e.target}|${e.type}`));
+        for (const edge of extraResult.edges) {
+          const key = `${edge.source}|${edge.target}|${edge.type}`;
+          if (!existingKeys.has(key)) {
+            allEdges.push(edge);
+            existingKeys.add(key);
+          }
+        }
+      }
+    }
+  }
+
+  // Step 4: Call graph resolution (global)
+  const callGraphInput: FileExtraction[] = extractionResults.map((f) => ({
+    path: f.path,
+    functions: f.functions,
+    callGraph: f.callGraph ?? [],
+    imports: f.imports,
+    classes: f.classes.map((c) => ({
+      name: c.name,
+      lineRange: c.lineRange,
+      methods: c.methods,
+      properties: c.properties,
+      typedProperties: c.typedProperties,
+    })),
+  }));
+  const callResult = resolveCallGraph(callGraphInput);
+  for (const edge of callResult.edges) {
+    allEdges.push({
+      source: `function:${edge.callerFile}:${edge.callerFunc}`,
+      target: `function:${edge.calleeFile}:${edge.calleeFunc}`,
+      type: "calls",
+      weight: 0.9,
+      direction: "forward",
+      description: JSON.stringify({ caller: edge.callerFunc, callee: edge.calleeFunc }),
+      ruleEngineSource: true,
+    });
+  }
+  allUnresolved.push(...callResult.unresolved);
+
+  return {
+    edges: allEdges,
+    unresolved: allUnresolved,
+    stats: {
+      totalFiles: extractionResults.length,
+      annotationsFound: extractionResults.reduce(
+        (sum, f) => sum + f.classes.reduce((s, c) => s + (c.annotations?.length ?? 0), 0),
+        0,
+      ),
+      edgesProduced: allEdges.length,
+      unresolvedAnnotations: allUnresolved.length,
+      errors: 0,
+      frameworkDetected: frameworks,
+      metaAnnotationsExpanded,
+      processingTimeMs: Date.now() - startTime,
+    },
+  };
 }

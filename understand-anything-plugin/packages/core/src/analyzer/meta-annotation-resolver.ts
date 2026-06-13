@@ -7,9 +7,11 @@ interface ClassAnnotations {
 
 export function resolveMetaAnnotations(
   className: string,
-  allClasses: ClassAnnotations[],
+  allClassesOrMap: ClassAnnotations[] | Map<string, ClassAnnotations>,
 ): AnnotationInfo[] {
-  const classMap = new Map(allClasses.map((c) => [c.name, c]));
+  const classMap = allClassesOrMap instanceof Map
+    ? allClassesOrMap
+    : new Map(allClassesOrMap.map((c) => [c.name, c]));
   const target = classMap.get(className);
   if (!target) return [];
 

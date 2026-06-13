@@ -1187,8 +1187,9 @@ def recover_rpc_mq_from_extraction(
                         continue
                     # Also check if any existing edge has this source+type
                     # with a target containing the interface name
+                    expected_target = _synthetic_node_id(iface)
                     already_covered = any(
-                        s == cls_node_id and t == "provides_rpc" and iface in tgt
+                        s == cls_node_id and t == "provides_rpc" and tgt == expected_target
                         for s, tgt, t in existing_edges
                     )
                     if already_covered:

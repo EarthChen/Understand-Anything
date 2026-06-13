@@ -154,11 +154,16 @@ function resolveImportPath(fromFile: string, importSource: string, files: FileEx
 
 function normalizePath(p: string): string {
   const parts: string[] = [];
+  let ups = 0;
   for (const part of p.split("/")) {
-    if (part === "..") parts.pop();
-    else if (part !== ".") parts.push(part);
+    if (part === "..") {
+      if (parts.length > 0) parts.pop();
+      else ups++;
+    } else if (part !== ".") {
+      parts.push(part);
+    }
   }
-  return parts.join("/");
+  return ups > 0 ? "../".repeat(ups) + parts.join("/") : parts.join("/");
 }
 
 function findFileContainingClass(files: FileExtraction[], className: string): string | null {
