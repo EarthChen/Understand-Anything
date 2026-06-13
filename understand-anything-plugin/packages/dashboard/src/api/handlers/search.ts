@@ -213,13 +213,28 @@ function kgGraphExpansion(
   const adj = state.adjacency
   const seedSet = new Set(seedIds)
   const neighborScores = new Map<string, number>()
+  const visited = new Set<string>(seedIds)
 
+  // 1-hop neighbors
   for (const seedId of seedIds) {
     const neighbors = adj.get(seedId) ?? new Set()
     for (const neighborId of neighbors) {
       if (seedSet.has(neighborId)) continue
       const current = neighborScores.get(neighborId) ?? 0
       neighborScores.set(neighborId, current + 1)
+      visited.add(neighborId)
+    }
+  }
+
+  // 2-hop neighbors
+  const oneHopIds = [...neighborScores.keys()]
+  for (const oneHopId of oneHopIds) {
+    const neighbors = adj.get(oneHopId) ?? new Set()
+    for (const neighborId of neighbors) {
+      if (visited.has(neighborId)) continue
+      const current = neighborScores.get(neighborId) ?? 0
+      neighborScores.set(neighborId, current + 0.5)  // 2-hop 权重降低
+      visited.add(neighborId)
     }
   }
 
