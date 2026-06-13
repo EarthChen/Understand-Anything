@@ -62,6 +62,9 @@ async function main() {
   const { projectRoot } = input;
 
   // Support both old (per-batch) and new (full-mode) input formats
+  if (input.fileList && input.batchFiles) {
+    process.stderr.write('extract-structure.mjs: warning: both fileList and batchFiles present, using fileList\n');
+  }
   const files = input.fileList || input.batchFiles;
   const importData = input.importData || input.batchImportData;
 
@@ -146,8 +149,9 @@ function processFiles(files, projectRoot, registry, importData) {
     let analysis = null;
     try {
       analysis = registry.analyzeFile(file.path, content);
-    } catch {
+    } catch (err) {
       // If analysis throws, treat as degraded — still include basic metrics
+      process.stderr.write(`extract-structure.mjs: analysis failed for ${file.path}: ${err instanceof Error ? err.message : err}\n`);
     }
 
     // Call graph extraction (code files only)

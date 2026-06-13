@@ -29,7 +29,7 @@ if (!graph.edges || !Array.isArray(graph.edges)) {
 
 // Extract annotations from existing nodes
 const extractionResults = graph.nodes
-  .filter((n: any) => n.annotations?.length > 0 || n.typedProperties?.length > 0)
+  .filter((n: any) => (n.type === "class" || n.type === "interface") && (n.annotations?.length > 0 || n.typedProperties?.length > 0))
   .map((n: any) => ({
     path: n.filePath || "",
     classes: [{

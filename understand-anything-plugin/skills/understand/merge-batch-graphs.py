@@ -1025,7 +1025,10 @@ def recover_imports_from_scan(
 
 def read_global_extraction_results(global_file: Path) -> list[dict]:
     """Read single global extraction results file."""
-    data = json.loads(global_file.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(global_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"Failed to read global extraction results from {global_file}: {e}") from e
     return data.get("results", [])
 
 
@@ -1124,7 +1127,8 @@ def recover_rpc_mq_from_extraction(
         for ext_file in extraction_files:
             try:
                 data = json.loads(ext_file.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError) as e:
+                print(f"  WARNING: skipping unreadable extraction file {ext_file.name}: {e}", file=sys.stderr)
                 continue
             results = data.get("results")
             if isinstance(results, list):
@@ -1471,7 +1475,8 @@ def recover_injects_from_extraction(
         for ext_file in extraction_files:
             try:
                 data = json.loads(ext_file.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError) as e:
+                print(f"  WARNING: skipping unreadable extraction file {ext_file.name}: {e}", file=sys.stderr)
                 continue
             results = data.get("results")
             if isinstance(results, list):
