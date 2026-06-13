@@ -136,6 +136,143 @@ export const BUILTIN_RULES: FrameworkRule[] = [
   },
 ];
 
+// --- Annotation-to-edge mapping ---
+
+export interface ExtractionResult {
+  path: string;
+  classes: Array<{
+    name: string;
+    lineRange: [number, number];
+    methods: string[];
+    properties: string[];
+    annotations?: Array<{ name: string; arguments?: Record<string, string> }>;
+    superclass?: string;
+    interfaces?: string[];
+    typedProperties?: Array<{
+      name: string;
+      type?: string;
+      annotations?: Array<{ name: string; arguments?: Record<string, string> }>;
+    }>;
+  }>;
+  functions: Array<{ name: string; lineRange: [number, number] }>;
+  imports: Array<{ source: string; specifiers: string[] }>;
+  exports: Array<{ name: string }>;
+}
+
+export interface AnnotationEdge {
+  source: string;
+  target: string;
+  type: string;
+  weight: number;
+  direction: string;
+  description: string;
+  ruleEngineSource: true;
+  properties?: Record<string, unknown>;
+}
+
+export interface UnresolvedAnnotation {
+  file: string;
+  className: string;
+  annotation: string;
+  level: "class" | "property" | "method";
+}
+
+export function mapAnnotationsToEdges(
+  extractionResults: ExtractionResult[],
+  options: { frameworks: string[]; userRules?: RuleConfig },
+): { edges: AnnotationEdge[]; unresolved: UnresolvedAnnotation[] } {
+  // Get applicable rules based on detected frameworks
+  const activeRules = BUILTIN_RULES.filter((r) => options.frameworks.includes(r.id));
+
+  // Build annotation→EdgeMapping lookup from active rules + user rules
+  const annotationMap = new Map<string, EdgeMapping>();
+  for (const rule of activeRules) {
+    for (const [ann, mapping] of Object.entries(rule.annotations)) {
+      annotationMap.set(ann, mapping);
+    }
+  }
+  if (options.userRules?.rules.annotations) {
+    for (const [ann, mapping] of Object.entries(options.userRules.rules.annotations)) {
+      annotationMap.set(ann, mapping);
+    }
+  }
+
+  const edges: AnnotationEdge[] = [];
+  const unresolved: UnresolvedAnnotation[] = [];
+
+  for (const file of extractionResults) {
+    for (const cls of file.classes) {
+      const classNodeId = `class:${file.path}:${cls.name}`;
+
+      // Class-level annotations
+      for (const ann of cls.annotations ?? []) {
+        const mapping = annotationMap.get(ann.name);
+        if (!mapping) {
+          unresolved.push({ file: file.path, className: cls.name, annotation: ann.name, level: "class" });
+          continue;
+        }
+
+        // For RPC providers: target from interfaces[]
+        if (mapping.edge === "provides_rpc" && cls.interfaces?.length) {
+          for (const iface of cls.interfaces) {
+            edges.push(makeEdge(classNodeId, `endpoint:${iface}`, mapping, ann));
+          }
+        } else if (mapping.edge === "provides_route" && ann.arguments) {
+          // Route providers: target from annotation path argument
+          const path = ann.arguments.path || ann.arguments.value;
+          if (path) {
+            edges.push(makeEdge(classNodeId, `route:${path}`, mapping, ann));
+          }
+        } else {
+          edges.push(makeEdge(classNodeId, `domain:${mapping.edge}`, mapping, ann));
+        }
+      }
+
+      // Property-level annotations (DI, RPC consumers)
+      for (const prop of cls.typedProperties ?? []) {
+        for (const ann of prop.annotations ?? []) {
+          const mapping = annotationMap.get(ann.name);
+          if (!mapping) {
+            unresolved.push({ file: file.path, className: cls.name, annotation: ann.name, level: "property" });
+            continue;
+          }
+
+          // For injects: target from property type
+          if (mapping.edge === "injects" && prop.type) {
+            edges.push(makeEdge(classNodeId, `class:${prop.type}`, mapping, ann));
+          }
+          // For consumes_rpc: target from property type (interface FQN)
+          else if (mapping.edge === "consumes_rpc" && prop.type) {
+            edges.push(makeEdge(classNodeId, `endpoint:${prop.type}`, mapping, ann));
+          }
+          else {
+            edges.push(makeEdge(classNodeId, `domain:${mapping.edge}`, mapping, ann));
+          }
+        }
+      }
+    }
+  }
+
+  return { edges, unresolved };
+}
+
+function makeEdge(
+  source: string,
+  target: string,
+  mapping: EdgeMapping,
+  ann: { name: string; arguments?: Record<string, string> },
+): AnnotationEdge {
+  return {
+    source,
+    target,
+    type: mapping.edge,
+    weight: mapping.weight,
+    direction: mapping.role === "target" ? "reverse" : "forward",
+    description: JSON.stringify({ annotation: ann.name, arguments: ann.arguments }),
+    ruleEngineSource: true,
+  };
+}
+
 // --- Validation ---
 
 export function validateRuleConfig(config: unknown): asserts config is RuleConfig {

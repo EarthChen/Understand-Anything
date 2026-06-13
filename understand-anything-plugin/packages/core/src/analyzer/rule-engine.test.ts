@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateRuleConfig, detectFrameworks } from "./rule-engine.js";
+import { validateRuleConfig, detectFrameworks, mapAnnotationsToEdges } from "./rule-engine.js";
 
 describe("validateRuleConfig", () => {
   it("accepts valid config", () => {
@@ -50,5 +50,70 @@ describe("detectFrameworks", () => {
   it("returns empty for unknown dependencies", () => {
     const frameworks = detectFrameworks(["lodash", "express"]);
     expect(frameworks).toEqual([]);
+  });
+});
+
+describe("mapAnnotationsToEdges", () => {
+  it("maps @Autowired to injects edge", () => {
+    const fileResult = {
+      path: "src/MyService.java",
+      classes: [{
+        name: "MyService",
+        lineRange: [1, 10] as [number, number],
+        methods: [],
+        properties: [],
+        typedProperties: [{
+          name: "userRepository",
+          type: "UserRepository",
+          annotations: [{ name: "Autowired" }],
+        }],
+        annotations: [],
+      }],
+      functions: [],
+      imports: [],
+      exports: [],
+    };
+    const result = mapAnnotationsToEdges([fileResult], { frameworks: ["spring"] });
+    expect(result.edges).toHaveLength(1);
+    expect(result.edges[0].type).toBe("injects");
+    expect(result.edges[0].source).toContain("MyService");
+  });
+
+  it("maps @DubboService + implements to provides_rpc edge", () => {
+    const fileResult = {
+      path: "src/UserServiceImpl.java",
+      classes: [{
+        name: "UserServiceImpl",
+        lineRange: [1, 20] as [number, number],
+        methods: [],
+        properties: [],
+        annotations: [{ name: "DubboService" }],
+        interfaces: ["UserService"],
+      }],
+      functions: [],
+      imports: [],
+      exports: [],
+    };
+    const result = mapAnnotationsToEdges([fileResult], { frameworks: ["dubbo"] });
+    expect(result.edges.some((e) => e.type === "provides_rpc")).toBe(true);
+  });
+
+  it("collects unresolved annotations", () => {
+    const fileResult = {
+      path: "src/Unknown.java",
+      classes: [{
+        name: "Unknown",
+        lineRange: [1, 5] as [number, number],
+        methods: [],
+        properties: [],
+        annotations: [{ name: "SomeCustomThing" }],
+      }],
+      functions: [],
+      imports: [],
+      exports: [],
+    };
+    const result = mapAnnotationsToEdges([fileResult], { frameworks: [] });
+    expect(result.unresolved).toHaveLength(1);
+    expect(result.unresolved[0].annotation).toBe("SomeCustomThing");
   });
 });
