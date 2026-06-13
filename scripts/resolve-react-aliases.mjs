@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Resolves React alias paths from the pnpm store for vitest.
  * Called by vitest-react-aliases.ts at test startup.
