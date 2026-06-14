@@ -1,6 +1,7 @@
 """Search, graph traversal, scoring, and pure logic helpers."""
 from __future__ import annotations
 import re
+import sys
 from typing import Any
 from _utils import fetch_json, build_url, _IMPL_SUFFIXES, _CONFIG_SUFFIXES
 

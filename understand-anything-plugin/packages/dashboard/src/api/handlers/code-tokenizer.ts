@@ -1,4 +1,6 @@
-import jieba from "@node-rs/jieba"
+import { Jieba } from "@node-rs/jieba"
+
+const jieba = new Jieba()
 
 /**
  * Tokenizer for code search. Handles CamelCase, snake_case, kebab-case,

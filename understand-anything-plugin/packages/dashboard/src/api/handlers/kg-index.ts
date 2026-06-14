@@ -74,20 +74,27 @@ export class KgIndex {
 
   private buildDocs(graph: KnowledgeGraph, serviceName: string): KgDoc[] {
     if (!Array.isArray(graph?.nodes)) return []
-    return graph.nodes.map((node) => ({
-      id: node.id,
-      name: node.name,
-      summary: node.summary ?? "",
-      tags: (node.tags ?? []).join(" "),
-      type: node.type,
-      service: serviceName,
-      filePath: node.filePath ?? "",
-      startLine: node.lineRange?.[0] ?? 0,
-      endLine: node.lineRange?.[1] ?? 0,
-      layer: (node.tags ?? []).includes("business") ? "business"
-        : (node.tags ?? []).includes("domain") ? "domain"
-        : "kg",
-    }))
+    const seen = new Set<string>()
+    return graph.nodes
+      .filter((node) => {
+        if (seen.has(node.id)) return false
+        seen.add(node.id)
+        return true
+      })
+      .map((node) => ({
+        id: node.id,
+        name: node.name,
+        summary: node.summary ?? "",
+        tags: (node.tags ?? []).join(" "),
+        type: node.type,
+        service: serviceName,
+        filePath: node.filePath ?? "",
+        startLine: node.lineRange?.[0] ?? 0,
+        endLine: node.lineRange?.[1] ?? 0,
+        layer: (node.tags ?? []).includes("business") ? "business"
+          : (node.tags ?? []).includes("domain") ? "domain"
+          : "kg",
+      }))
   }
 
   isEmpty(): boolean { return this.docs.length === 0 }

@@ -118,15 +118,19 @@ export class StructureIndex {
 
   private buildDocs(service: string, data: StructuralAnalysis): StructureDoc[] {
     const docs: StructureDoc[] = []
+    const seen = new Set<string>()
     for (const [filePath, fileData] of Object.entries(data)) {
       const functions = Array.isArray(fileData.functions) ? fileData.functions : []
       const classes = Array.isArray(fileData.classes) ? fileData.classes : []
 
       for (const fn of functions) {
+        const id = `${service}::${filePath}::${fn.name}`
+        if (seen.has(id)) continue
+        seen.add(id)
         const annotationNames = (fn.annotations ?? []).map((a) => a.name).join(" ")
         const paramTypes = (fn.params ?? []).map((p) => p.type).join(" ")
         docs.push({
-          id: `${service}::${filePath}::${fn.name}`,
+          id,
           name: fn.name,
           annotations: annotationNames,
           paramTypes,
@@ -141,11 +145,14 @@ export class StructureIndex {
       }
 
       for (const cls of classes) {
+        const id = `${service}::${filePath}::${cls.name}`
+        if (seen.has(id)) continue
+        seen.add(id)
         const annotationNames = (cls.annotations ?? []).map((a) => a.name).join(" ")
         const interfaceNames = (cls.interfaces ?? []).join(" ")
         const propertyTypes = (cls.typedProperties ?? []).map((p) => p.type).join(" ")
         docs.push({
-          id: `${service}::${filePath}::${cls.name}`,
+          id,
           name: cls.name,
           annotations: annotationNames,
           paramTypes: propertyTypes,

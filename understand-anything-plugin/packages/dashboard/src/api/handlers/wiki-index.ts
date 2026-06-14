@@ -75,14 +75,21 @@ export class WikiIndex {
   }
 
   private buildDocs(data: WikiData, serviceName?: string): WikiDoc[] {
-    return (data.entries ?? []).map((entry) => ({
-      id: entry.id,
-      name: entry.name,
-      summary: entry.summary ?? "",
-      content: entry.content ?? "",
-      type: entry.type,
-      service: entry.service ?? serviceName ?? "",
-    }))
+    const seen = new Set<string>()
+    return (data.entries ?? [])
+      .filter((entry) => {
+        if (seen.has(entry.id)) return false
+        seen.add(entry.id)
+        return true
+      })
+      .map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        summary: entry.summary ?? "",
+        content: entry.content ?? "",
+        type: entry.type,
+        service: entry.service ?? serviceName ?? "",
+      }))
   }
 
   isEmpty(): boolean { return this.docs.length === 0 }
