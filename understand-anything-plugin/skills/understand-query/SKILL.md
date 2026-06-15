@@ -1,12 +1,12 @@
 ---
 name: understand-query
-description: Query the Understand-Anything knowledge base via CLI. Seven-layer drill-down from services to source code, backed by the shared API server.
+description: Query the Understand-Anything knowledge base via CLI. Six-layer drill-down from services to source code, backed by the shared API server.
 argument-hint: ["<subcommand> [--server URL] [--format json|md] [--verbose] [subcommand-flags...]"]
 ---
 
 # /understand-query
 
-Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the shared Understand-Anything API server. Use eight progressive layers — from service discovery and business landscape down to source-verified code — to answer questions without loading entire graphs into context.
+Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the shared Understand-Anything API server. Use six progressive layers — from business landscape and service discovery down to source-verified code — to answer questions without loading entire graphs into context.
 
 ## Source Verification Rule (MANDATORY)
 
@@ -89,7 +89,7 @@ python ua_query.py trace --service svc-b --query "keyword" --source
 4. **Use `--format md`** when the output will be read by an agent (not parsed as JSON).
 5. **Use `--source`** for any answer that will be presented as factual to the user.
 6. **RRF is default for trace** — `trace` uses `fusion=rrf` automatically.
-7. **Use server-side filters**: Pass `--type`/`--tag` to `kg --search` and `trace` instead of post-filtering results client-side. Reduces payload and improves accuracy.
+7. **Use server-side filters**: Pass `--type`/`--tag` to `kg --search` and `--type` to `trace` instead of post-filtering results client-side. Reduces payload and improves accuracy.
 8. **Use `--q` for structure fuzzy search**: `structure --q "getUser"` is faster and more accurate than iterating `--annotation`/`--param-type` separately.
 9. **Paginate large results**: Use `--offset N` with `--limit` for large result sets instead of fetching everything.
 
@@ -103,6 +103,7 @@ python ua_query.py trace --service svc-b --query "keyword" --source
 | `trace` | Search→neighbors→source in one call (with optional wiki/domain/verify/grouped) | [kg-trace.md](docs/kg-trace.md#trace--aggregated-searchneighborssource-recommended-for-agents) |
 | `kg` | Source-level KG: classes, calls, RPC, file annotations, file summary | [kg-trace.md](docs/kg-trace.md#kg--knowledge-graph-queries) |
 | `structure` | Code structure: signatures, annotations, types, cross-file symbol search + source | [structure-commands.md](docs/structure-commands.md) |
+| `source` | Source content: full-text search (`--search`), file read by path/line range (`--file`); `--limit N` caps search results (default 20, max 50) | [source-code.md](docs/source-code.md) |
 | `impact` | Server-side BFS impact analysis from a symbol (depth 1–10) | [graph-analysis.md](docs/graph-analysis.md#impact--transitive-impact-analysis) |
 | `callers` | Who calls this symbol? (inbound `calls` edges) | [graph-analysis.md](docs/graph-analysis.md#callers--callees--call-graph-navigation) |
 | `callees` | What does this symbol call? (outbound `calls` edges) | [graph-analysis.md](docs/graph-analysis.md#callers--callees--call-graph-navigation) |
@@ -148,6 +149,7 @@ python ua_query.py trace --service svc-b --query "keyword" --source
 | `--query Q` | string | required | Natural language question (Chinese or English, comma-separated keywords) |
 | `--depth LEVEL` | string | `standard` | `quick`=business only, `standard`=+trace+wiki, `full`=+domain+source-verify |
 | `--service S` | string | auto | Override auto-discovery |
+| `--platform P` | string | none | Platform filter for auto-discovery and business search: `android`, `ios`, `flutter` |
 | `--limit N` | int | 5 | Max matched nodes |
 | `--fusion MODE` | string | `rrf` | Search fusion strategy |
 
@@ -160,6 +162,13 @@ python ua_query.py trace --service svc-b --query "keyword" --source
 | `full` | + domain flows + source verification + **cross-service RPC follow** | **Answering factual questions (RECOMMENDED)** |
 
 **Cross-service RPC follow (depth=full):** When the traced service has outbound `consumes_rpc` edges, `ask` automatically identifies the provider service and runs a follow-up trace there. The output includes a `crossServiceTrace` section with the target service's implementation details. This solves the "found the reporter, not the implementer" problem.
+
+**Fallback chain (depth=full):** When KG trace returns no `matchedNodes`, `ask` escalates automatically:
+1. `structureFallback` — AST symbol search via `structure --q` keywords extracted from the query
+2. `sourceFallback` — when KG and structure are both empty, grep results from source content via `source --search`
+3. `traceHint` — troubleshooting hint from trace layer (when KG empty or wrong service)
+
+> **Deprecated:** `structure --grep` still works but prefer `source --search`. With `--format md`, `structureFallback` and `sourceFallback` are rendered as markdown.
 
 **Universal Cross-Service Symbol Resolution:** ALL commands (`trace`, `callers`, `callees`, `impact`) now automatically search other indexed services when a symbol is not found in the specified service. When cross-service resolution occurs, the output includes a `crossServiceOrigin` field indicating the original service, the actual service where the symbol was found, and a user-friendly hint. The commands transparently query the correct service — no manual `--service` switching needed.
 
@@ -174,23 +183,26 @@ python ua_query.py ask --query "亲密度,intimacy" --depth quick
 
 # Override service
 python ua_query.py ask --query "家族,Family" --service ultron-relation --depth standard
+
+# Cross-platform (Android client)
+python ua_query.py ask --query "PK对战,PKBattle" --platform android --depth full
 ```
 
 ---
 
-## Eight-Layer Drill-Down Model
+## Six-Layer Drill-Down Model
+
+Aligned with the Query Escalation Protocol below. Each layer is progressively more complete but less semantically rich:
 
 | Layer | Subcommand | Answers |
 |-------|-----------|---------|
-| 0. Service Discovery | `services --list` | What services exist? Which data layers are ready? |
-| 1. Business Overview | `business --features` / `business --list` | What business features/domains exist? |
-| 2. Domain Interactions | `business --domain X --type interactions` | How do users interact with domain X? |
-| 3. Wiki Detail | `wiki --service S --domain D` | Technical implementation of domain D? |
-| 4. Domain Graph | `domain --service S --flow F` | Business flow structure and steps? |
-| 5. Source-Level KG | `kg --service S --neighbors N` | Class relationships and code? |
-| 6. Source Code | `kg --service S --file PATH` | Read actual implementation source code |
-| 7. Code Structure | `structure --service S --annotation X` | Function signatures, annotations, param/return types |
-| **NEW** 8. Source Verify | `trace --source` / `ask --depth full` | Cross-check wiki/domain against live source code |
+| L1. Business | `business --search "keyword" [--platform P]` | What features/domains match? Which services own them? |
+| L2. Wiki | `wiki --search "keyword"` | Technical domain docs and service associations |
+| L3. Domain Graph | `domain --service S --search "keyword"` / `--flows` | Flow structure, relationships, step detail |
+| L4. Source-Level KG | `ask --query "keyword" --depth full` / `trace --source` | Class relationships, summaries, neighbors |
+| L5a. Structure (symbols) | `structure --service S --q "keyword"` | AST-parsed class/method/file names (deterministic) |
+| L5b. Source Search | `source --service S --search "keyword"` | Full source content search (config, comments, literals) |
+| L6. File | `source --service S --file PATH` / `structure --service S --file PATH --source` | Ground-truth source code lines |
 
 ---
 
@@ -221,12 +233,12 @@ When a command returns empty or unexpected results, follow the fallback chain:
 
 | Symptom | Likely Cause | Fallback |
 |---------|-------------|----------|
-| `trace` returns empty `matchedNodes` | Keywords don't match KG node names | 1. Add more keyword variants (Chinese + English + abbreviation) 2. Try `--fusion none` for pure text search 3. Search domain flows: `domain --service S --flows` then extract English keywords and retry |
+| `trace` returns empty `matchedNodes` | Keywords don't match KG node names | 1. Add more keyword variants (Chinese + English + abbreviation) 2. Try `--fusion none` for pure text search 3. `domain --service S --search "keyword"` or `--flows` then extract English keywords and retry 4. `source --service S --search "keyword"` for full-text source search |
 | `ask` returns "No service discovered" | Keywords too vague or service has no data layers | 1. Run `services --list` to see available services 2. Try `business --search "keyword"` to find the domain first 3. Specify `--service` manually |
 | `structure --symbol X` returns empty | Symbol name doesn't match exactly | 1. Try `structure --q "X"` for fuzzy search 2. Try `structure --annotation X` if it might be an annotation 3. Try `kg --service S --search "X"` to find the node first |
 | `kg --neighbors X` returns "node not found" | Node name is wrong or not in KG | 1. Run `kg --service S --search "X"` to find exact name 2. Check "Did you mean" suggestions in error output 3. Try partial name match |
 | `impact` / `callers` / `callees` returns empty | Symbol exists but has no edges in specified direction | 1. Try `--direction both` 2. Try without `--edge-type` filter 3. Check if symbol is in the KG: `kg --service S --search "X"` |
-| `business --domain X` returns 404 | Domain slug or name doesn't match | 1. Run `business --features` or `business --list` to see exact names 2. Try Chinese name directly: `--domain "中文名"` |
+| `business --domain X` returns 404 | Domain not indexed or merged into broader domain | 1. `business --search "keyword"` for global search 2. Follow **Query Escalation Protocol** below 3. Try `business --features` to see exact names |
 | `wiki --service S --domain D` returns 404 | Domain not indexed for this service | 1. Run `wiki --service S` to see available domains 2. Try `wiki --search "D"` across all services |
 | `trace --auto-discover` picks wrong service | Ambiguous keywords match multiple services | 1. Use `ask --service S --query "..."` to override 2. Add more specific keywords (e.g., include class name) |
 | API server unreachable (exit 2) | Server not running | Report to user: "Start the API server with `pnpm run serve`". Do NOT attempt auto-start. |
@@ -237,6 +249,100 @@ When a command returns empty or unexpected results, follow the fallback chain:
 2. **Narrow scope**: Specify `--service`, use `--path` to filter by file path
 3. **Change approach**: If `trace` fails, try `kg --search` → `kg --neighbors` manually
 4. **Verify data exists**: `services --list` + `meta --stale` before blaming the query
+
+---
+
+## Query Escalation Protocol (Concept Not Found)
+
+When a user asks about a concept that has **no direct domain/feature match** (e.g., wiki didn't generate a separate domain for it, or it's merged into a broader domain), agents MUST escalate through the following 6 data layers. Each layer is progressively more complete but less semantically rich:
+
+| Level | Command | Searches | Completeness |
+|-------|---------|----------|--------------|
+| L1: Business | `business --search "keyword" [--platform P]` | Feature names, domain names, flow names, step descriptions | LLM-generated, highest abstraction |
+| L2: Wiki | `wiki --search "keyword"` | Wiki page titles, domain docs, descriptions | LLM-generated, more detailed text |
+| L3: Domain flows | `domain --service S --flows` | Domain graph: flow structure, relationships | LLM-generated, structured flows |
+| L3b: Domain search | `domain --service S --search "keyword"` | Flow/node names matching keyword in domain graph | LLM-generated, keyword-targeted |
+| L4: KG | `ask --query "keyword,English" --depth full` | KG nodes (classes, functions) + summaries + sourceFallback | LLM-analyzed code symbols |
+| L5a: Structure (symbols) | `structure --service S --q "keyword"` | AST-parsed: class/method/file names | **Always complete (deterministic)** |
+| L5b: Source Search | `source --service S --search "keyword"` | Full source content search (AST-chunked MiniSearch) | **Always complete, includes config/YAML** |
+| L6: File | `source --service S --file PATH` | Actual source code lines | **Ground truth** |
+
+### Agent Decision Logic
+
+```
+User asks about concept X (example: "PK对战在Android上怎么实现的"):
+
+Step 1 (Business): business --search "PK" --platform android
+  → Has results? → Follow wikiRef. Done.
+
+Step 2 (Wiki): wiki --search "PK"
+  → Has results? → Read wiki domain detail. Done.
+
+Step 3 (Domain flows): domain --service android-app --flows
+  → Find flow matching "PK"? → domain --service android-app --flow "PK对战" --steps
+  → Has steps? → Present flow detail. Done.
+
+Step 3b (Domain search): domain --service android-app --search "PK"
+  → Has flow/node matches? → Follow up with --flow / --steps. Done.
+
+Step 4 (KG): ask --query "PK对战,PK,PKBattle" --depth full
+  → Has matchedNodes? → Read source verification. Done.
+  → Has structureFallback? → Pick relevant symbol → structure --file PATH --source. Done.
+  → Has sourceFallback? → Read matched source chunks from content grep. Done.
+
+Step 5a (Structure symbols): structure --service android-app --q "PK"
+  → Has results? → Pick relevant files →
+    structure --service android-app --file "com/app/pk/PKManager.java" --source
+  → Present source code to user. Done.
+
+Step 5b (Source search): source --service android-app --search "PK" [--path "*.yml"]
+  → Searches FULL source content (function bodies, config files, comments)
+  → Has results? → Read matched chunk. Done.
+
+Step 6 (File): structure --service android-app --files | search path "pk"
+  → Found directories? → Explore file-by-file. Done.
+
+Final: Report "Concept not found in any indexed layer of this service."
+  → Suggest: try different service, try broader keywords.
+```
+
+### Keyword Extraction Rules
+
+| Query Type | Example | Extracted Keywords |
+|-----------|---------|-------------------|
+| Chinese + ASCII | "PK对战" | `PK`, `pk`, `PKBattle` |
+| Pure Chinese | "房间管理" | `room`, `Room`, `RoomManager` |
+| English | "gift animation" | `gift`, `GiftAnimation`, `gift_anim` |
+| Class-style | "OrderService" | `OrderService`, `order` |
+
+**Rule:** Always provide 2-4 comma-separated keyword variants covering: original, English translation, CamelCase, and abbreviation.
+
+### Why Structure is the Ultimate Fallback
+
+- **Business/Wiki/Domain** are high-level summaries — intentionally omit details, may miss concepts
+- **KG** is generated by LLM analysis — may have gaps if analysis was incomplete
+- **Structure `--q`** searches AST-parsed symbol names (class, function, annotation names) — deterministic and complete for code symbols
+- **`source --search`** searches actual source content via MiniSearch (AST-boundary chunked) — finds anything in source including config values, comments, and function bodies
+- If `source --search "PK"` returns nothing, the concept genuinely does not exist in that service's codebase
+
+### `--q` vs `source --search` Decision
+
+| Use `--q` when | Use `source --search` when |
+|----------------|---------------------------|
+| Searching for a class/function/annotation NAME | Searching for content INSIDE functions |
+| Know the symbol name or part of it | Looking for a string literal, config value, or comment |
+| Fast metadata-only search | Need full source content search |
+| Example: `--q "PKBattleManager"` | Example: `source --search "timeout" --path "*.yml"` |
+
+### Cross-Service Infrastructure Search
+
+For system-wide queries like "所有用到Redis的地方" or "哪些服务有Kafka消费者":
+
+1. Discover all services: `services --has kg`
+2. Search each: `source --service svc-a --search "Redis" --limit 20` (repeat per service)
+3. Aggregate results across services.
+
+**Note:** `ask --depth full` only targets ONE service. For infrastructure concerns that span all services, you MUST manually iterate.
 
 ---
 
@@ -267,6 +373,7 @@ The CLI uses `http://172.18.228.71:3001` as the default API server.
 | `hotspots --limit 20` | 500–2000 | Service-wide critical nodes |
 | `structure --symbol X` | 200–1000 | Symbol metadata only |
 | `structure --symbol X --source` | 500–5000 | Symbol + source code (varies by match count) |
+| `source --search "keyword"` | 300–2000 | Source content search (snippet results) |
 | `kg` full graph (no filter) | 5000–50000 | **AVOID** |
 
 ---
@@ -278,7 +385,7 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | User Question Pattern | Recommended Command | Notes |
 |----------------------|---------------------|-------|
 | **Business & Discovery** |||
-| "What is X?" / "X是什么功能？" | `ask --query "X,EnglishName" --depth full` | Auto-discovers service + full trace |
+| "What is X?" / "X是什么功能？" | `ask --query "X,EnglishName" --depth full` | Auto-discovers service + full trace; check `structureFallback` / `sourceFallback` if no KG hits |
 | "Complete flow of X?" / "X的完整流程？" | `ask --query "X,FlowEnglish" --depth full` | Includes domain flow steps |
 | "Business rules for X?" / "X的业务规则？" | `business --domain X --type rules` | Business rule query |
 | "How do users interact with X?" / "X的用户交互？" | `business --domain X --type interactions` | User interaction steps |
@@ -286,13 +393,17 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "What features exist?" / "有哪些业务功能？" | `business --features` | Feature-centric view with server associations (client-server projects) |
 | "What services exist?" / "有哪些服务？" | `services --list` | Service discovery + data layer readiness |
 | **Code Location & Source** |||
-| "Where is X implemented?" / "X在哪里实现？" | `trace --auto-discover --query "X,English" --source` | Auto-locates service + source |
+| "Where is X implemented?" / "X在哪里实现？" | `trace --auto-discover --query "X,English" --source` | Auto-locates service + source; empty? try `source --search` |
+| "Concept not in KG?" / "KG搜不到X？" | `ask --query "X" --depth full` | Returns `structureFallback`, `sourceFallback`, or `traceHint` automatically |
 | "Show me code for X" / "X方法的源码" | `structure --service S --symbol X --source` | Precise symbol + source |
 | "Read file F" / "读取文件F" | `kg --service S --file F` | Full file content |
 | "Read lines 100-200 of F" / "读F的100-200行" | `kg --service S --file F --start 100 --end 200` | Line range read |
 | "Methods in file F" / "文件F有哪些方法？" | `kg --service S --file F --toc` | Method index (cheap, no source) |
 | "File overview for F" / "文件F概览？" | `kg --service S --file F --summary` | Symbols, imports, callers, blast radius |
 | "Methods with validate in name?" / "带validate的方法？" | `structure --service S --q "validate"` | Fuzzy name search |
+| "Search source for timeout" / "源码中搜索timeout" | `source --service S --search "timeout"` | Full-text content search (replaces `structure --grep`) |
+| "Config timeout value?" / "配置中的超时设置？" | `source --service S --search "timeout" --path "*.yml"` | Config file content search |
+| "Read source file by path" / "按路径读源码" | `source --service S --file PATH [--start N --end M]` | Read source code by path and line range |
 | **Structure & Type Analysis** |||
 | "Who implements interface IX?" / "哪些类实现了IX？" | `structure --service S --implementors IX` | Interface implementation search |
 | "All classes with @X annotation" / "所有@X注解的类" | `structure --service S --annotation X` | Annotation batch search |
@@ -307,7 +418,7 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "What does X call?" / "X调用了谁？" | `callees --service S --symbol X --depth 2` | Outbound call graph |
 | "Which tests for changed files?" / "改了要跑哪些测试？" | `affected --service S --files src/X.java --depth 2` | Affected test discovery |
 | "Most critical classes?" / "最关键的类？" | `hotspots --service S --type class --limit 20` | Fan-in/fan-out hotspot scoring |
-| "Blast radius of X?" / "X的影响半径？" | `trace --query X` → check `blastRadius` → `impact --symbol X --depth 3` | Quick triage + transitive |
+| "Blast radius of X?" / "X的影响半径？" | `trace --service S --query X` → check `blastRadius` → `impact --service S --symbol X --depth 3` | Quick triage + transitive |
 | **Cross-Service & Wiki** |||
 | "How do X and Y interact?" / "X和Y怎么交互？" | `trace` in svc-a + `trace` in svc-b | Dual-service comparison |
 | "Architecture overview" / "系统架构？" | `wiki --architecture` | System architecture wiki |
@@ -321,6 +432,20 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "Package/module structure" / "S的模块结构？" | `kg --service S --layers` | Layer summary |
 
 **Keyword expansion rule:** When the user's question is in Chinese/non-English, ALWAYS expand keywords to include English variants (comma-separated). Example: "亲密度" → `--query "亲密度,intimacy,IntimacyService"`. Multi-keyword parallel search eliminates retry loops.
+
+---
+
+### Unsupported Query Types
+
+The following queries CANNOT be answered by this skill system — report the limitation and suggest the alternative:
+
+| Query Type | Example | Why | Alternative |
+|------------|---------|-----|-------------|
+| Temporal/历史 | "PK功能最近改了什么" | Git history not indexed | Use `git log --all --grep="PK"` directly |
+| Blame/归属 | "这段代码谁写的" | No blame data | Use `git blame path/to/file` |
+| PR/Review | "这个改动的review意见" | No PR data | Use GitHub/GitLab CLI |
+| Runtime/运行时 | "这个接口的QPS" | No monitoring data | Use Hubble/Prometheus |
+| Diff/变更 | "上次发布改了哪些" | No release tracking | Use `git diff tag1..tag2` |
 
 ---
 

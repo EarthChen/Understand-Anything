@@ -169,6 +169,8 @@ def cmd_domain(args: argparse.Namespace) -> Any:
         if args.edge_type:
             params["edgeType"] = args.edge_type
         return _helpers.fetch_json(build_url(args.server, "/api/graph-query/neighbors", params))
+    if args.search:
+        return {"nodes": _search_api(args.server, args.search, service=args.service, scope="domain", limit=30)}
     params = {"service": args.service, "file": "domain-graph.json"}
     data = _helpers.fetch_json(build_url(args.server, "/api/graph", params))
     if args.flows:
@@ -197,10 +199,6 @@ def cmd_domain(args: argparse.Namespace) -> Any:
         return {"flow": flow_node}
     if args.domain:
         nodes = [n for n in data.get("nodes", []) if args.domain in n.get("id", "") or args.domain in n.get("name", "")]
-        return {"nodes": nodes}
-    if args.search:
-        q = args.search.lower()
-        nodes = [n for n in data.get("nodes", []) if q in n.get("name", "").lower() or q in n.get("summary", "").lower()]
         return {"nodes": nodes}
     return data
 
@@ -255,7 +253,14 @@ def cmd_business(args: argparse.Namespace) -> Any:
     if args.list:
         return _helpers.fetch_json(build_url(args.server, "/api/business/domains", {}))
     if args.search:
-        return {"results": _search_api(args.server, args.search, scope="business")}
+        if args.domain:
+            raise SystemExit("--search and --domain are mutually exclusive")
+        params: dict[str, str] = {"q": args.search}
+        if args.platform:
+            params["platform"] = args.platform
+        if args.flow:
+            params["flow"] = args.flow
+        return _helpers.fetch_json(build_url(args.server, "/api/business/search", params))
     if args.domain and args.platform:
         encoded_domain = url_quote(args.domain, safe="")
         params: dict[str, str] = {"platform": args.platform}
@@ -480,7 +485,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
         else:
             result["hint"] = (
                 f"No KG nodes matched '{args.query}' in service '{service}'. "
-                f"Try: (1) grep workspace for '{args.query}' directly, "
+                f"Try: (1) source --service {service} --search '{args.query}' for full-text source search, "
                 f"(2) check if Flutter/client code is in a separate module not indexed in this service's KG, "
                 f"(3) use 'business --search \"{args.query}\"' for domain-level context."
             )
@@ -854,10 +859,17 @@ def _detect_and_follow_cross_service_rpc(
         }
 
 
+def _extract_ascii_keywords(query: str) -> list[str]:
+    """Extract ASCII substrings from a mixed query for structure search."""
+    parts = re.findall(r'[A-Za-z_][A-Za-z0-9_]*', query)
+    return [p for p in parts if len(p) >= 2]
+
+
 def cmd_ask(args: argparse.Namespace) -> Any:
     """Answer a business question end-to-end: auto-discover → trace → wiki → domain → source-verify."""
     query = args.query
     depth = getattr(args, "depth", "standard")
+    platform = getattr(args, "platform", None)
 
     result: dict[str, Any] = {"question": query, "depth": depth}
 
@@ -865,7 +877,9 @@ def cmd_ask(args: argparse.Namespace) -> Any:
     service = args.service
     biz_results: list[dict] = []
     if not service:
-        service, biz_results = _auto_discover_service(args.server, query)
+        service, biz_results = _auto_discover_service(
+            args.server, query, platform=platform
+        )
     if not service:
         result["error"] = f"Could not determine which service contains '{query}'. Provide --service."
         result["businessSearch"] = biz_results
@@ -879,7 +893,13 @@ def cmd_ask(args: argparse.Namespace) -> Any:
         try:
             biz_parts = [p.strip() for p in query.split(",") if p.strip() and len(p.strip()) <= 20]
             biz_q = " ".join(biz_parts[:3]) if biz_parts else query.split(",")[0][:20]
-            biz_results = _search_api(args.server, biz_q, scope="business", limit=5)
+            if platform:
+                biz_resp = _helpers.fetch_json(build_url(
+                    args.server, "/api/business/search", {"q": biz_q, "platform": platform}
+                ))
+                biz_results = biz_resp.get("results", [])
+            else:
+                biz_results = _search_api(args.server, biz_q, scope="business", limit=5)
         except RuntimeError:
             pass
     result["businessContext"] = biz_results[:5] if biz_results else []
@@ -919,9 +939,63 @@ def cmd_ask(args: argparse.Namespace) -> Any:
         result["sourceReads"] = trace_result["sourceReads"]
     if trace_result.get("discoveredVia"):
         result["discoveredVia"] = trace_result["discoveredVia"]
+    if trace_result.get("hint"):
+        result["traceHint"] = trace_result["hint"]
+    if trace_result.get("crossServiceTrace"):
+        result["crossServiceTrace"] = trace_result["crossServiceTrace"]
+    if trace_result.get("crossServiceRpcHint"):
+        result["crossServiceRpcHint"] = trace_result["crossServiceRpcHint"]
 
-    # Step 4: Cross-service RPC follow (depth=full only)
-    if depth == "full":
+    # Step 3b: Structure search fallback when no KG matches (depth=full only)
+    if depth == "full" and not result.get("matchedNodes"):
+        keywords = _extract_ascii_keywords(query)
+        if keywords:
+            structure_results: list[dict] = []
+            for keyword in keywords:
+                try:
+                    struct_params: dict[str, str] = {
+                        "service": service,
+                        "q": keyword,
+                        "limit": "10",
+                    }
+                    if platform:
+                        struct_params["platform"] = platform
+                    struct_data = _helpers.fetch_json(build_url(
+                        args.server, "/api/structure/search", struct_params
+                    ))
+                    structure_results.extend(struct_data.get("results", []))
+                except RuntimeError:
+                    continue
+            if structure_results:
+                result["structureFallback"] = {
+                    "hint": (
+                        f"No KG matches for '{query}'; "
+                        f"found {len(structure_results)} structure matches via keywords: {', '.join(keywords)}"
+                    ),
+                    "keywords": keywords,
+                    "results": structure_results,
+                }
+
+    # Step 3c: Source grep fallback when structure fallback also empty
+    if depth == "full" and not result.get("matchedNodes") and not result.get("structureFallback", {}).get("results"):
+        # For source grep, prefer full query to capture Chinese terms
+        grep_query = query
+        if grep_query.strip():
+            grep_params: dict[str, str] = {"q": grep_query, "service": service, "limit": "10"}
+            if platform:
+                grep_params["platform"] = platform
+            try:
+                grep_resp = _helpers.fetch_json(build_url(args.server, "/api/source/search", grep_params))
+                if grep_resp and grep_resp.get("results"):
+                    result["sourceFallback"] = {
+                        "hint": f"Found {len(grep_resp['results'])} source matches via content search: '{grep_query}'",
+                        "results": grep_resp["results"],
+                    }
+            except RuntimeError:
+                pass
+
+    # Step 4: Cross-service RPC follow (depth=full only, skip if trace already provided)
+    if depth == "full" and not result.get("crossServiceTrace"):
         cross_svc = _detect_and_follow_cross_service_rpc(
             args.server, service, query, trace_result
         )
@@ -1092,6 +1166,12 @@ def cmd_affected(args: argparse.Namespace) -> Any:
 def cmd_structure(args: argparse.Namespace) -> Any:
     if not args.service:
         raise SystemExit("structure requires --service")
+    if getattr(args, "grep", None):
+        print("[DEPRECATED] Use 'source --service S --search ...' instead of 'structure --grep'", file=sys.stderr)
+        params: dict[str, str] = {"q": args.grep, "service": args.service, "limit": str(args.limit)}
+        if args.path:
+            params["path"] = args.path
+        return _helpers.fetch_json(build_url(args.server, "/api/source/search", params))
     if args.symbol:
         return _cmd_structure_symbol(args)
     if args.chain:
@@ -1142,5 +1222,26 @@ def cmd_structure(args: argparse.Namespace) -> Any:
     if len(search_params) <= 2:
         raise SystemExit("structure search requires at least one filter: --q, --annotation, --param-type, --return-type, --interface, --property-type, --section-key, --section-value")
     return _helpers.fetch_json(build_url(args.server, "/api/structure/search", search_params))
+
+
+def cmd_source(args: argparse.Namespace) -> Any:
+    if not args.service:
+        raise SystemExit("source requires --service")
+
+    if getattr(args, "search", None):
+        params: dict[str, str] = {"q": args.search, "service": args.service, "limit": str(args.limit)}
+        if args.path:
+            params["path"] = args.path
+        return _helpers.fetch_json(build_url(args.server, "/api/source/search", params))
+
+    if getattr(args, "file", None):
+        params = {"file": args.file, "service": args.service, "mode": "graph"}
+        if args.start:
+            params["start"] = str(args.start)
+        if args.end:
+            params["end"] = str(args.end)
+        return _helpers.fetch_json(build_url(args.server, "/api/source", params))
+
+    raise SystemExit("source requires --search or --file")
 
 

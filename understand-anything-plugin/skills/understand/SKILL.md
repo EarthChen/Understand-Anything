@@ -761,17 +761,27 @@ Report to the user: `[Phase 7/7] Saving knowledge graph...`
    rm -rf $PROJECT_ROOT/.understand-anything/tmp
    ```
 
-6. Report a summary to the user containing:
+6. **Build source code search index.** After structural-analysis.json is preserved, build the serialized MiniSearch index for full-text source search (`understand-query` source command):
+   ```bash
+   node <SKILL_DIR>/build-source-index.mjs "$PROJECT_ROOT"
+   ```
+
+   The script reads `structural-analysis.json`, chunks source files by AST boundaries (function/class/header/gap), builds an inverted index via MiniSearch, and serializes to `source-index.json`. The serialized file only contains the inverted index and metadata references (filePath, startLine, endLine) — NOT raw source content — keeping file size small (~5-12MB for large projects).
+
+   **If the script exits non-zero**, log a warning but do NOT abort — source search is a non-critical enhancement. The dashboard and query commands will fall back to building the index on-demand at query time.
+
+7. Report a summary to the user containing:
    - Project name and description
    - Files analyzed / total files (with breakdown by fileCategory: code, config, docs, infra, data, script, markup)
    - Nodes created (broken down by type: file, function, class, config, document, service, table, endpoint, pipeline, schema, resource)
    - Edges created (broken down by type)
    - Layers identified (with names)
    - Tour steps generated (count)
+   - Source index status (chunks indexed, file size)
    - Any warnings from the reviewer
    - Path to the output file: `$PROJECT_ROOT/.understand-anything/knowledge-graph.json`
 
-7. Do NOT automatically launch the dashboard. Instead, report the manual launch command to the user:
+8. Do NOT automatically launch the dashboard. Instead, report the manual launch command to the user:
    ```
    cd <PLUGIN_ROOT>/packages/dashboard && GRAPH_DIR=$PROJECT_ROOT npx vite --host 0.0.0.0
    ```

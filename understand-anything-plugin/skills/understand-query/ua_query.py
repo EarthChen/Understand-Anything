@@ -24,7 +24,7 @@ from _commands import (
     _cmd_kg_file_summary, cmd_kg, cmd_domain, cmd_wiki, cmd_business,
     cmd_services, cmd_meta, cmd_trace, _detect_and_follow_cross_service_rpc,
     cmd_ask, cmd_impact, cmd_callers, cmd_callees, cmd_hotspots,
-    cmd_affected, cmd_structure,
+    cmd_affected, cmd_structure, cmd_source,
 )
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -81,13 +81,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     wiki.add_argument("--related", action="store_true")
 
     biz = sub.add_parser("business", help="Business landscape queries")
-    biz.add_argument("--domain")
+    biz_mode = biz.add_mutually_exclusive_group()
+    biz_mode.add_argument("--domain")
+    biz_mode.add_argument("--search", help="Global keyword search across features, domains, and flows")
     biz.add_argument("--platform", type=str, help="Filter by platform: android, ios, flutter")
     biz.add_argument("--flow", type=str, help="Filter flows by keyword within platform domain")
     biz.add_argument("--type")
     biz.add_argument("--facet")
     biz.add_argument("--list", action="store_true")
-    biz.add_argument("--search")
     biz.add_argument("--links", action="store_true")
     biz.add_argument("--panorama", action="store_true")
     biz.add_argument("--features", action="store_true", help="List business features with server associations (feature-centric view)")
@@ -119,10 +120,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ask.add_argument("--query", required=True, help="Natural language question (Chinese or English)")
     ask.add_argument("--depth", choices=["quick", "standard", "full"], default="standard", help="Depth: quick=business only, standard=+trace+wiki, full=+domain+source-verify")
     ask.add_argument("--service", help="Override auto-discovery with specific service")
+    ask.add_argument("--platform", help="Platform filter (android, ios, flutter)")
     ask.add_argument("--limit", type=int, default=5, help="Max matched nodes")
     ask.add_argument("--fusion", choices=["none", "rrf"], default="rrf", help="Search fusion strategy")
 
     struct = sub.add_parser("structure", help="Code structure: signatures, annotations, types")
+    struct.add_argument("--grep", help="Full-text search across all source code in the service")
     struct.add_argument("--service", required=True)
     struct.add_argument("--file", help="Get structure for a specific file path (exact or suffix match)")
     struct.add_argument("--start", type=int, help="Start line for --file --source (1-based)")
@@ -144,6 +147,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     struct.add_argument("--implementors", help="Find all classes implementing an interface")
     struct.add_argument("--symbol", help="Search for a specific symbol (function or class) across all files")
     struct.add_argument("--source", action="store_true", help="Include source code when using --symbol")
+
+    source = sub.add_parser("source", help="Source code: full-text search or file read")
+    source.add_argument("--service", required=True)
+    source.add_argument("--search", help="Full-text content search")
+    source.add_argument("--file", help="Read source file")
+    source.add_argument("--path", help="Path filter for search")
+    source.add_argument("--limit", type=int, default=20, help="Max results to return")
+    source.add_argument("--start", type=int, help="Start line for --file (1-based)")
+    source.add_argument("--end", type=int, help="End line for --file (1-based)")
 
     impact = sub.add_parser("impact", help="Transitive impact analysis via BFS")
     impact.add_argument("--service", required=True)
@@ -182,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
         handlers = {
             "kg": cmd_kg, "domain": cmd_domain, "wiki": cmd_wiki, "business": cmd_business,
             "services": cmd_services, "meta": cmd_meta, "trace": cmd_trace, "structure": cmd_structure,
+            "source": cmd_source,
             "ask": cmd_ask, "impact": cmd_impact, "callers": cmd_callers, "callees": cmd_callees,
             "hotspots": cmd_hotspots, "affected": cmd_affected,
         }

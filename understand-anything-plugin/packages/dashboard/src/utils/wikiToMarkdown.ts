@@ -1176,7 +1176,7 @@ export function businessFeaturesToMarkdown(data: BusinessFeaturesDocument): stri
     lines.push("  subgraph Client[\"客户端功能\"]");
     for (const f of featuresWithServer) {
       const fid = f.name.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, "_");
-      lines.push(`    ${fid}["${f.name}"]`);
+      lines.push(`    ${fid}["${sanitizeMermaidLabel(f.name)}"]`);
     }
     lines.push("  end");
     lines.push("  subgraph Server[\"服务端域\"]");
@@ -1190,7 +1190,7 @@ export function businessFeaturesToMarkdown(data: BusinessFeaturesDocument): stri
     }
     for (const sn of serverNodes) {
       const sid = sn.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, "_");
-      lines.push(`    ${sid}["${sn}"]`);
+      lines.push(`    ${sid}["${sanitizeMermaidLabel(sn)}"]`);
     }
     lines.push("  end");
     for (const f of featuresWithServer) {
@@ -1202,7 +1202,7 @@ export function businessFeaturesToMarkdown(data: BusinessFeaturesDocument): stri
       }
       for (const s of f.serverLayer?.supportingDomains ?? []) {
         const sid = s.name.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, "_");
-        lines.push(`  ${fid} -.->|"${s.relationship}"| ${sid}`);
+        lines.push(`  ${fid} -.->|"${sanitizeMermaidLabel(s.relationship)}"| ${sid}`);
       }
     }
     lines.push("```");

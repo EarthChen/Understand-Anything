@@ -13,7 +13,7 @@ app.use((_req, res) => {
   res.sendFile(path.join(staticDir, "index.html"))
 })
 
-const host = process.env.HOST ?? "0.0.0.0"
+const host = process.env.HOST ?? "127.0.0.1"
 
 app.listen(port, host, () => {
   console.log(`\n  Production server running:`)

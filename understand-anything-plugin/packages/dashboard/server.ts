@@ -58,7 +58,7 @@ export function createApp(opts: ServerOptions = {}) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const port = Number(process.env.PORT ?? 3001)
-  const host = process.env.HOST ?? "0.0.0.0"
+  const host = process.env.HOST ?? "127.0.0.1"
   const app = createApp()
   app.listen(port, host, () => {
     console.log(`\n  API Server: http://${host}:${port}/\n`)

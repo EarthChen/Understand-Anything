@@ -182,6 +182,12 @@ def _format_markdown(data: Any) -> str:
                     lines.append(f"  {n['summary'][:120]}")
             lines.append("")
 
+        # Trace hint (when no KG matches found)
+        trace_hint = data.get("traceHint")
+        if trace_hint and not nodes:
+            lines.append("> **Hint:** " + trace_hint)
+            lines.append("")
+
         # Neighbors
         nbr = data.get("neighbors")
         if nbr and nbr.get("neighbors"):
@@ -328,6 +334,71 @@ def _format_markdown(data: Any) -> str:
                 lang = {"kt": "kotlin", "java": "java", "py": "python", "ts": "typescript", "js": "javascript", "dart": "dart"}.get(ext, ext)
                 lines.append(f"### {v.get('node', '?')} — `{v.get('file', '?')}`")
                 lines.append(f"```{lang}\n{v.get('content', '')[:3000]}\n```")
+                lines.append("")
+
+        struct_fb = data.get("structureFallback")
+        if struct_fb and isinstance(struct_fb, dict) and struct_fb.get("results"):
+            lines.append("## Structure Fallback")
+            if struct_fb.get("hint"):
+                lines.append(f"> {struct_fb['hint']}")
+                lines.append("")
+            lines.append("| Symbol | File | Type |")
+            lines.append("|--------|------|------|")
+            for r in struct_fb["results"][:20]:
+                name = r.get("name", "?")
+                fp = r.get("file") or r.get("filePath", "?")
+                start = r.get("startLine")
+                end = r.get("endLine")
+                lr = r.get("lineRange")
+                if start is not None and end is not None:
+                    loc = f"{fp}:{start}-{end}"
+                elif isinstance(lr, list) and len(lr) == 2:
+                    loc = f"{fp}:{lr[0]}-{lr[1]}"
+                else:
+                    loc = fp
+                sym_type = r.get("type") or r.get("kind", "?")
+                lines.append(f"| {name} | {loc} | {sym_type} |")
+            lines.append("")
+
+        src_fb = data.get("sourceFallback")
+        if src_fb and isinstance(src_fb, dict) and src_fb.get("results"):
+            lines.append("## Source Content Search")
+            if src_fb.get("hint"):
+                lines.append(f"> {src_fb['hint']}")
+                lines.append("")
+            lines.append("| File | Lines | Chunk | Score |")
+            lines.append("|------|-------|-------|-------|")
+            for r in src_fb["results"][:20]:
+                fp = r.get("file", "?")
+                start = r.get("startLine")
+                end = r.get("endLine")
+                lr = r.get("lineRange")
+                if start is not None and end is not None:
+                    lines_str = f"{start}-{end}"
+                elif isinstance(lr, list) and len(lr) == 2:
+                    lines_str = f"{lr[0]}-{lr[1]}"
+                elif r.get("line") is not None:
+                    lines_str = str(r["line"])
+                else:
+                    lines_str = "-"
+                chunk = r.get("chunk") or r.get("type", "-")
+                score = r.get("score")
+                score_str = f"{score:.2f}" if isinstance(score, float) else (score if score is not None else "-")
+                lines.append(f"| {fp} | {lines_str} | {chunk} | {score_str} |")
+            lines.append("")
+            for r in src_fb["results"][:10]:
+                snippet = r.get("snippet") or r.get("content", "")
+                if not snippet:
+                    continue
+                fp = r.get("file", "?")
+                lines.append(f"<details><summary>Snippet: {fp}</summary>")
+                lines.append("")
+                ext = fp.rsplit(".", 1)[-1] if "." in fp else "java"
+                lang = {"kt": "kotlin", "java": "java", "py": "python", "ts": "typescript", "js": "javascript", "dart": "dart"}.get(ext, ext)
+                lines.append(f"```{lang}")
+                lines.append(snippet[:4000])
+                lines.append("```")
+                lines.append("</details>")
                 lines.append("")
 
         return "\n".join(lines)

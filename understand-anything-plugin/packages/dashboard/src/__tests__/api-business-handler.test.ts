@@ -108,60 +108,289 @@ describe("handleBusinessRequest", () => {
     expect((res?.body as { stats: { totalDomains: number } }).stats.totalDomains).toBe(1)
   })
 
-  it("GET /api/business/search?q=下单 matches domain", async () => {
+  it("GET /api/business/search?q= returns 400 when query empty", async () => {
     const res = await handleBusinessRequest(
-      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "下单" }) }, ctx)
-    expect(res?.statusCode).toBe(200)
-    const results = (res?.body as { results: Array<{ match: string }> }).results
-    expect(results.length).toBeGreaterThan(0)
-    expect(results[0].match).toBe("下单")
+      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "  " }) }, ctx)
+    expect(res?.statusCode).toBe(400)
   })
 
-  it("GET /api/business/search?q=挚友,ClosedFriend matches via unified BM25 search", async () => {
-    const bl = path.join(dir, ".understand-anything", "business-landscape")
-    const domainsJson = JSON.parse(fs.readFileSync(path.join(bl, "domains.json"), "utf-8"))
-    domainsJson.domains.push({
-      id: "domain:friend",
-      name: "ClosedFriend",
-      summary: "挚友关系管理",
-      facets: [],
-      matchType: "auto-api",
-      matchConfidence: 0.9,
-      detailRef: "business-landscape/domains/friend.json",
-    })
-    fs.writeFileSync(path.join(bl, "domains.json"), JSON.stringify(domainsJson))
-    fs.writeFileSync(path.join(bl, "domains", "friend.json"), JSON.stringify({
-      id: "domain:friend", name: "ClosedFriend", summary: "挚友关系管理",
-      interactions: [{ id: "flow:add", name: "Add Friend", steps: [] }],
-      businessRules: [],
-      facets: {},
-    }))
+  it("GET /api/business/search?q=PK finds matching flows", async () => {
+    seedVoiceRoomPlatform(dir)
     const res = await handleBusinessRequest(
-      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "挚友,ClosedFriend" }) }, ctx)
+      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "PK" }) }, ctx)
     expect(res?.statusCode).toBe(200)
-    const results = (res?.body as { results: Array<{ id: string; match: string }> }).results
-    expect(results.length).toBeGreaterThan(0)
-    expect(results.some((r) => r.id === "domain:friend")).toBe(true)
-    expect(results.find((r) => r.id === "domain:friend")!.match).toBe("挚友,ClosedFriend")
+    const body = res?.body as {
+      query: string
+      results: Array<{ matchType: string; matchedIn: { flow: string | null }; featureName: string }>
+      totalResults: number
+    }
+    expect(body.query).toBe("PK")
+    expect(body.totalResults).toBeGreaterThan(0)
+    expect(body.results.some((r) => r.matchType === "flow" && r.matchedIn.flow?.includes("PK"))).toBe(true)
+    expect(body.results.some((r) => r.featureName === "语聊房")).toBe(true)
   })
 
-  it("GET /api/business/search?q=keyword1, keyword2 trims whitespace around keywords", async () => {
+  it("GET /api/business/search?q=PK&platform=android filters to that platform", async () => {
+    seedVoiceRoomPlatform(dir)
     const res = await handleBusinessRequest(
-      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "下单, Create" }) }, ctx)
+      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "PK", platform: "android" }) }, ctx)
     expect(res?.statusCode).toBe(200)
-    const results = (res?.body as { results: Array<{ match: string }> }).results
-    expect(results.length).toBeGreaterThan(0)
-    expect(results[0].match).toBe("下单, Create")
+    const body = res?.body as {
+      platform: string
+      results: Array<{ matchedIn: { platform: string } }>
+      totalResults: number
+    }
+    expect(body.platform).toBe("android")
+    expect(body.totalResults).toBeGreaterThan(0)
+    expect(body.results.every((r) => r.matchedIn.platform === "android")).toBe(true)
   })
 
-  it("/api/business/search returns results (backward compat)", async () => {
+  it("GET /api/business/search?q=nonexistent returns empty array", async () => {
+    seedVoiceRoomPlatform(dir)
     const res = await handleBusinessRequest(
-      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "order" }) }, ctx)
+      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "nonexistent" }) }, ctx)
     expect(res?.statusCode).toBe(200)
-    const body = res?.body as { results: Array<{ id: string; name: string; match: string }> }
-    expect(Array.isArray(body.results)).toBe(true)
-    expect(body.results.some((r) => r.name === "Order Management")).toBe(true)
-    expect(body.results[0].match).toBe("order")
+    const body = res?.body as { results: unknown[]; totalResults: number }
+    expect(body.results).toEqual([])
+    expect(body.totalResults).toBe(0)
+  })
+
+  it("GET /api/business/search is case-insensitive", async () => {
+    seedVoiceRoomPlatform(dir)
+    const res = await handleBusinessRequest(
+      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "pk battle" }) }, ctx)
+    expect(res?.statusCode).toBe(200)
+    const body = res?.body as { results: Array<{ matchedIn: { flow: string | null } }> }
+    expect(body.results.some((r) => r.matchedIn.flow === "PK Battle")).toBe(true)
+  })
+
+  function seedFeatureInteractions(dir: string) {
+    seedVoiceRoomPlatform(dir)
+    const interactionsDir = path.join(dir, ".understand-anything", "business-landscape", "feature-interactions")
+    fs.mkdirSync(interactionsDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(interactionsDir, "feature-voice-room.json"),
+      JSON.stringify({
+        featureId: "feature:voice-room",
+        featureName: "语聊房",
+        flows: [
+          {
+            id: "flow:send-gift-live",
+            name: "直播间送礼",
+            steps: [
+              { order: 1, actor: "user", action: "点击礼物按钮", platform: "android" },
+              { order: 2, actor: "client", action: "展示礼物面板", platform: "flutter" },
+            ],
+          },
+          {
+            id: "flow:join-room",
+            name: "进入语聊房",
+            steps: [
+              { order: 1, actor: "user", action: "点击房间入口", platform: "ios" },
+            ],
+          },
+        ],
+      }),
+    )
+  }
+
+  it("search finds matching interaction flow name", async () => {
+    seedFeatureInteractions(dir)
+    const res = await handleBusinessRequest(
+      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "送礼" }) }, ctx)
+    expect(res?.statusCode).toBe(200)
+    const body = res?.body as {
+      results: Array<{
+        matchType: string
+        featureName: string
+        featureId: string
+        matchedIn: { flow: string | null; step: string | null }
+        context: string
+      }>
+    }
+    const match = body.results.find((r) => r.matchType === "interaction" && r.matchedIn.flow === "直播间送礼")
+    expect(match).toBeDefined()
+    expect(match?.featureName).toBe("语聊房")
+    expect(match?.featureId).toBe("feature:voice-room")
+    expect(match?.matchedIn.step).toBeNull()
+    expect(match?.context).toContain("直播间送礼")
+  })
+
+  it("search finds matching interaction step action", async () => {
+    seedFeatureInteractions(dir)
+    const res = await handleBusinessRequest(
+      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "点击礼物按钮" }) }, ctx)
+    expect(res?.statusCode).toBe(200)
+    const body = res?.body as {
+      results: Array<{
+        matchType: string
+        featureName: string
+        matchedIn: { platform: string | null; flow: string | null; step: string | null }
+        context: string
+      }>
+    }
+    const match = body.results.find((r) => r.matchType === "interaction" && r.matchedIn.step === "点击礼物按钮")
+    expect(match).toBeDefined()
+    expect(match?.featureName).toBe("语聊房")
+    expect(match?.matchedIn.platform).toBe("android")
+    expect(match?.matchedIn.flow).toBe("直播间送礼")
+    expect(match?.context).toBe("直播间送礼 > 点击礼物按钮")
+  })
+
+  it("search with platform filter applies to interactions", async () => {
+    seedFeatureInteractions(dir)
+    const res = await handleBusinessRequest(
+      {
+        pathname: "/api/business/search",
+        searchParams: new URLSearchParams({ q: "点击礼物按钮", platform: "android" }),
+      },
+      ctx,
+    )
+    expect(res?.statusCode).toBe(200)
+    const body = res?.body as {
+      results: Array<{ matchType: string; matchedIn: { platform: string | null } }>
+    }
+    const interactionMatches = body.results.filter((r) => r.matchType === "interaction")
+    expect(interactionMatches.length).toBeGreaterThan(0)
+    expect(interactionMatches.every((r) => r.matchedIn.platform === "android")).toBe(true)
+    expect(interactionMatches.some((r) => r.matchedIn.platform === "flutter")).toBe(false)
+  })
+
+  it("search finds interactions from generated.interactions schema with description steps", async () => {
+    seedVoiceRoomPlatform(dir)
+    const interactionsDir = path.join(dir, ".understand-anything", "business-landscape", "feature-interactions")
+    fs.mkdirSync(interactionsDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(interactionsDir, "feature-voice-room.json"),
+      JSON.stringify({
+        featureId: "feature:voice-room",
+        featureName: "语聊房",
+        skeleton: { featureId: "feature:voice-room" },
+        generated: {
+          interactions: [
+            {
+              id: "flow:send-gift-live",
+              name: "直播间送礼",
+              steps: [
+                { order: 1, actor: "user", description: "点击礼物按钮", service: "ddoversea_flutter" },
+                { order: 2, actor: "client", description: "展示礼物面板", service: "ddoversea" },
+              ],
+            },
+          ],
+        },
+      }),
+    )
+
+    const res = await handleBusinessRequest(
+      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "点击礼物按钮" }) },
+      ctx,
+    )
+    expect(res?.statusCode).toBe(200)
+    const body = res?.body as {
+      results: Array<{
+        matchType: string
+        matchedIn: { platform: string | null; step: string | null }
+      }>
+    }
+    const match = body.results.find((r) => r.matchType === "interaction" && r.matchedIn.step === "点击礼物按钮")
+    expect(match).toBeDefined()
+    expect(match?.matchedIn.platform).toBe("ddoversea_flutter")
+  })
+
+  it("search with platform filter matches repo names containing standard platform", async () => {
+    seedVoiceRoomPlatform(dir)
+    const interactionsDir = path.join(dir, ".understand-anything", "business-landscape", "feature-interactions")
+    fs.mkdirSync(interactionsDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(interactionsDir, "feature-voice-room.json"),
+      JSON.stringify({
+        featureId: "feature:voice-room",
+        featureName: "语聊房",
+        generated: {
+          interactions: [
+            {
+              name: "直播间送礼",
+              steps: [{ description: "展示礼物面板", service: "ddoversea_flutter" }],
+            },
+          ],
+        },
+      }),
+    )
+
+    const res = await handleBusinessRequest(
+      {
+        pathname: "/api/business/search",
+        searchParams: new URLSearchParams({ q: "展示礼物面板", platform: "flutter" }),
+      },
+      ctx,
+    )
+    expect(res?.statusCode).toBe(200)
+    const body = res?.body as {
+      results: Array<{ matchType: string; matchedIn: { platform: string | null } }>
+    }
+    const interactionMatches = body.results.filter((r) => r.matchType === "interaction")
+    expect(interactionMatches.length).toBeGreaterThan(0)
+    expect(interactionMatches.every((r) => r.matchedIn.platform === "ddoversea_flutter")).toBe(true)
+  })
+
+  it("search finds serverLayer primaryDomain name", async () => {
+    seedBusinessFeatures(dir)
+    const res = await handleBusinessRequest(
+      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "Order Management" }) },
+      ctx,
+    )
+    expect(res?.statusCode).toBe(200)
+    const body = res?.body as {
+      results: Array<{ matchType: string; featureName: string; matchedIn: { domain: string | null } }>
+    }
+    const match = body.results.find((r) => r.matchType === "domain" && r.matchedIn.domain === "Order Management")
+    expect(match).toBeDefined()
+    expect(match?.featureName).toBe("Create Order")
+  })
+
+  it("GET /api/business/domains/:slug returns normalized generated.interactions", async () => {
+    seedBusinessFeatures(dir)
+    const interactionsDir = path.join(dir, ".understand-anything", "business-landscape", "feature-interactions")
+    fs.mkdirSync(interactionsDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(interactionsDir, "feature-create-order.json"),
+      JSON.stringify({
+        featureId: "feature:order-create",
+        featureName: "Create Order",
+        skeleton: { featureId: "feature:order-create", layers: [{ name: "client" }] },
+        generated: {
+          interactions: [
+            {
+              name: "Submit Order",
+              steps: [{ description: "Tap checkout", service: "ddoversea_ios" }],
+            },
+          ],
+        },
+      }),
+    )
+
+    const res = await handleBusinessRequest(
+      { pathname: "/api/business/domains/Create%20Order", searchParams: new URLSearchParams() },
+      ctx,
+    )
+    expect(res?.statusCode).toBe(200)
+    const body = res?.body as {
+      interactions: Array<{ name: string; steps: Array<{ action: string; platform?: string }> }>
+    }
+    expect(body.interactions).toHaveLength(1)
+    expect(body.interactions[0].name).toBe("Submit Order")
+    expect(body.interactions[0].steps[0].action).toBe("Tap checkout")
+    expect(body.interactions[0].steps[0].platform).toBe("ddoversea_ios")
+  })
+
+  it("search works when feature-interactions directory doesn't exist", async () => {
+    seedVoiceRoomPlatform(dir)
+    const res = await handleBusinessRequest(
+      { pathname: "/api/business/search", searchParams: new URLSearchParams({ q: "PK" }) }, ctx)
+    expect(res?.statusCode).toBe(200)
+    const body = res?.body as { results: unknown[]; totalResults: number }
+    expect(body.totalResults).toBeGreaterThan(0)
+    expect(body.results.some((r) => (r as { matchType: string }).matchType === "flow")).toBe(true)
   })
 
   it("returns null for unrelated paths", async () => {

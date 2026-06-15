@@ -4,7 +4,7 @@ import path from "path"
 import type { BusinessFeature, BusinessFeaturesDocument } from "@understand-anything/core"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
 import { businessLandscapeDir, readJsonFile, resolveProjectRoot } from "../utils"
-import { handleUnifiedSearch } from "./search"
+import { getOrBuildBusinessIndex } from "./business-index"
 
 interface DomainsIndex {
   domains: Array<{ id: string; name: string; summary: string; detailRef: string }>
@@ -80,6 +80,283 @@ interface WikiFlow {
   steps?: Array<{ description?: string }>
 }
 
+interface NormalizedFlow {
+  name: string
+  steps: Array<{ action: string; platform?: string }>
+}
+
+function extractInteractionFlows(doc: unknown): NormalizedFlow[] {
+  const data = doc as {
+    flows?: NormalizedFlow[]
+    generated?: { interactions?: Array<{ name?: string; steps?: Array<{ action?: string; description?: string; platform?: string; service?: string }> }> }
+    interactions?: NormalizedFlow[]
+  }
+  if (Array.isArray(data?.flows)) return data.flows
+  if (Array.isArray(data?.generated?.interactions)) {
+    return data.generated.interactions.map((flow) => ({
+      name: flow.name ?? "",
+      steps: (flow.steps ?? []).map((s) => ({
+        action: s.action ?? s.description ?? "",
+        platform: s.platform ?? s.service ?? undefined,
+      })),
+    }))
+  }
+  if (Array.isArray(data?.interactions)) return data.interactions
+  return []
+}
+
+function stepMatchesPlatform(stepPlatform: string | null | undefined, platformFilterLower: string): boolean {
+  if (!stepPlatform) return false
+  const stepPlatformLower = stepPlatform.toLowerCase()
+  if (stepPlatformLower === platformFilterLower) return true
+  return stepPlatformLower.includes(platformFilterLower)
+}
+
+type BusinessSearchMatchType = "feature" | "domain" | "flow" | "step" | "interaction"
+
+interface BusinessSearchMatch {
+  featureName: string
+  featureId: string
+  matchType: BusinessSearchMatchType
+  matchedIn: {
+    platform: string | null
+    domain: string | null
+    flow: string | null
+    step: string | null
+  }
+  context: string
+}
+
+function resolveStandardPlatform(
+  data: BusinessFeaturesDocument,
+  repoName: string,
+  platformEntry: { standardPlatform?: string },
+): string {
+  if (platformEntry.standardPlatform) return platformEntry.standardPlatform
+  for (const [standard, mappedRepo] of Object.entries(data.platformMapping ?? {})) {
+    if (mappedRepo === repoName) return standard
+  }
+  return repoName
+}
+
+function searchFeatureInteractions(
+  blDir: string,
+  keywords: string[],
+  platformFilterLower: string | null,
+): BusinessSearchMatch[] {
+  const results: BusinessSearchMatch[] = []
+  const interactionsDir = path.join(blDir, "feature-interactions")
+  if (!fs.existsSync(interactionsDir)) return results
+
+  let files: string[]
+  try {
+    files = fs.readdirSync(interactionsDir)
+  } catch {
+    return results
+  }
+
+  function matchesKeyword(text: string): boolean {
+    const lower = text.toLowerCase()
+    return keywords.some((kw) => lower.includes(kw))
+  }
+
+  for (const filename of files) {
+    if (!filename.startsWith("feature-") || !filename.endsWith(".json")) continue
+    if (filename.includes("..")) continue
+
+    const interactionData = readJsonFile<{
+      featureId?: string
+      featureName?: string
+    }>(path.join(interactionsDir, filename))
+    const flows = extractInteractionFlows(interactionData)
+    if (flows.length === 0) continue
+
+    const featureId = interactionData?.featureId ?? ""
+    const featureName = interactionData?.featureName ?? ""
+
+    for (const flow of flows) {
+      const flowName = flow.name ?? ""
+      if (matchesKeyword(flowName)) {
+        if (platformFilterLower) {
+          const hasMatchingPlatform = flow.steps?.some(
+            (step) => stepMatchesPlatform(step.platform, platformFilterLower),
+          )
+          if (!hasMatchingPlatform) continue
+        }
+
+        const stepCount = flow.steps?.length ?? 0
+        results.push({
+          featureName,
+          featureId,
+          matchType: "interaction",
+          matchedIn: { platform: null, domain: null, flow: flowName, step: null },
+          context: `${flowName} (${stepCount} steps)`,
+        })
+        continue
+      }
+
+      for (const step of flow.steps ?? []) {
+        const action = step.action ?? ""
+        const stepPlatform = step.platform ?? null
+        if (platformFilterLower && !stepMatchesPlatform(stepPlatform, platformFilterLower)) {
+          continue
+        }
+
+        if (matchesKeyword(action)) {
+          results.push({
+            featureName,
+            featureId,
+            matchType: "interaction",
+            matchedIn: {
+              platform: stepPlatform,
+              domain: null,
+              flow: flowName || null,
+              step: action,
+            },
+            context: flowName ? `${flowName} > ${action}` : action,
+          })
+        }
+      }
+    }
+  }
+
+  return results
+}
+
+function searchBusinessFeatures(
+  projectRoot: string,
+  blDir: string,
+  data: BusinessFeaturesDocument,
+  query: string,
+  platformFilter?: string | null,
+): BusinessSearchMatch[] {
+  const keywords = query.split(",").map((k) => k.trim().toLowerCase()).filter(Boolean)
+  const results: BusinessSearchMatch[] = []
+  const seen = new Set<string>()
+  const platformFilterLower = platformFilter?.toLowerCase() ?? null
+  const wikiCache = new Map<string, { name?: string; flows?: WikiFlow[] } | null>()
+
+  function addResult(match: BusinessSearchMatch) {
+    const key = `${match.matchType}:${match.featureId}:${match.matchedIn.flow ?? ""}:${match.matchedIn.step ?? ""}:${match.matchedIn.platform ?? ""}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      results.push(match)
+    }
+  }
+
+  function matchesKeyword(text: string): boolean {
+    const lower = text.toLowerCase()
+    return keywords.some((kw) => lower.includes(kw))
+  }
+
+  for (const feature of data.features) {
+    if (matchesKeyword(feature.name)) {
+      addResult({
+        featureName: feature.name,
+        featureId: feature.id,
+        matchType: "feature",
+        matchedIn: { platform: null, domain: null, flow: null, step: null },
+        context: feature.name,
+      })
+    }
+
+    const primaryDomain = feature.serverLayer.primaryDomain
+    if (matchesKeyword(primaryDomain?.name ?? "")) {
+      addResult({
+        featureName: feature.name,
+        featureId: feature.id,
+        matchType: "domain",
+        matchedIn: { platform: null, domain: primaryDomain!.name, flow: null, step: null },
+        context: primaryDomain!.name,
+      })
+    }
+    for (const supporting of feature.serverLayer.supportingDomains ?? []) {
+      if (matchesKeyword(supporting.name ?? "")) {
+        addResult({
+          featureName: feature.name,
+          featureId: feature.id,
+          matchType: "domain",
+          matchedIn: { platform: null, domain: supporting.name!, flow: null, step: null },
+          context: supporting.name!,
+        })
+      }
+    }
+
+    for (const [repoName, platformEntry] of Object.entries(feature.clientLayer.platforms)) {
+      const standardPlatform = resolveStandardPlatform(data, repoName, platformEntry)
+      if (platformFilterLower && standardPlatform.toLowerCase() !== platformFilterLower) {
+        continue
+      }
+
+      const domainName = platformEntry.domainName ?? null
+      if (matchesKeyword(domainName ?? "")) {
+        addResult({
+          featureName: feature.name,
+          featureId: feature.id,
+          matchType: "domain",
+          matchedIn: {
+            platform: standardPlatform,
+            domain: domainName,
+            flow: null,
+            step: null,
+          },
+          context: domainName!,
+        })
+      }
+
+      const wikiRef = platformEntry.wikiRef
+      if (!wikiRef) continue
+
+      if (!wikiCache.has(wikiRef)) wikiCache.set(wikiRef, readWikiFromRef(projectRoot, wikiRef) as { name?: string; flows?: WikiFlow[] } | null)
+      const wiki = wikiCache.get(wikiRef)!
+      if (!wiki?.flows) continue
+
+      const resolvedDomain = domainName ?? wiki.name ?? null
+      for (const flow of wiki.flows) {
+        const flowName = flow.name ?? ""
+        if (matchesKeyword(flowName)) {
+          const stepCount = flow.steps?.length ?? 0
+          addResult({
+            featureName: feature.name,
+            featureId: feature.id,
+            matchType: "flow",
+            matchedIn: {
+              platform: standardPlatform,
+              domain: resolvedDomain,
+              flow: flowName,
+              step: null,
+            },
+            context: `${flowName} (${stepCount} steps)`,
+          })
+          continue
+        }
+
+        for (const step of flow.steps ?? []) {
+          const description = step.description ?? ""
+          if (matchesKeyword(description)) {
+            addResult({
+              featureName: feature.name,
+              featureId: feature.id,
+              matchType: "step",
+              matchedIn: {
+                platform: standardPlatform,
+                domain: resolvedDomain,
+                flow: flowName || null,
+                step: description,
+              },
+              context: flowName ? `${flowName} > ${description}` : description,
+            })
+          }
+        }
+      }
+    }
+  }
+
+  results.push(...searchFeatureInteractions(blDir, keywords, platformFilterLower))
+
+  return results
+}
+
 function applyFlowFilter(platformDetail: unknown, flowFilter: string): unknown {
   if (!platformDetail || typeof platformDetail !== "object") return platformDetail
   const detail = platformDetail as { flows?: WikiFlow[] }
@@ -135,13 +412,12 @@ function resolveFeaturePlatformDetail(
 function readFeatureInteractions(blDir: string, feature: BusinessFeature): unknown[] {
   const slug = featureNameToSlug(feature.name)
   const interactionFile = path.join(blDir, "feature-interactions", `feature-${slug}.json`)
-  const interactionData = readJsonFile<{
-    interactions?: unknown[]
-    skeleton?: unknown
-  }>(interactionFile)
+  const interactionData = readJsonFile(interactionFile)
   if (!interactionData) return []
-  if (Array.isArray(interactionData.interactions)) return interactionData.interactions
-  if (interactionData.skeleton) return [interactionData.skeleton]
+  const flows = extractInteractionFlows(interactionData)
+  if (flows.length > 0) return flows
+  const data = interactionData as { skeleton?: unknown }
+  if (data.skeleton) return [data.skeleton]
   return []
 }
 
@@ -248,14 +524,31 @@ export async function handleBusinessRequest(req: ApiRequest, _ctx: ApiContext): 
   if (pathname === "/api/business/search") {
     const q = searchParams.get("q") ?? ""
     if (!q.trim()) return { statusCode: 400, body: { error: "q parameter required" } }
-    const response = handleUnifiedSearch(q, "business", undefined, 50)
-    const body = response.body as { results?: Array<{ id: string; name: string; summary: string }> }
-    const results = (body.results ?? []).map((r) => ({
-      id: r.id.replace(/^business:/, ""),
-      name: r.name,
-      match: q,
-    }))
-    return { statusCode: 200, body: { results } }
+    if (q.length > 500) {
+      return { statusCode: 400, body: { error: "query too long (max 500 characters)" } }
+    }
+
+    const platform = searchParams.get("platform")?.toLowerCase() ?? null
+    const limitStr = searchParams.get("limit") ?? "50"
+    const limit = Math.min(Math.max(Number.parseInt(limitStr, 10) || 50, 1), 100)
+    const projectRoot = resolveProjectRoot()
+
+    const index = getOrBuildBusinessIndex(blDir, projectRoot)
+    if (!index) {
+      return { statusCode: 404, body: { error: "business-features.json not found or invalid" } }
+    }
+
+    const results = index.search(q, { platform, limit })
+
+    return {
+      statusCode: 200,
+      body: {
+        query: q,
+        ...(platform ? { platform } : {}),
+        results,
+        totalResults: results.length,
+      },
+    }
   }
 
   if (pathname === "/api/business/meta") {
@@ -292,8 +585,8 @@ export async function handleBusinessRequest(req: ApiRequest, _ctx: ApiContext): 
     const featureId = decodeURIComponent(platformMatch[1])
     const standardPlatform = decodeURIComponent(platformMatch[2]).toLowerCase()
     if (
-      featureId.includes("..") || featureId.includes("/") || featureId.includes("\\")
-      || standardPlatform.includes("..") || standardPlatform.includes("/") || standardPlatform.includes("\\")
+      featureId.includes("..") || featureId.includes("/") || featureId.includes("\\") || featureId.includes("\0")
+      || standardPlatform.includes("..") || standardPlatform.includes("/") || standardPlatform.includes("\\") || standardPlatform.includes("\0")
     ) {
       return { statusCode: 400, body: { error: "Invalid path: path traversal detected", code: "PATH_TRAVERSAL" } }
     }
@@ -329,7 +622,7 @@ export async function handleBusinessRequest(req: ApiRequest, _ctx: ApiContext): 
   const featureMatch = pathname.match(/^\/api\/business\/features\/([^/]+)$/)
   if (featureMatch) {
     const featureId = decodeURIComponent(featureMatch[1])
-    if (featureId.includes("..") || featureId.includes("/") || featureId.includes("\\")) {
+    if (featureId.includes("..") || featureId.includes("/") || featureId.includes("\\") || featureId.includes("\0")) {
       return { statusCode: 400, body: { error: "Invalid featureId: path traversal detected", code: "PATH_TRAVERSAL" } }
     }
     const data = readJsonFile<BusinessFeaturesDocument>(path.join(blDir, "business-features.json"))
@@ -342,7 +635,7 @@ export async function handleBusinessRequest(req: ApiRequest, _ctx: ApiContext): 
   const slugMatch = pathname.match(/^\/api\/business\/domains\/([^/]+)$/)
   if (slugMatch) {
     const slug = decodeURIComponent(slugMatch[1])
-    if (slug.includes("..") || slug.includes("/") || slug.includes("\\")) {
+    if (slug.includes("..") || slug.includes("/") || slug.includes("\\") || slug.includes("\0")) {
       return { statusCode: 400, body: { error: "Invalid slug: path traversal detected", code: "PATH_TRAVERSAL" } }
     }
 
@@ -392,7 +685,7 @@ export async function handleBusinessRequest(req: ApiRequest, _ctx: ApiContext): 
       )
       if (matched?.detailRef) {
         const filename = path.basename(matched.detailRef)
-        if (!filename.includes("..") && !filename.includes("/") && !filename.includes("\\")) {
+        if (!filename.includes("..") && !filename.includes("/") && !filename.includes("\\") && !filename.includes("\0")) {
           detail = readJsonFile(path.join(domainsDir, filename))
         }
       }

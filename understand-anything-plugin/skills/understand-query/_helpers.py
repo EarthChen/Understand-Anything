@@ -238,7 +238,7 @@ def _is_test_path(file_path: str) -> bool:
     return any(marker in file_path for marker in ("test", "Test", "spec"))
 
 
-def _auto_discover_service(server: str, query: str) -> tuple[str | None, list[dict]]:
+def _auto_discover_service(server: str, query: str, platform: str | None = None) -> tuple[str | None, list[dict]]:
     """Search wiki + business landscape + KG to find which service hosts a feature. Returns (service_name, biz_results)."""
     service_votes: dict[str, int] = {}
     biz_results: list[dict] = []
@@ -293,9 +293,17 @@ def _auto_discover_service(server: str, query: str) -> tuple[str | None, list[di
         pass
 
     # Strategy 2: Business landscape search (slower on cold start, supplements wiki)
+    biz_features_api_used = False
     if not service_votes:
         try:
-            biz_hits = _search_api(server, search_query, scope="business", limit=10)
+            if platform:
+                biz_resp = fetch_json(build_url(server, "/api/business/search", {
+                    "q": search_query, "platform": platform,
+                }))
+                biz_features_api_used = True
+                biz_hits = biz_resp.get("results", [])
+            else:
+                biz_hits = _search_api(server, search_query, scope="business", limit=10)
             for r in biz_hits:
                 for svc in r.get("services", []):
                     svc_name = svc if isinstance(svc, str) else svc.get("name", "")
@@ -311,6 +319,25 @@ def _auto_discover_service(server: str, query: str) -> tuple[str | None, list[di
                                     service_votes[svc_name] = service_votes.get(svc_name, 0) + 2
             if biz_hits and not biz_results:
                 biz_results = biz_hits
+        except RuntimeError:
+            pass
+
+    # Strategy 2b: Business features search (authoritative business-features.json)
+    if not biz_features_api_used:
+        try:
+            biz_params: dict[str, str] = {"q": search_query}
+            if platform:
+                biz_params["platform"] = platform
+            biz_resp = fetch_json(build_url(server, "/api/business/search", biz_params))
+            if biz_resp and biz_resp.get("results"):
+                biz_feature_seen: set[str] = set()
+                for match in biz_resp["results"][:5]:
+                    svc = match.get("service") or match.get("serverService")
+                    if svc and svc not in biz_feature_seen:
+                        service_votes[svc] = service_votes.get(svc, 0) + 2
+                        biz_feature_seen.add(svc)
+                if not biz_results:
+                    biz_results = biz_resp["results"]
         except RuntimeError:
             pass
 

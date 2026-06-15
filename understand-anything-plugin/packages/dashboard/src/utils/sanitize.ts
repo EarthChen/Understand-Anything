@@ -1,4 +1,5 @@
 import path from "path";
+import fs from "fs";
 
 const SAFE_SLUG = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 const UNSAFE_PATH_SEGMENT = /(^|\/)\.\.(\/|$)/;
@@ -51,6 +52,21 @@ export function resolvePathWithinRoot(root: string, relativePath: string): strin
     path.isAbsolute(relativeToRoot)
   ) {
     return null;
+  }
+
+  // Symlink escape check: resolve real path and verify it stays within root
+  try {
+    const realRoot = fs.realpathSync(root);
+    const realFile = fs.realpathSync(absoluteFile);
+    const realRelative = path.relative(realRoot, realFile);
+    if (!realRelative || realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+      return null;
+    }
+  } catch (e: unknown) {
+    // ENOENT is OK (file doesn't exist yet); other errors are suspicious
+    if (e && typeof e === "object" && "code" in e && (e as { code: string }).code !== "ENOENT") {
+      return null;
+    }
   }
 
   return absoluteFile;

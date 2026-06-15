@@ -101,6 +101,36 @@ class TestFormatOutput(unittest.TestCase):
         mock_formatter.assert_called_once_with(data)
         assert "# 业务功能全景" in result
 
+    def test_md_renders_structure_fallback(self):
+        data = {
+            "question": "test",
+            "depth": "full",
+            "matchedNodes": [],
+            "structureFallback": {
+                "hint": "Found 3 structure matches",
+                "results": [{"name": "Foo", "file": "src/Foo.java", "startLine": 10, "endLine": 20, "type": "class"}],
+            },
+        }
+        md = format_output(data, "md")
+        assert "Structure Fallback" in md
+        assert "Foo" in md
+        assert "src/Foo.java:10-20" in md
+
+    def test_md_renders_source_fallback(self):
+        data = {
+            "question": "test",
+            "depth": "full",
+            "matchedNodes": [],
+            "sourceFallback": {
+                "hint": "Found 2 source matches",
+                "results": [{"file": "src/Foo.java", "startLine": 10, "endLine": 20, "snippet": "public void timeout() {...}", "score": 0.85}],
+            },
+        }
+        md = format_output(data, "md")
+        assert "Source Content Search" in md
+        assert "timeout" in md
+        assert "0.85" in md
+
 
 # ──────────────────────────────────────────────
 # parse_args
@@ -193,6 +223,24 @@ class TestParseArgs(unittest.TestCase):
         args = parse_args(["structure", "--service", "svc", "--file", "UserService.java"])
         assert args.file == "UserService.java"
 
+    def test_structure_grep(self):
+        args = parse_args(["structure", "--service", "svc", "--grep", "timeout"])
+        assert args.grep == "timeout"
+
+    def test_source_search(self):
+        args = parse_args(["source", "--service", "svc", "--search", "timeout"])
+        assert args.command == "source"
+        assert args.service == "svc"
+        assert args.search == "timeout"
+        assert args.limit == 20
+
+    def test_source_file(self):
+        args = parse_args(["source", "--service", "svc", "--file", "src/Foo.java", "--start", "10", "--end", "20"])
+        assert args.command == "source"
+        assert args.file == "src/Foo.java"
+        assert args.start == 10
+        assert args.end == 20
+
     def test_impact(self):
         args = parse_args(["impact", "--service", "svc", "--symbol", "createOrder", "--depth", "5"])
         assert args.command == "impact"
@@ -213,6 +261,11 @@ class TestParseArgs(unittest.TestCase):
     def test_global_server(self):
         args = parse_args(["--server", "http://custom:9999", "kg", "--service", "svc", "--search", "auth"])
         assert args.server == "http://custom:9999"
+
+    def test_ask_platform_arg(self):
+        args = parse_args(["ask", "--query", "语聊房", "--platform", "android"])
+        assert args.command == "ask"
+        assert args.platform == "android"
 
 
 # ──────────────────────────────────────────────
@@ -561,6 +614,85 @@ class TestCmdStructure(unittest.TestCase):
         result = cmd_structure(args)
         assert "implementors" in result
 
+    @patch("_helpers.fetch_json")
+    def test_grep(self, mock_fetch):
+        mock_fetch.return_value = {"query": "timeout", "results": [], "totalResults": 0}
+        args = parse_args(["structure", "--service", "svc", "--grep", "timeout", "--path", "*.yml", "--limit", "10"])
+        from ua_query import cmd_structure
+        cmd_structure(args)
+        call_url = mock_fetch.call_args[0][0]
+        assert "/api/source/search" in call_url
+        assert "q=timeout" in call_url
+        assert "service=svc" in call_url
+        assert "path=" in call_url
+        assert "limit=10" in call_url
+
+    @patch("_helpers.fetch_json")
+    def test_grep_deprecation_hint(self, mock_fetch):
+        mock_fetch.return_value = {"query": "timeout", "results": [], "totalResults": 0}
+        import io
+        args = parse_args(["structure", "--service", "svc", "--grep", "timeout"])
+        from ua_query import cmd_structure
+        stderr_buf = io.StringIO()
+        with patch("sys.stderr", stderr_buf):
+            cmd_structure(args)
+        assert "[DEPRECATED]" in stderr_buf.getvalue()
+        assert "source --service" in stderr_buf.getvalue()
+
+
+class TestCmdSource(unittest.TestCase):
+    @patch("_helpers.fetch_json")
+    def test_source_search(self, mock_fetch):
+        """source --search calls /api/source/search"""
+        mock_fetch.return_value = {
+            "query": "timeout",
+            "results": [{"file": "src/Foo.java", "line": 42, "content": "timeout"}],
+            "totalResults": 1,
+        }
+        args = parse_args(["source", "--service", "svc", "--search", "timeout"])
+        from ua_query import cmd_source
+        result = cmd_source(args)
+        call_url = mock_fetch.call_args[0][0]
+        assert "/api/source/search" in call_url
+        assert "q=timeout" in call_url
+        assert "service=svc" in call_url
+        assert result["results"][0]["file"] == "src/Foo.java"
+
+    @patch("_helpers.fetch_json")
+    def test_source_search_with_path(self, mock_fetch):
+        mock_fetch.return_value = {"query": "timeout", "results": [], "totalResults": 0}
+        args = parse_args(["source", "--service", "svc", "--search", "timeout", "--path", "*.yml", "--limit", "50"])
+        from ua_query import cmd_source
+        cmd_source(args)
+        call_url = mock_fetch.call_args[0][0]
+        assert "path=" in call_url
+        assert "limit=50" in call_url
+
+    @patch("_helpers.fetch_json")
+    def test_source_file(self, mock_fetch):
+        """source --file calls /api/source"""
+        mock_fetch.return_value = {"file": "src/Foo.java", "content": "class Foo {}"}
+        args = parse_args(["source", "--service", "svc", "--file", "src/Foo.java", "--start", "10", "--end", "20"])
+        from ua_query import cmd_source
+        result = cmd_source(args)
+        call_url = mock_fetch.call_args[0][0]
+        assert "/api/source" in call_url
+        assert "file=src" in call_url or "Foo.java" in call_url
+        assert "start=10" in call_url
+        assert "end=20" in call_url
+        assert "content" in result
+
+    def test_source_requires_service(self):
+        """source without --service fails"""
+        with self.assertRaises(SystemExit):
+            parse_args(["source", "--search", "test"])
+
+    def test_source_requires_search_or_file(self):
+        args = parse_args(["source", "--service", "svc"])
+        from ua_query import cmd_source
+        with self.assertRaises(SystemExit):
+            cmd_source(args)
+
 
 class TestCmdWiki(unittest.TestCase):
     @patch("_helpers.fetch_json")
@@ -583,12 +715,50 @@ class TestCmdWiki(unittest.TestCase):
 
 class TestCmdBusiness(unittest.TestCase):
     @patch("_helpers.fetch_json")
+    def test_search_calls_business_search_api(self, mock_fetch):
+        mock_fetch.return_value = {
+            "query": "PK",
+            "results": [{"featureName": "语聊房", "matchType": "flow"}],
+            "totalResults": 1,
+        }
+        args = parse_args(["business", "--search", "PK"])
+        from ua_query import cmd_business
+        result = cmd_business(args)
+        call_url = mock_fetch.call_args[0][0]
+        assert "/api/business/search" in call_url
+        assert "q=PK" in call_url
+        assert result["totalResults"] == 1
+
+    @patch("_helpers.fetch_json")
+    def test_search_with_platform_sends_both_parameters(self, mock_fetch):
+        mock_fetch.return_value = {
+            "query": "PK",
+            "platform": "android",
+            "results": [],
+            "totalResults": 0,
+        }
+        args = parse_args(["business", "--search", "PK", "--platform", "android"])
+        from ua_query import cmd_business
+        cmd_business(args)
+        call_url = mock_fetch.call_args[0][0]
+        assert "/api/business/search" in call_url
+        assert "q=PK" in call_url
+        assert "platform=android" in call_url
+
+    @patch("_helpers.fetch_json")
     def test_search(self, mock_fetch):
-        mock_fetch.return_value = {"results": [{"id": "biz::order", "name": "Order Domain"}]}
+        mock_fetch.return_value = {
+            "query": "order",
+            "results": [{"featureName": "Order Domain", "matchType": "feature"}],
+            "totalResults": 1,
+        }
         args = parse_args(["business", "--search", "order"])
         from ua_query import cmd_business
         result = cmd_business(args)
-        assert "results" in result
+        call_url = mock_fetch.call_args[0][0]
+        assert "/api/business/search" in call_url
+        assert "q=order" in call_url
+        assert result["totalResults"] == 1
 
     @patch("_helpers.fetch_json")
     def test_list(self, mock_fetch):
@@ -665,6 +835,194 @@ class TestCmdBusiness(unittest.TestCase):
         assert "platform=android" in call_url
         assert "flow=PK" in call_url
         assert result["platformDetail"]["flows"] == [{"name": "PK Battle"}]
+
+
+class TestCmdDomain(unittest.TestCase):
+    @patch("_helpers.fetch_json")
+    def test_domain_search_uses_api(self, mock_fetch):
+        """domain --search should call /api/search with scope=domain."""
+        mock_fetch.return_value = {"results": [{"id": "flow:pk", "name": "PK Battle", "type": "flow"}]}
+        args = parse_args(["domain", "--service", "svc", "--search", "PK"])
+        from ua_query import cmd_domain
+        result = cmd_domain(args)
+        call_url = mock_fetch.call_args[0][0]
+        assert "/api/search" in call_url
+        assert "scope=domain" in call_url
+        assert "q=PK" in call_url
+        assert "service=svc" in call_url
+        assert len(result["nodes"]) == 1
+        assert result["nodes"][0]["name"] == "PK Battle"
+
+
+class TestCmdAsk(unittest.TestCase):
+    @patch("_commands._detect_and_follow_cross_service_rpc", return_value=None)
+    @patch("_commands.cmd_trace")
+    @patch("_helpers.fetch_json")
+    @patch("_helpers._search_api")
+    def test_ask_structure_fallback(self, mock_search_api, mock_fetch, mock_trace, mock_cross):
+        """When ask finds no KG matches, should fallback to structure search."""
+        mock_search_api.return_value = []
+        mock_trace.return_value = {"matchedNodes": []}
+        mock_fetch.return_value = {
+            "results": [{"name": "PkBattleService", "type": "class"}],
+        }
+        args = parse_args(["ask", "--service", "svc", "--query", "PK对战", "--depth", "full"])
+        from ua_query import cmd_ask
+        result = cmd_ask(args)
+        assert result["matchedNodes"] == []
+        assert "structureFallback" in result
+        assert result["structureFallback"]["keywords"] == ["PK"]
+        assert len(result["structureFallback"]["results"]) == 1
+        structure_calls = [
+            c for c in mock_fetch.call_args_list
+            if "/api/structure/search" in c[0][0]
+        ]
+        assert len(structure_calls) == 1
+        assert "q=PK" in structure_calls[0][0][0]
+
+    @patch("_commands._detect_and_follow_cross_service_rpc", return_value=None)
+    @patch("_commands.cmd_trace")
+    @patch("_helpers.fetch_json")
+    @patch("_helpers._search_api")
+    def test_ask_source_fallback(self, mock_search_api, mock_fetch, mock_trace, mock_cross):
+        """When ask finds no KG or structure matches, should fallback to source grep."""
+        mock_search_api.return_value = []
+        mock_trace.return_value = {"matchedNodes": []}
+
+        def fetch_side_effect(url, *args, **kwargs):
+            if "/api/structure/search" in url:
+                return {"results": []}
+            if "/api/source/search" in url:
+                return {
+                    "results": [
+                        {"file": "RoomManager.kt", "line": 42, "content": "// 房间管理"},
+                    ],
+                }
+            return {}
+
+        mock_fetch.side_effect = fetch_side_effect
+        args = parse_args(["ask", "--service", "svc", "--query", "RoomManager", "--depth", "full"])
+        from ua_query import cmd_ask
+        result = cmd_ask(args)
+        assert result["matchedNodes"] == []
+        assert "structureFallback" not in result
+        assert "sourceFallback" in result
+        assert len(result["sourceFallback"]["results"]) == 1
+        source_calls = [
+            c for c in mock_fetch.call_args_list
+            if "/api/source/search" in c[0][0]
+        ]
+        assert len(source_calls) == 1
+        assert "q=RoomManager" in source_calls[0][0][0]
+
+    @patch("_commands._detect_and_follow_cross_service_rpc", return_value=None)
+    @patch("_commands.cmd_trace")
+    @patch("_helpers.fetch_json")
+    @patch("_helpers._search_api")
+    def test_ask_chinese_source_fallback(self, mock_search_api, mock_fetch, mock_trace, mock_cross):
+        """Chinese-only queries should use original query for source grep fallback."""
+        mock_search_api.return_value = []
+        mock_trace.return_value = {"matchedNodes": []}
+
+        def fetch_side_effect(url, *args, **kwargs):
+            if "/api/structure/search" in url:
+                return {"results": []}
+            if "/api/source/search" in url:
+                return {
+                    "results": [
+                        {"file": "RoomFragment.java", "line": 10, "content": "房间管理"},
+                    ],
+                }
+            return {}
+
+        mock_fetch.side_effect = fetch_side_effect
+        args = parse_args(["ask", "--service", "svc", "--query", "房间管理", "--depth", "full"])
+        from ua_query import cmd_ask
+        result = cmd_ask(args)
+        assert "sourceFallback" in result
+        source_calls = [
+            c for c in mock_fetch.call_args_list
+            if "/api/source/search" in c[0][0]
+        ]
+        assert len(source_calls) == 1
+        assert "q=" in source_calls[0][0][0]
+        assert "%E6%88%BF%E9%97%B4" in source_calls[0][0][0] or "房间管理" in source_calls[0][0][0]
+
+    @patch("_commands._detect_and_follow_cross_service_rpc", return_value=None)
+    @patch("_commands.cmd_trace")
+    @patch("_helpers.fetch_json")
+    @patch("_helpers._search_api")
+    def test_ask_propagates_trace_hint(self, mock_search_api, mock_fetch, mock_trace, mock_cross):
+        """ask propagates hint from trace result"""
+        mock_search_api.return_value = []
+        mock_trace.return_value = {
+            "matchedNodes": [],
+            "hint": "No KG nodes matched in service",
+            "crossServiceTrace": {"targetService": "other-svc", "traceResult": {}},
+            "crossServiceRpcHint": {"message": "RPC detected", "rpcInterfaces": []},
+        }
+        args = parse_args(["ask", "--service", "svc", "--query", "auth", "--depth", "standard"])
+        from ua_query import cmd_ask
+        result = cmd_ask(args)
+        assert result["traceHint"] == "No KG nodes matched in service"
+        assert result["crossServiceTrace"] == mock_trace.return_value["crossServiceTrace"]
+        assert result["crossServiceRpcHint"] == mock_trace.return_value["crossServiceRpcHint"]
+
+    @patch("_commands._detect_and_follow_cross_service_rpc", return_value=None)
+    @patch("_commands.cmd_trace")
+    @patch("_helpers.fetch_json")
+    @patch("_helpers._search_api")
+    def test_ask_source_fallback_full_query(self, mock_search_api, mock_fetch, mock_trace, mock_cross):
+        """ask sourceFallback uses full query including Chinese"""
+        mock_search_api.return_value = []
+        mock_trace.return_value = {"matchedNodes": []}
+
+        def fetch_side_effect(url, *args, **kwargs):
+            if "/api/structure/search" in url:
+                return {"results": []}
+            if "/api/source/search" in url:
+                return {
+                    "results": [
+                        {"file": "PkService.java", "line": 10, "content": "PK超时处理"},
+                    ],
+                }
+            return {}
+
+        mock_fetch.side_effect = fetch_side_effect
+        args = parse_args(["ask", "--service", "svc", "--query", "PK超时", "--depth", "full"])
+        from ua_query import cmd_ask
+        result = cmd_ask(args)
+        assert "sourceFallback" in result
+        source_calls = [
+            c for c in mock_fetch.call_args_list
+            if "/api/source/search" in c[0][0]
+        ]
+        assert len(source_calls) == 1
+        call_url = source_calls[0][0][0]
+        assert "PK" in call_url
+        assert "%E8%B6%85%E6%97%B6" in call_url or "超时" in call_url
+
+    @patch("_commands._detect_and_follow_cross_service_rpc", return_value=None)
+    @patch("_commands.cmd_trace")
+    @patch("_helpers.fetch_json")
+    @patch("_helpers._search_api")
+    def test_ask_source_fallback_handles_fetch_error(self, mock_search_api, mock_fetch, mock_trace, mock_cross):
+        """ask sourceFallback survives fetch_json errors"""
+        mock_search_api.return_value = []
+        mock_trace.return_value = {"matchedNodes": []}
+
+        def fetch_side_effect(url, *args, **kwargs):
+            if "/api/structure/search" in url:
+                return {"results": []}
+            if "/api/source/search" in url:
+                raise RuntimeError("source search failed")
+            return {}
+
+        mock_fetch.side_effect = fetch_side_effect
+        args = parse_args(["ask", "--service", "svc", "--query", "RoomManager", "--depth", "full"])
+        from ua_query import cmd_ask
+        result = cmd_ask(args)
+        assert "sourceFallback" not in result
 
 
 class TestCmdTrace(unittest.TestCase):
