@@ -74,13 +74,11 @@ export class KgIndex {
 
   private buildDocs(graph: KnowledgeGraph, serviceName: string): KgDoc[] {
     if (!Array.isArray(graph?.nodes)) return []
-    const seen = new Set<string>()
-    return graph.nodes
-      .filter((node) => {
-        if (seen.has(node.id)) return false
-        seen.add(node.id)
-        return true
-      })
+    const byId = new Map<string, typeof graph.nodes[number]>()
+    for (const node of graph.nodes) {
+      byId.set(node.id, node)
+    }
+    return [...byId.values()]
       .map((node) => ({
         id: node.id,
         name: node.name,

@@ -75,13 +75,12 @@ export class WikiIndex {
   }
 
   private buildDocs(data: WikiData, serviceName?: string): WikiDoc[] {
-    const seen = new Set<string>()
-    return (data.entries ?? [])
-      .filter((entry) => {
-        if (seen.has(entry.id)) return false
-        seen.add(entry.id)
-        return true
-      })
+    const entries = data.entries ?? []
+    const byId = new Map<string, typeof entries[number]>()
+    for (const entry of entries) {
+      byId.set(entry.id, entry)
+    }
+    return [...byId.values()]
       .map((entry) => ({
         id: entry.id,
         name: entry.name,

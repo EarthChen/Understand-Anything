@@ -201,7 +201,7 @@ Set up and verify the `.understandignore` file before scanning.
      const fs = require('fs');
      const path = require('path');
      const root = process.cwd();
-     const defaults = ['node_modules/','node_modules','.git/','vendor/','venv/','.venv/','__pycache__/','dist/','dist','build/','build','out/','coverage/','coverage','.next/','.cache/','.turbo/','target/','obj/','*.lock','package-lock.json','yarn.lock','pnpm-lock.yaml','*.png','*.jpg','*.jpeg','*.gif','*.svg','*.ico','*.woff','*.woff2','*.ttf','*.eot','*.mp3','*.mp4','*.pdf','*.zip','*.tar','*.gz','*.min.js','*.min.css','*.map','*.generated.*','.idea/','.vscode/','.vs/','.fleet/','*.swp','*.swo','*~','.gitlab-ci.yml','.github/','.cursor/','.claude/','.copilot/','.aider*','.continue/','.codeium/','.tabnine/','.sourcegraph/','.understand-anything/','LICENSE','.gitignore','.editorconfig','.prettierrc','.eslintrc*','*.log'];
+     const defaults = ['node_modules/','node_modules','.git/','vendor/','venv/','.venv/','__pycache__/','dist/','dist','build/','build','out/','coverage/','coverage','.next/','.cache/','.turbo/','target/','obj/','*.lock','package-lock.json','yarn.lock','pnpm-lock.yaml','*.png','*.jpg','*.jpeg','*.gif','*.svg','*.ico','*.woff','*.woff2','*.ttf','*.eot','*.mp3','*.mp4','*.pdf','*.zip','*.tar','*.gz','*.min.js','*.min.css','*.map','*.generated.*','.idea/','.vscode/','.vs/','.fleet/','*.swp','*.swo','*~','.gitlab-ci.yml','.github/','.cursor/','.claude/','.copilot/','.aider*','.continue/','.codeium/','.tabnine/','.sourcegraph/','.understand-anything/','LICENSE','.gitignore','.editorconfig','.prettierrc','.eslintrc*','*.log','*.a','*.dylib','*.so','*.dll','*.lib','*.dat','*.bin','*.db','*.sqlite','*.aar','*.jar','*.xcframework/','Pods/'];
      const norm = p => p.replace(/\/+$/, '');
      const defaultSet = new Set(defaults.map(norm));
      const header = '# .understandignore — patterns for files/dirs to exclude from analysis\n# Syntax: same as .gitignore (globs, # comments, ! negation, trailing / for dirs)\n# Lines below are suggestions — uncomment to activate.\n# Use ! prefix to force-include something excluded by defaults.\n#\n# Built-in defaults (always excluded unless negated):\n#   node_modules/, .git/, dist/, build/, obj/, .understand-anything/,\n#   .idea/, .vscode/, .vs/, .fleet/, .cursor/, .claude/, .copilot/,\n#   .continue/, .codeium/, .tabnine/, .sourcegraph/, .aider*,\n#   *.lock, *.min.js, *.swp, *.swo, *~, etc.\n#\n';
@@ -363,11 +363,11 @@ Load `.understand-anything/intermediate/batches.json` (produced by Phase 1.5). I
 
 #### Step 0 — Deterministic structural extraction (MUST complete before agent dispatch)
 
-Run `extract-structure.mjs` for **every batch** to produce extraction result files. This is a deterministic step — do NOT delegate it to file-analyzer sub-agents. The extraction results are required by `merge-batch-graphs.py` for RPC/MQ annotation recovery.
+Run `extract-structure.mjs` once in **full mode** to produce a single global extraction result file. This is a deterministic step — do NOT delegate it to file-analyzer sub-agents. The extraction results are required by `merge-batch-graphs.py` for RPC/MQ annotation recovery.
 
-**Step 0a — Generate all input files:**
+**Step 0a — Generate full-mode input file:**
 
-Write a helper script that reads `batches.json` and produces one input JSON per batch. This avoids heredoc issues with special characters in `batchImportData`.
+Write a helper script that reads `batches.json`, merges all files and importData across batches, and produces a single full-mode input JSON.
 
 ```bash
 export PROJECT_ROOT
@@ -378,159 +378,194 @@ tmp_dir = os.path.join(project_root, ".understand-anything", "tmp")
 batches_path = os.path.join(project_root, ".understand-anything", "intermediate", "batches.json")
 os.makedirs(tmp_dir, exist_ok=True)
 batches = json.load(open(batches_path))["batches"]
+all_files = []
+all_import_data = {}
 for batch in batches:
-    batch_index = batch["batchIndex"]
     files = batch.get("files", batch.get("batchFiles", []))
-    inp = {
-        "projectRoot": project_root,
-        "batchFiles": files,
-        "batchImportData": batch.get("batchImportData", {}),
-    }
-    out_path = os.path.join(tmp_dir, f"ua-file-analyzer-input-{batch_index}.json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(inp, f, ensure_ascii=False)
-    print(f"  Wrote {out_path} ({len(files)} files)")
+    all_files.extend(files)
+    all_import_data.update(batch.get("batchImportData", {}))
+inp = {
+    "projectRoot": project_root,
+    "fileList": all_files,
+    "importData": all_import_data,
+}
+out_path = os.path.join(tmp_dir, "ua-full-extract-input.json")
+with open(out_path, "w", encoding="utf-8") as f:
+    json.dump(inp, f, ensure_ascii=False)
+print(f"  Wrote {out_path} ({len(all_files)} files, {len(all_import_data)} import entries)")
 PYSCRIPT
 ```
 
-**Step 0b — Run extraction for batches that still need it (up to 10 concurrently):**
+**Step 0b — Run extraction in full mode (with chunked processing):**
 
-Before running extraction, detect already-completed extractions. For each batch's `batchIndex`, check if `$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json` exists and is non-empty. Skip batches that already have extraction results (this enables automatic resume when a previous run was interrupted). If an output file exists but contains invalid JSON (e.g. truncated from a crash), treat it as incomplete and re-process.
-
-If all extraction results already exist, skip directly to Step 0c.
-
-For remaining batches, run the extraction script with retry logic. Process up to **5 batches in parallel** — do NOT run them sequentially.
+Resume support: if `$PROJECT_ROOT/.understand-anything/tmp/ua-extract-results-full.json` already exists, is non-empty, and has `scriptCompleted: true`, skip extraction entirely.
 
 ```bash
 MAX_RETRIES=2
 for attempt in $(seq 0 $MAX_RETRIES); do
   node <SKILL_DIR>/extract-structure.mjs \
-    $PROJECT_ROOT/.understand-anything/tmp/ua-file-analyzer-input-<batchIndex>.json \
-    $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json && break
+    $PROJECT_ROOT/.understand-anything/tmp/ua-full-extract-input.json \
+    $PROJECT_ROOT/.understand-anything/tmp/ua-extract-results-full.json && break
   if [ $attempt -eq $MAX_RETRIES ]; then
-    echo "FATAL: extraction failed for batch <batchIndex> after $MAX_RETRIES retries" >&2; exit 1;
+    echo "FATAL: full-mode extraction failed after $MAX_RETRIES retries" >&2; exit 1;
   fi
-  echo "Extraction failed for batch <batchIndex>, retrying ($((attempt+1))/$MAX_RETRIES)..."
+  echo "Extraction failed, retrying ($((attempt+1))/$MAX_RETRIES)..."
 done
 ```
 
-**Step 0c — Verify all outputs:**
+The script internally processes files in chunks of 500 to manage memory. Note: if extraction crashes mid-way, all progress is lost (no intermediate checkpoints). For very large projects (5000+ files), consider monitoring memory usage.
+
+**Step 0c — Verify raw output:**
 
 ```bash
-for batchIndex in $(python3 -c "import json; print(' '.join(str(b['batchIndex']) for b in json.load(open('$PROJECT_ROOT/.understand-anything/intermediate/batches.json'))['batches']))"); do
-  test -s $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-$batchIndex.json || {
-    echo "FATAL: extraction results missing for batch $batchIndex" >&2; exit 1;
-  }
-  node -e "
-    const d = JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));
-    if (!d.scriptCompleted) { console.error('FATAL: batch ' + process.argv[2] + ' extraction degraded'); process.exit(1); }
-  " $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-$batchIndex.json $batchIndex || exit 1
-done
+test -s $PROJECT_ROOT/.understand-anything/tmp/ua-extract-results-full.json || {
+  echo "FATAL: full-mode extraction results missing" >&2; exit 1;
+}
+node -e "
+  const d = JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));
+  if (!d.scriptCompleted) { console.error('FATAL: extraction degraded (scriptCompleted=false)'); process.exit(1); }
+  console.log('Extraction verified: ' + (d.results?.length || 0) + ' files analyzed, ' + (d.filesSkipped?.length || 0) + ' skipped');
+" $PROJECT_ROOT/.understand-anything/tmp/ua-extract-results-full.json || exit 1
 ```
 
-If any extraction script exits non-zero or any output file is missing/empty or `scriptCompleted` is false, report the error and abort Phase 2. Do NOT proceed with agent dispatch without extraction results.
+If the extraction script exits non-zero or the output file is missing/empty or `scriptCompleted` is false, report the error and abort Phase 2.
+
+**Step 0c' — Convert to file-path-indexed format:**
+
+Convert the raw extraction output into a file-path-indexed dictionary. The raw format (`{ scriptCompleted, results: [...] }`) is kept as `ua-extract-results-full.json` for rule engine and debugging; all downstream steps use `structural-analysis.json` (indexed format).
+
+```bash
+python3 -c "
+import json, os
+src = os.path.join('$PROJECT_ROOT', '.understand-anything', 'tmp', 'ua-extract-results-full.json')
+dst = os.path.join('$PROJECT_ROOT', '.understand-anything', 'tmp', 'structural-analysis.json')
+data = json.load(open(src, encoding='utf-8'))
+merged = {}
+for r in data.get('results', []):
+    p = r.get('path', '')
+    if p:
+        merged[p] = {k: v for k, v in r.items() if k != 'path'}
+with open(dst, 'w', encoding='utf-8') as f:
+    json.dump(merged, f, indent=2, ensure_ascii=False)
+print(f'  Converted to file-path-indexed format: {len(merged)} files')
+"
+```
 
 #### Step 0c.5 — Run rule engine (deterministic annotation→edge mapping)
 
-Run the rule engine on each batch's extraction results to produce `ruleEngineEdges` for the file-analyzer agents. This is a deterministic step — do NOT delegate it to LLM agents.
+Run the rule engine once on the global extraction results to produce annotation-driven edges. This is a deterministic step — do NOT delegate it to LLM agents.
 
 The rule engine maps annotations (e.g., `@Autowired`, `@DubboService`, `@FeignClient`) to graph edges (`injects`, `provides_rpc`, `consumes_rpc`) using built-in framework rules. It also expands meta-annotations and resolves cross-file call graphs.
 
-**Step 0c.5a — Run rule engine for all batches:**
+**Step 0c.5a — Run rule engine on global extraction results:**
 
-For each batch that has extraction results, run the rule engine CLI. **Rule engine failure is non-fatal** — file-analyzer can still produce edges from LLM semantic analysis.
+**Rule engine failure is non-fatal** — file-analyzer can still produce edges from LLM semantic analysis.
 
 ```bash
-RULE_ENGINE_SUCCESS=0
-RULE_ENGINE_FAILED=0
+EXTRACT_FILE="$PROJECT_ROOT/.understand-anything/tmp/ua-extract-results-full.json"
+RULE_OUTPUT="$PROJECT_ROOT/.understand-anything/tmp/rule-engine-results.json"
 
-for batchIndex in $(python3 -c "import json; print(' '.join(str(b['batchIndex']) for b in json.load(open('$PROJECT_ROOT/.understand-anything/intermediate/batches.json'))['batches']))"); do
-  EXTRACT_FILE="$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-$batchIndex.json"
-  RULE_OUTPUT="$PROJECT_ROOT/.understand-anything/tmp/ua-rule-engine-results-$batchIndex.json"
+node <PLUGIN_ROOT>/packages/core/dist/analyzer/rule-engine-postprocess.mjs \
+  "$EXTRACT_FILE" \
+  "$RULE_OUTPUT" \
+  --mode=extraction-input
 
-  if [ ! -f "$EXTRACT_FILE" ]; then
-    echo "Skipping batch $batchIndex: extraction results not found"
-    continue
-  fi
-
-  # Validate extraction results have expected structure
-  node -e "
-    const d = JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));
-    if (!d.results && !d.extractionResults) { console.error('FATAL: extraction results missing results array'); process.exit(1); }
-    const results = d.results || d.extractionResults;
-    if (!Array.isArray(results)) { console.error('FATAL: results is not an array'); process.exit(1); }
-  " "$EXTRACT_FILE" || {
-    echo "WARNING: Batch $batchIndex extraction results invalid, skipping rule engine" >&2
-    echo '{"edges":[],"unresolved":[]}' > "$RULE_OUTPUT"
-    RULE_ENGINE_FAILED=$((RULE_ENGINE_FAILED + 1))
-    continue
-  }
-
-  # Run rule engine
-  node <PLUGIN_ROOT>/packages/core/dist/analyzer/rule-engine-postprocess.mjs \
-    "$EXTRACT_FILE" \
-    "$RULE_OUTPUT" \
-    --mode=extraction-input
-
-  if [ $? -ne 0 ]; then
-    echo "WARNING: Rule engine failed for batch $batchIndex, file-analyzer will proceed without ruleEngineEdges" >&2
-    echo '{"edges":[],"unresolved":[]}' > "$RULE_OUTPUT"
-    RULE_ENGINE_FAILED=$((RULE_ENGINE_FAILED + 1))
-  else
-    # Validate output structure
-    node -e "
-      const d = JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));
-      if (!Array.isArray(d.edges)) { console.error('FATAL: rule engine output missing edges array'); process.exit(1); }
-    " "$RULE_OUTPUT" || {
-      echo "WARNING: Batch $batchIndex rule engine output invalid, using empty edges" >&2
-      echo '{"edges":[],"unresolved":[]}' > "$RULE_OUTPUT"
-      RULE_ENGINE_FAILED=$((RULE_ENGINE_FAILED + 1))
-      continue
-    }
-    RULE_ENGINE_SUCCESS=$((RULE_ENGINE_SUCCESS + 1))
-  fi
-done
-
-echo "Rule engine: $RULE_ENGINE_SUCCESS succeeded, $RULE_ENGINE_FAILED failed"
+if [ $? -ne 0 ]; then
+  echo "WARNING: Rule engine failed globally (all annotation edges lost), file-analyzer will proceed without ruleEngineEdges" >&2
+  echo '{"edges":[],"unresolved":[]}' > "$RULE_OUTPUT"
+fi
 ```
 
-**Step 0c.5b — Verify rule engine outputs and compute statistics:**
+**Step 0c.5b — Verify rule engine output and compute statistics:**
 
 ```bash
-TOTAL_RULE_EDGES=0
-BATCHES_WITH_EDGES=0
-
-for batchIndex in $(python3 -c "import json; print(' '.join(str(b['batchIndex']) for b in json.load(open('$PROJECT_ROOT/.understand-anything/intermediate/batches.json'))['batches']))"); do
-  RULE_OUTPUT="$PROJECT_ROOT/.understand-anything/tmp/ua-rule-engine-results-$batchIndex.json"
-  if [ -f "$RULE_OUTPUT" ]; then
-    STATS=$(node -e "
-      const d = JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));
-      const edges = d.edges || [];
-      console.log(JSON.stringify({ edges: edges.length, unresolved: (d.unresolved || []).length }));
-    " "$RULE_OUTPUT")
-    EDGES_COUNT=$(echo "$STATS" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.edges)")
-    UNRESOLVED_COUNT=$(echo "$STATS" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.unresolved)")
-    echo "  Batch $batchIndex: $EDGES_COUNT edges, $UNRESOLVED_COUNT unresolved"
-    TOTAL_RULE_EDGES=$((TOTAL_RULE_EDGES + EDGES_COUNT))
-    if [ "$EDGES_COUNT" -gt 0 ]; then
-      BATCHES_WITH_EDGES=$((BATCHES_WITH_EDGES + 1))
-    fi
-  fi
-done
-
-echo "Rule engine summary: $TOTAL_RULE_EDGES total edges across $BATCHES_WITH_EDGES batches"
+if [ -f "$RULE_OUTPUT" ]; then
+  node -e "
+    const d = JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));
+    if (!Array.isArray(d.edges)) { console.error('WARNING: rule engine output missing edges array, using empty edges'); process.exit(0); }
+    console.log('Rule engine: ' + d.edges.length + ' edges, ' + (d.unresolved || []).length + ' unresolved');
+  " "$RULE_OUTPUT"
+fi
 ```
 
 **Step 0c.5c — Sanity check (warn if suspiciously low):**
 
 ```bash
 TOTAL_BATCHES=$(python3 -c "import json; print(len(json.load(open('$PROJECT_ROOT/.understand-anything/intermediate/batches.json'))['batches']))")
-if [ "$BATCHES_WITH_EDGES" -eq 0 ] && [ "$TOTAL_BATCHES" -gt 0 ]; then
-  echo "WARNING: Rule engine produced 0 edges across all batches. This is expected for projects without annotations (Python, Go, JS), but suspicious for Java/Kotlin/Spring projects." >&2
+TOTAL_RULE_EDGES=$(node -e "const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));console.log((d.edges||[]).length)" "$RULE_OUTPUT" 2>/dev/null || echo 0)
+if [ "$TOTAL_RULE_EDGES" -eq 0 ] && [ "$TOTAL_BATCHES" -gt 0 ]; then
+  echo "WARNING: Rule engine produced 0 edges. This is expected for projects without annotations (Python, Go, JS), but suspicious for Java/Kotlin/Spring projects." >&2
 fi
 ```
 
-Report: `Rule engine complete. $TOTAL_RULE_EDGES annotation edges for $BATCHES_WITH_EDGES/$TOTAL_BATCHES batches.`
+Report: `Rule engine complete. $TOTAL_RULE_EDGES annotation edges.`
+
+#### Step 0c.6 — Split global results into per-batch subsets
+
+The file-analyzer agents expect per-batch extraction and rule engine files. Split the global results into per-batch subset files so downstream steps (dispatch planner, file-analyzer, quality gate, merge) remain unchanged.
+
+```bash
+python3 - "$PROJECT_ROOT" << 'PYSCRIPT'
+import json, sys, os
+project_root = sys.argv[1]
+tmp_dir = os.path.join(project_root, ".understand-anything", "tmp")
+batches_path = os.path.join(project_root, ".understand-anything", "intermediate", "batches.json")
+
+def extract_path_from_node_id(node_id):
+    """Extract file path from node ID like 'class:path/to/file:ClassName'."""
+    if ":" not in node_id:
+        return node_id
+    parts = node_id.split(":", 1)
+    rest = parts[1]
+    if ":" in rest:
+        return rest.rsplit(":", 1)[0]
+    return rest
+
+# Load global extraction results (file-path-indexed format)
+with open(os.path.join(tmp_dir, "structural-analysis.json"), encoding="utf-8") as f:
+    extraction_by_path = json.load(f)
+
+# Load global rule engine results
+rule_path = os.path.join(tmp_dir, "rule-engine-results.json")
+with open(rule_path, encoding="utf-8") as f:
+    rule_data = json.load(f)
+all_edges = rule_data.get("edges", [])
+all_unresolved = rule_data.get("unresolved", [])
+
+# Load batches
+batches = json.load(open(batches_path))["batches"]
+
+for batch in batches:
+    batch_index = batch["batchIndex"]
+    batch_files = batch.get("files", batch.get("batchFiles", []))
+    batch_paths = sorted(f["path"] for f in batch_files)
+    batch_path_set = set(batch_paths)
+
+    # Filter extraction results for this batch
+    batch_results = [extraction_by_path[p] for p in batch_paths if p in extraction_by_path]
+    extract_out = {
+        "scriptCompleted": True,
+        "filesAnalyzed": len(batch_results),
+        "filesSkipped": [p for p in batch_paths if p not in extraction_by_path],
+        "results": [{"path": p, **extraction_by_path[p]} for p in batch_paths if p in extraction_by_path],
+    }
+    extract_path = os.path.join(tmp_dir, f"ua-file-extract-results-{batch_index}.json")
+    with open(extract_path, "w", encoding="utf-8") as f:
+        json.dump(extract_out, f, ensure_ascii=False)
+
+    # Filter rule engine edges for this batch (match by source path)
+    batch_edges = [e for e in all_edges if extract_path_from_node_id(e.get("source", "")) in batch_path_set]
+    # Filter unresolved by file field (not all unresolved — each batch gets its own subset)
+    batch_unresolved = [u for u in all_unresolved if u.get("file", "") in batch_path_set]
+    rule_out = {"edges": batch_edges, "unresolved": batch_unresolved,
+                "stats": {"totalEdges": len(batch_edges), "unresolved": len(batch_unresolved)}}
+    rule_out_path = os.path.join(tmp_dir, f"ua-rule-engine-results-{batch_index}.json")
+    with open(rule_out_path, "w", encoding="utf-8") as f:
+        json.dump(rule_out, f, ensure_ascii=False)
+
+print(f"  Split into {len(batches)} batch subsets (extraction + rule engine)")
+PYSCRIPT
+```
 
 Report: `[Phase 2/7] Structural extraction complete for <totalBatches> batches. Computing dispatch plan...`
 
@@ -615,6 +650,8 @@ For EACH batch in the fusion group, include a batch section:
 > 1. `<path>` (<sizeLines> lines, language: `<language>`, fileCategory: `<fileCategory>`)
 > 2. `<path>` (<sizeLines> lines, language: `<language>`, fileCategory: `<fileCategory>`)
 > ...
+
+**Cross-batch edge generation in fusion groups.** When a fusion group contains multiple batches, the file-analyzer can see files from all batches in the group. Actively generate `depends_on`, `calls`, and `imports` edges for cross-batch file relationships within the same fusion group — for example, if batch 3 contains `Manager.m` and batch 7 contains `Manager.h`, emit a `depends_on` edge from the `.m` file to the `.h` file. Write cross-batch edges to the **source file's** batch output file (i.e., the edge goes into `batch-<sourceBatchIndex>.json`). This significantly improves cross-module relationship coverage for languages with header/implementation separation (C, C++, Objective-C) and module-level imports.
 
 **Output naming is per-batchIndex — no fusion.** If you fuse multiple small batches into a single file-analyzer dispatch for token efficiency, the dispatched agent must STILL write one output file per original `batchIndex` using `batch-<batchIndex>.json` or `batch-<batchIndex>-part-<k>.json`. The merge script's regex (`batch-(\d+)(?:-part-(\d+))?\.json`) silently drops any other naming (e.g., `batch-fused-8-13.json`, `batch-8-13.json`), losing every node and edge in that file. After each dispatch returns, verify each `batchIndex` in the dispatched input has a corresponding `batch-<batchIndex>.json` (or `batch-<batchIndex>-part-*.json`) on disk before proceeding to the next dispatch.
 
@@ -1093,38 +1130,10 @@ Report to the user: `[Phase 7/7] Saving knowledge graph...`
    # Downstream skills (wiki, query) can use these for richer code analysis.
    INTER="$PROJECT_ROOT/.understand-anything/intermediate"
    mkdir -p "$INTER/extraction"
-   cp $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-*.json \
-      "$INTER/extraction/" 2>/dev/null || true
-
-   # Merge per-batch extraction files into a single file-path-indexed JSON
-   # for easy lookup by downstream tools (wiki, query).
-   python3 -c "
-   import json, glob, os
-   extraction_dir = os.path.join('$INTER', 'extraction')
-   files = sorted(glob.glob(os.path.join(extraction_dir, 'ua-file-extract-results-*.json')))
-   merged = {}
-   for f in files:
-       data = json.load(open(f))
-       for r in data.get('results', []):
-           path = r.get('path', '')
-           if path:
-               merged[path] = {
-                   'language': r.get('language'),
-                   'fileCategory': r.get('fileCategory'),
-                   'totalLines': r.get('totalLines'),
-                   'functions': r.get('functions', []),
-                   'classes': r.get('classes', []),
-                   'imports': r.get('imports', []),
-                   'exports': r.get('exports', []),
-               }
-   out = os.path.join(extraction_dir, 'structural-analysis.json')
-   with open(out, 'w', encoding='utf-8') as f:
-       json.dump(merged, f, indent=2, ensure_ascii=False)
-   # Remove per-batch files after merging
-   for f in files:
-       os.remove(f)
-   print(f'[extraction] Merged {len(files)} batches → {len(merged)} files in structural-analysis.json')
-   "
+   # Copy global extraction results (already in file-path-indexed format)
+   # for downstream skills (wiki, query) to use for richer code analysis.
+   cp $PROJECT_ROOT/.understand-anything/tmp/structural-analysis.json \
+      "$INTER/extraction/structural-analysis.json" 2>/dev/null || true
 
    if [ -d "$INTER" ]; then
      find "$INTER" -mindepth 1 -maxdepth 1 \

@@ -124,7 +124,7 @@ export class StructureIndex {
       const classes = Array.isArray(fileData.classes) ? fileData.classes : []
 
       for (const fn of functions) {
-        const id = `${service}::${filePath}::${fn.name}`
+        const id = `${service}::${filePath}::${fn.name}::${fn.startLine}`
         if (seen.has(id)) continue
         seen.add(id)
         const annotationNames = (fn.annotations ?? []).map((a) => a.name).join(" ")
@@ -145,7 +145,7 @@ export class StructureIndex {
       }
 
       for (const cls of classes) {
-        const id = `${service}::${filePath}::${cls.name}`
+        const id = `${service}::${filePath}::${cls.name}::${cls.startLine}`
         if (seen.has(id)) continue
         seen.add(id)
         const annotationNames = (cls.annotations ?? []).map((a) => a.name).join(" ")

@@ -424,7 +424,7 @@ export const GraphEdgeSchema = z.object({
   direction: z.enum(["forward", "backward", "bidirectional"]),
   description: z.string().optional(),
   weight: z.number().min(0).max(1),
-});
+}).passthrough();
 
 export const LayerSchema = z.object({
   id: z.string(),

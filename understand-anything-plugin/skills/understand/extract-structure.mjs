@@ -335,6 +335,30 @@ export function buildResult(file, totalLines, nonEmptyLines, analysis, callGraph
     metrics.importCount = internal.length;
   }
 
+  // Emit unresolved import markers for global resolution in merge phase.
+  // Imports that batchImportData resolved are "resolved"; others are "unresolved"
+  // and will be resolved by the global symbol index in merge-batch-graphs.py.
+  if (analysis.imports && analysis.imports.length > 0) {
+    const resolvedSet = new Set(importPaths || []);
+    const unresolved = [];
+    for (const imp of analysis.imports) {
+      const src = imp?.source ?? '';
+      if (!src) continue;
+      // Skip if already resolved by scanner
+      if (resolvedSet.has(src)) continue;
+      // Skip relative imports that start with '.' - these are local
+      if (src.startsWith('.')) continue;
+      unresolved.push({
+        source: src,
+        line: imp?.lineNumber ?? null,
+        kind: imp?.kind ?? 'import',  // 'import' or 'include'
+      });
+    }
+    if (unresolved.length > 0) {
+      base.unresolvedImports = unresolved;
+    }
+  }
+
   if (analysis.exports) {
     metrics.exportCount = analysis.exports.length;
   }

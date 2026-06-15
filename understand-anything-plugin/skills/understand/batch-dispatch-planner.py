@@ -20,23 +20,54 @@ from pathlib import Path
 from typing import Any
 
 
-# ── Context budget parameters ──────────────────────────────────────────
+# ── Quality-level presets ───────────────────────────────────────────────
+#
+# Each preset trades throughput for output quality by adjusting context
+# utilisation.  "balanced" is the default and works well for most projects.
+#
+#   high     – 40 % utilisation → fewest files per group, best descriptions
+#   balanced – 50 % utilisation → recommended default
+#   fast     – 64 % utilisation → legacy behaviour, speed over quality
+#
+QUALITY_PRESETS: dict[str, dict[str, int]] = {
+    "high": {
+        "context_budget": 80_000,
+        "base_tokens":    30_000,
+        "token_per_loc":  4,
+        "token_per_file": 1_000,
+    },
+    "balanced": {
+        "context_budget": 100_000,
+        "base_tokens":    25_000,
+        "token_per_loc":  4,
+        "token_per_file": 800,
+    },
+    "fast": {
+        "context_budget": 128_000,
+        "base_tokens":    10_000,
+        "token_per_loc":  4,
+        "token_per_file": 500,
+    },
+}
 
-CONTEXT_BUDGET = 128_000   # 200K window * 64% safety margin
-BASE_TOKENS    = 10_000    # agent prompt + metadata per group
-TOKEN_PER_LOC  = 4         # ~4 tokens per line of code
-TOKEN_PER_FILE = 500       # output accumulation per file (nodes + edges + desc)
+DEFAULT_QUALITY = "balanced"
+
+MAX_FILE_LINES = 5_000     # files exceeding this are capped in LOC estimation
 MIN_GROUPS     = 3         # minimum parallelism
 MAX_CONCURRENT = 10        # platform constraint
 
 
-def estimate_tokens(loc: int, file_count: int) -> int:
-    return loc * TOKEN_PER_LOC + file_count * TOKEN_PER_FILE
+def _get_params(quality: str) -> dict[str, int]:
+    return QUALITY_PRESETS.get(quality, QUALITY_PRESETS[DEFAULT_QUALITY])
+
+
+def estimate_tokens(loc: int, file_count: int, params: dict[str, int]) -> int:
+    return loc * params["token_per_loc"] + file_count * params["token_per_file"]
 
 
 # ── Plan mode: Context-Aware LPT Fusion ────────────────────────────────
 
-def compute_plan(project_root: str) -> dict:
+def compute_plan(project_root: str, quality: str = DEFAULT_QUALITY) -> dict:
     batches_path = os.path.join(
         project_root, ".understand-anything", "intermediate", "batches.json"
     )
@@ -48,11 +79,22 @@ def compute_plan(project_root: str) -> dict:
     if not batches:
         return {"error": "No batches found in batches.json"}
 
+    params = _get_params(quality)
+    context_budget = params["context_budget"]
+    base_tokens = params["base_tokens"]
+
+    oversized_files_capped = 0
     batch_info = []
     for b in batches:
         files = b.get("files", b.get("batchFiles", []))
-        loc = sum(f.get("sizeLines", 0) for f in files)
-        tokens = estimate_tokens(loc, len(files))
+        loc = 0
+        for f in files:
+            file_loc = f.get("sizeLines", 0)
+            if file_loc > MAX_FILE_LINES:
+                oversized_files_capped += 1
+                file_loc = MAX_FILE_LINES
+            loc += file_loc
+        tokens = estimate_tokens(loc, len(files), params)
         batch_info.append({
             "batchIndex": b["batchIndex"],
             "loc": loc,
@@ -61,7 +103,7 @@ def compute_plan(project_root: str) -> dict:
         })
 
     total_tokens = sum(bi["tokens"] for bi in batch_info)
-    per_group_budget = CONTEXT_BUDGET - BASE_TOKENS
+    per_group_budget = context_budget - base_tokens
 
     target_groups = max(MIN_GROUPS, math.ceil(total_tokens / per_group_budget))
     target_groups = min(target_groups, len(batch_info))
@@ -85,12 +127,12 @@ def compute_plan(project_root: str) -> dict:
 
     oversized = []
     for g in groups:
-        total = g["tokens"] + BASE_TOKENS
-        if total > CONTEXT_BUDGET:
+        total = g["tokens"] + base_tokens
+        if total > context_budget:
             oversized.append({
                 "indices": g["indices"],
                 "estimatedTokens": total,
-                "budget": CONTEXT_BUDGET,
+                "budget": context_budget,
             })
 
     fusion_groups = []
@@ -100,8 +142,8 @@ def compute_plan(project_root: str) -> dict:
             "batchIndices": g["indices"],
             "totalLoc": g["loc"],
             "totalFiles": g["files"],
-            "estimatedTokens": g["tokens"] + BASE_TOKENS,
-            "budgetUsage": round((g["tokens"] + BASE_TOKENS) / CONTEXT_BUDGET * 100, 1),
+            "estimatedTokens": g["tokens"] + base_tokens,
+            "budgetUsage": round((g["tokens"] + base_tokens) / context_budget * 100, 1),
         })
 
     plan = {
@@ -109,17 +151,21 @@ def compute_plan(project_root: str) -> dict:
         "totalFiles": sum(bi["files"] for bi in batch_info),
         "totalLoc": sum(bi["loc"] for bi in batch_info),
         "totalEstimatedTokens": total_tokens,
-        "contextBudget": CONTEXT_BUDGET,
+        "oversizedFilesCapped": oversized_files_capped,
+        "maxFileLines": MAX_FILE_LINES,
+        "contextBudget": context_budget,
+        "qualityLevel": quality,
         "targetGroups": target_groups,
         "actualGroups": len(groups),
         "wavesNeeded": math.ceil(len(groups) / MAX_CONCURRENT),
         "fusionGroups": fusion_groups,
         "oversizedGroups": oversized,
         "params": {
-            "contextBudget": CONTEXT_BUDGET,
-            "baseTokens": BASE_TOKENS,
-            "tokenPerLoc": TOKEN_PER_LOC,
-            "tokenPerFile": TOKEN_PER_FILE,
+            "contextBudget": context_budget,
+            "baseTokens": base_tokens,
+            "tokenPerLoc": params["token_per_loc"],
+            "tokenPerFile": params["token_per_file"],
+            "qualityLevel": quality,
             "minGroups": MIN_GROUPS,
             "maxConcurrent": MAX_CONCURRENT,
         },
@@ -304,19 +350,25 @@ def main():
                        help="Compute fusion groups from batches.json")
     group.add_argument("--validate", action="store_true",
                        help="Validate batch output quality")
+    parser.add_argument("--quality", choices=list(QUALITY_PRESETS.keys()),
+                        default=DEFAULT_QUALITY,
+                        help=f"Quality level preset (default: {DEFAULT_QUALITY})")
     parser.add_argument("project_root",
                         help="Absolute path to project root directory")
     args = parser.parse_args()
 
     if args.plan:
-        result = compute_plan(args.project_root)
+        result = compute_plan(args.project_root, quality=args.quality)
         if "error" in result:
             print(f"Error: {result['error']}", file=sys.stderr)
             sys.exit(1)
 
-        print(f"Dispatch plan computed.")
+        print(f"Dispatch plan computed (quality={args.quality}).")
         print(f"  Batches: {result['totalBatches']}")
         print(f"  Files: {result['totalFiles']}")
+        if result.get("oversizedFilesCapped"):
+            print(f"  Oversized files capped (>{MAX_FILE_LINES} LOC): "
+                  f"{result['oversizedFilesCapped']}")
         print(f"  Total LOC: {result['totalLoc']:,}")
         print(f"  Estimated tokens: {result['totalEstimatedTokens']:,}")
         print(f"  Fusion groups: {result['actualGroups']} "

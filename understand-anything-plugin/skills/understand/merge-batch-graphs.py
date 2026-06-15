@@ -933,6 +933,440 @@ def merge_and_normalize(batches: list[dict[str, Any]]) -> tuple[dict[str, Any], 
 
 # ── Imports-edge recovery from importMap ──────────────────────────────────
 
+# ── Cross-batch edge recovery helpers ──────────────────────────────────────
+
+def _extract_file_path_from_node_id(node_id: str) -> str | None:
+    """Extract file path from node IDs like `type:filepath` or `type:filepath:name`."""
+    if not node_id or ":" not in node_id:
+        return None
+    parts = node_id.split(":", 2)
+    if len(parts) < 2 or not parts[1]:
+        return None
+    return parts[1]
+
+
+def _existing_edge_keys(assembled: dict[str, Any]) -> set[tuple[str, str, str]]:
+    return {
+        (edge.get("source", ""), edge.get("target", ""), edge.get("type", ""))
+        for edge in assembled["edges"]
+    }
+
+
+def _build_file_path_to_batch(batches_path: Path) -> dict[str, int]:
+    if not batches_path.is_file():
+        return {}
+    try:
+        data = json.loads(batches_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    mapping: dict[str, int] = {}
+    for batch in data.get("batches", []):
+        if not isinstance(batch, dict):
+            continue
+        batch_index = batch.get("batchIndex")
+        if not isinstance(batch_index, int):
+            continue
+        for file_entry in batch.get("files", []):
+            if isinstance(file_entry, dict):
+                path = file_entry.get("path", "")
+                if isinstance(path, str) and path:
+                    mapping[path] = batch_index
+    return mapping
+
+
+def compute_cross_batch_metrics(
+    assembled: dict[str, Any],
+    batches_path: Path,
+) -> tuple[int, list[str]]:
+    """Report cross-batch edge ratio using batches.json file assignments.
+
+    Returns (cross_batch_edge_count, report_lines).
+    """
+    file_to_batch = _build_file_path_to_batch(batches_path)
+    if not file_to_batch:
+        return 0, [f"  Cross-batch metrics skipped — {batches_path.name} not found or empty"]
+
+    def batch_for_node(node_id: str) -> int | None:
+        file_path = _extract_file_path_from_node_id(node_id)
+        if not file_path:
+            return None
+        return file_to_batch.get(file_path)
+
+    cross_batch = 0
+    mappable = 0
+    for edge in assembled["edges"]:
+        src_batch = batch_for_node(edge.get("source", ""))
+        tgt_batch = batch_for_node(edge.get("target", ""))
+        if src_batch is None or tgt_batch is None:
+            continue
+        mappable += 1
+        if src_batch != tgt_batch:
+            cross_batch += 1
+
+    ratio = (cross_batch / mappable * 100) if mappable else 0.0
+    lines: list[str] = [
+        f"  Cross-batch edges: {cross_batch}/{mappable} ({ratio:.1f}%)",
+    ]
+    if mappable and ratio < 15.0:
+        lines.append(
+            "  WARNING: cross-batch edge ratio below 15% — batch boundaries may "
+            "be hiding cross-module dependencies"
+        )
+    return cross_batch, lines
+
+
+_IMPL_TO_HEADER_EXTS: dict[str, tuple[str, ...]] = {
+    ".m": (".h",),
+    ".c": (".h",),
+    ".cpp": (".h", ".hpp"),
+}
+
+
+def recover_header_impl_pairs(
+    assembled: dict[str, Any],
+    existing: set[tuple[str, str, str]] | None = None,
+) -> tuple[int, list[str]]:
+    """Pair ObjC/C/C++ implementation files with same-directory header files.
+
+    Returns (recovered_count, report_lines).
+    """
+    file_nodes_by_path: dict[str, str] = {}
+    for node in assembled["nodes"]:
+        if node.get("type") != "file":
+            continue
+        node_id = node.get("id", "")
+        file_path = node.get("filePath") or _extract_file_path_from_node_id(node_id) or ""
+        if file_path:
+            file_nodes_by_path[file_path] = node_id
+
+    if existing is None:
+        existing = _existing_edge_keys(assembled)
+    recovered = 0
+
+    for file_path, impl_id in file_nodes_by_path.items():
+        suffix = Path(file_path).suffix.lower()
+        header_exts = _IMPL_TO_HEADER_EXTS.get(suffix)
+        if not header_exts:
+            continue
+        parent = str(Path(file_path).parent)
+        stem = Path(file_path).stem
+        for hdr_ext in header_exts:
+            header_path = f"{parent}/{stem}{hdr_ext}" if parent not in ("", ".") else f"{stem}{hdr_ext}"
+            header_id = file_nodes_by_path.get(header_path)
+            if not header_id:
+                continue
+            edge_key = (impl_id, header_id, "depends_on")
+            if edge_key in existing:
+                continue
+            assembled["edges"].append({
+                "source": impl_id,
+                "target": header_id,
+                "type": "depends_on",
+                "direction": "forward",
+                "weight": 0.6,
+                "recoveredBy": "header-impl-pairing",
+                "confidence": 0.90,
+                "origin": "header-impl-pairing",
+            })
+            existing.add(edge_key)
+            recovered += 1
+            break
+
+    return recovered, [f"  Recovered {recovered} `depends_on` edges from header-impl pairing"]
+
+
+_HEURISTIC_IMPORT_RE = re.compile(
+    r'#\s*(?:import|include)\s+"([^"]+)"',
+    re.MULTILINE,
+)
+_HEURISTIC_SOURCE_EXTS = frozenset({".m", ".c", ".cpp", ".h"})
+
+
+def recover_heuristic_imports(
+    assembled: dict[str, Any],
+    project_root: Path,
+    existing: set[tuple[str, str, str]] | None = None,
+) -> tuple[int, list[str]]:
+    """Resolve quoted #import/#include directives for C/ObjC source files.
+
+    Returns (recovered_count, report_lines).
+    """
+    file_nodes: list[tuple[str, str]] = []
+    basename_to_ids: dict[str, list[str]] = {}
+    for node in assembled["nodes"]:
+        if node.get("type") != "file":
+            continue
+        node_id = node.get("id", "")
+        file_path = node.get("filePath") or _extract_file_path_from_node_id(node_id) or ""
+        if not file_path:
+            continue
+        file_nodes.append((file_path, node_id))
+        basename = Path(file_path).name
+        basename_to_ids.setdefault(basename, []).append(node_id)
+
+    if existing is None:
+        existing = _existing_edge_keys(assembled)
+    recovered = 0
+    scanned = 0
+
+    for file_path, src_id in file_nodes:
+        if Path(file_path).suffix.lower() not in _HEURISTIC_SOURCE_EXTS:
+            continue
+        abs_path = project_root / file_path
+        if not abs_path.is_file():
+            continue
+        try:
+            content = abs_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # Pre-filter: skip files without any #import/#include directives
+        if not _HEURISTIC_IMPORT_RE.search(content):
+            continue
+        scanned += 1
+        for imported_name in _HEURISTIC_IMPORT_RE.findall(content):
+            basename = Path(imported_name).name
+            matches = basename_to_ids.get(basename, [])
+            if len(matches) != 1:
+                continue
+            tgt_id = matches[0]
+            if src_id == tgt_id:
+                continue
+            edge_key = (src_id, tgt_id, "imports")
+            if edge_key in existing:
+                continue
+            assembled["edges"].append({
+                "source": src_id,
+                "target": tgt_id,
+                "type": "imports",
+                "direction": "forward",
+                "weight": 0.7,
+                "recoveredBy": "heuristic-import",
+                "confidence": 0.75,
+                "origin": "heuristic-import",
+            })
+            existing.add(edge_key)
+            recovered += 1
+
+    return recovered, [
+        f"  Recovered {recovered} `imports` edges from heuristic C/ObjC parsing "
+        f"({scanned} source files scanned)",
+    ]
+
+
+def _parse_podfile_lock_pods(content: str) -> dict[str, list[str]]:
+    """Parse Podfile.lock PODS section into pod → direct dependency names."""
+    pods: dict[str, list[str]] = {}
+    in_pods = False
+    current_pod: str | None = None
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped == "PODS:":
+            in_pods = True
+            current_pod = None
+            continue
+        if not in_pods:
+            continue
+        if line and not line.startswith(" "):
+            break
+        pod_match = re.match(r"  - ([^\s(]+)", line)
+        if pod_match:
+            current_pod = pod_match.group(1)
+            pods.setdefault(current_pod, [])
+            continue
+        dep_match = re.match(r"    - (\S+)", line)
+        if dep_match and current_pod:
+            raw = dep_match.group(1)
+            dep_name = raw.split("/")[0].split("(")[0].strip()
+            if dep_name and dep_name not in pods[current_pod]:
+                pods[current_pod].append(dep_name)
+    return pods
+
+
+def recover_lockfile_module_deps(
+    assembled: dict[str, Any],
+    project_root: Path,
+    existing: set[tuple[str, str, str]] | None = None,
+) -> tuple[int, list[str]]:
+    """Recover module depends_on edges from Podfile.lock dependency data.
+
+    Returns (recovered_count, report_lines).
+    """
+    lock_path = project_root / "Podfile.lock"
+    if not lock_path.is_file():
+        return 0, ["  Lockfile recovery skipped — Podfile.lock not found"]
+
+    try:
+        content = lock_path.read_text(encoding="utf-8")
+    except OSError as e:
+        return 0, [f"  Lockfile recovery skipped — could not read Podfile.lock: {e}"]
+
+    pod_deps = _parse_podfile_lock_pods(content)
+    if not pod_deps:
+        return 0, ["  Lockfile recovery skipped — no PODS section found in Podfile.lock"]
+
+    module_nodes_by_name: dict[str, str] = {}
+    for node in assembled["nodes"]:
+        if node.get("type") != "module":
+            continue
+        name = node.get("name") or node.get("id", "").split(":")[-1]
+        if isinstance(name, str) and name:
+            module_nodes_by_name[name] = node["id"]
+
+    if existing is None:
+        existing = _existing_edge_keys(assembled)
+    recovered = 0
+
+    for pod_name, deps in pod_deps.items():
+        src_id = module_nodes_by_name.get(pod_name)
+        if not src_id:
+            continue
+        for dep_name in deps:
+            tgt_id = module_nodes_by_name.get(dep_name)
+            if not tgt_id or src_id == tgt_id:
+                continue
+            edge_key = (src_id, tgt_id, "depends_on")
+            if edge_key in existing:
+                continue
+            assembled["edges"].append({
+                "source": src_id,
+                "target": tgt_id,
+                "type": "depends_on",
+                "direction": "forward",
+                "weight": 0.6,
+                "recoveredBy": "lockfile-deps",
+                "confidence": 0.85,
+                "origin": "lockfile-deps",
+            })
+            existing.add(edge_key)
+            recovered += 1
+
+    return recovered, [
+        f"  Recovered {recovered} `depends_on` edges from Podfile.lock "
+        f"({len(pod_deps)} pods parsed)",
+    ]
+
+
+def resolve_unresolved_imports(
+    assembled: dict[str, Any],
+    tmp_dir: Path,
+    existing: set[tuple[str, str, str]] | None = None,
+) -> tuple[int, list[str]]:
+    """Resolve unresolved import markers emitted by extract-structure.mjs.
+
+    Reads extraction results to find `unresolvedImports` arrays, then resolves
+    them against a project-wide file basename index built from the assembled graph.
+
+    Returns (resolved_count, report_lines).
+    """
+    # 1. Build global index: basename (no ext) → list of file: node IDs
+    #    Also build: full basename (with ext) → list of file: node IDs
+    basename_index: dict[str, list[str]] = {}
+    full_basename_index: dict[str, list[str]] = {}
+
+    for node in assembled["nodes"]:
+        if node.get("type") != "file":
+            continue
+        node_id = node.get("id", "")
+        if not node_id.startswith("file:"):
+            continue
+        fpath = node_id[5:]
+        fname = os.path.basename(fpath)
+        stem = os.path.splitext(fname)[0]
+
+        basename_index.setdefault(stem, []).append(node_id)
+        full_basename_index.setdefault(fname, []).append(node_id)
+
+    # 2. Collect unresolved imports from extraction results
+    extraction_files = sorted(tmp_dir.glob("ua-file-extract-results-*.json"))
+    if not extraction_files:
+        return 0, ["  No extraction result files found"]
+
+    unresolved_map: dict[str, list[dict]] = {}
+    for ef in extraction_files:
+        try:
+            data = json.loads(ef.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for result in data.get("results", []):
+            path = result.get("path", "")
+            unresolved = result.get("unresolvedImports", [])
+            if path and unresolved:
+                unresolved_map.setdefault(path, []).extend(unresolved)
+
+    if not unresolved_map:
+        return 0, ["  No unresolved imports found in extraction results"]
+
+    # 3. Build existing edge set for dedup
+    if existing is None:
+        existing = set()
+        for edge in assembled["edges"]:
+            existing.add((edge.get("source", ""), edge.get("target", ""), edge.get("type", "")))
+
+    # 4. Resolve
+    resolved_count = 0
+    ambiguous_count = 0
+    not_found_count = 0
+    total_unresolved = 0
+
+    node_ids = {n.get("id") for n in assembled["nodes"]}
+
+    for src_path, imports in unresolved_map.items():
+        src_id = f"file:{src_path}"
+        if src_id not in node_ids:
+            continue
+
+        for imp in imports:
+            total_unresolved += 1
+            source_str = imp.get("source", "")
+            if not source_str:
+                continue
+
+            # Strategy 1: Exact full basename match
+            candidates = full_basename_index.get(source_str, [])
+
+            # Strategy 2: Stem match when no extension match
+            if not candidates:
+                stem = os.path.splitext(source_str)[0] if "." in source_str else source_str
+                candidates = basename_index.get(stem, [])
+
+            # Filter out self-references
+            candidates = [c for c in candidates if c != src_id]
+
+            if len(candidates) == 0:
+                not_found_count += 1
+                continue
+            if len(candidates) > 1:
+                ambiguous_count += 1
+                continue
+
+            tgt_id = candidates[0]
+            if (src_id, tgt_id, "imports") in existing:
+                continue
+
+            assembled["edges"].append({
+                "source": src_id,
+                "target": tgt_id,
+                "type": "imports",
+                "direction": "forward",
+                "weight": 0.7,
+                "confidence": 0.80,
+                "origin": "unresolved-global-resolve",
+            })
+            existing.add((src_id, tgt_id, "imports"))
+            resolved_count += 1
+
+    lines = [
+        f"  Found {total_unresolved} unresolved imports across {len(unresolved_map)} files",
+        f"  Resolved {resolved_count} via global symbol index",
+    ]
+    if ambiguous_count:
+        lines.append(f"  Skipped {ambiguous_count} ambiguous (multiple candidates)")
+    if not_found_count:
+        lines.append(f"  Skipped {not_found_count} not found in graph")
+
+    return resolved_count, lines
+
+
 def recover_imports_from_scan(
     assembled: dict[str, Any],
     scan_result_path: Path,
@@ -999,6 +1433,8 @@ def recover_imports_from_scan(
                 "direction": "forward",
                 "weight": 0.7,
                 "recoveredFromImportMap": True,
+                "confidence": 0.95,
+                "origin": "importMap-recovery",
             })
             existing.add((src_id, tgt_id))
             recovered += 1
@@ -1220,6 +1656,8 @@ def recover_rpc_mq_from_extraction(
                         "description": json.dumps({"interface": iface, "framework": framework}),
                         "properties": {"protocol": _framework_to_protocol(framework)},
                         "recoveredFromAnnotation": True,
+                        "confidence": 0.85,
+                        "origin": "rpc-mq-recovery",
                     })
                     existing_edges.add(edge_key)
                     recovered += 1
@@ -1262,6 +1700,8 @@ def recover_rpc_mq_from_extraction(
                         "description": json.dumps({"interface": service_name, "framework": "feign"}),
                         "properties": {"protocol": _framework_to_protocol("feign")},
                         "recoveredFromAnnotation": True,
+                        "confidence": 0.85,
+                        "origin": "rpc-mq-recovery",
                     })
                     existing_edges.add(edge_key)
                     recovered += 1
@@ -1309,6 +1749,8 @@ def recover_rpc_mq_from_extraction(
                     "description": json.dumps({"interface": iface_type, "framework": framework}),
                     "properties": {"protocol": _framework_to_protocol(framework)},
                     "recoveredFromAnnotation": True,
+                    "confidence": 0.85,
+                    "origin": "rpc-mq-recovery",
                 })
                 existing_edges.add(edge_key)
                 recovered += 1
@@ -1376,6 +1818,8 @@ def recover_rpc_mq_from_extraction(
                 "weight": 0.8,
                 "description": f"Subscribes to topic '{topic}' (recovered from annotation)",
                 "recoveredFromAnnotation": True,
+                "confidence": 0.85,
+                "origin": "rpc-mq-recovery",
             })
             existing_edges.add(edge_key)
             recovered += 1
@@ -1555,6 +1999,8 @@ def recover_injects_from_extraction(
                     "weight": 0.8,
                     "description": f"DI: {cls_name}.{prop.get('name', '?')} ({injected_type})",
                     "recoveredFromAnnotation": True,
+                    "confidence": 0.80,
+                    "origin": "di-recovery",
                 })
                 existing_edges.add(edge_key)
                 recovered += 1
@@ -1973,6 +2419,40 @@ def main() -> None:
             report.append("")
             report.append("DI (injects) edge recovery:")
             report.extend(di_report)
+
+    # Build edge key set once for all recovery functions
+    existing_edges = _existing_edge_keys(assembled)
+
+    header_recovered, header_report = recover_header_impl_pairs(assembled, existing_edges)
+    if header_report:
+        report.append("")
+        report.append("Header-impl pairing recovery:")
+        report.extend(header_report)
+
+    heuristic_recovered, heuristic_report = recover_heuristic_imports(assembled, project_root, existing_edges)
+    if heuristic_report:
+        report.append("")
+        report.append("Heuristic C/ObjC import recovery:")
+        report.extend(heuristic_report)
+
+    lockfile_recovered, lockfile_report = recover_lockfile_module_deps(assembled, project_root, existing_edges)
+    if lockfile_report:
+        report.append("")
+        report.append("Lockfile module dependency recovery:")
+        report.extend(lockfile_report)
+
+    unresolved_recovered, unresolved_report = resolve_unresolved_imports(assembled, tmp_dir, existing_edges)
+    if unresolved_report:
+        report.append("")
+        report.append("Unresolved import global resolution:")
+        report.extend(unresolved_report)
+
+    batches_path = intermediate_dir / "batches.json"
+    _, cross_batch_report = compute_cross_batch_metrics(assembled, batches_path)
+    if cross_batch_report:
+        report.append("")
+        report.append("Cross-batch edge coverage:")
+        report.extend(cross_batch_report)
 
     # Print report
     print("", file=sys.stderr)
