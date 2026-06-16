@@ -135,6 +135,13 @@ def check_parent_wiki(parent_root: Path, repo_type: str) -> tuple[list, list]:
                 "MISSING client-graph.json — "
                 "produced by Phase 3 Mobile Mode (build-client-graph.py)"
             )
+    elif repo_type == "frontend":
+        frontend_graph = parent_root / ".understand-anything" / "frontend-graph.json"
+        if not frontend_graph.exists():
+            errors.append(
+                "MISSING frontend-graph.json — "
+                "produced by Phase 3 Frontend Mode (build-frontend-graph.py)"
+            )
     elif repo_type == "backend":
         system_graph = parent_root / ".understand-anything" / "system-graph.json"
         if not system_graph.exists():

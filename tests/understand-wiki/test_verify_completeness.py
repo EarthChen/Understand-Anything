@@ -70,3 +70,32 @@ def test_exit_code_2_for_warnings_only(tmp_path, verify, monkeypatch):
     (domains_dir / "order.json").write_text('{"id": "order"}', encoding="utf-8")
 
     assert verify.main() == 2
+
+
+def test_frontend_batch_missing_frontend_graph_is_error(tmp_path, verify):
+    """Batch mode with --repo-type=frontend should require frontend-graph.json."""
+    wiki_dir = tmp_path / ".understand-anything" / "wiki"
+    wiki_dir.mkdir(parents=True)
+    for f in ("index.json", "meta.json", "overview.json", "architecture.json"):
+        (wiki_dir / f).write_text('{"name": "test"}', encoding="utf-8")
+    # No frontend-graph.json present
+
+    errors, warnings = verify.check_parent_wiki(tmp_path, "frontend")
+    assert any("frontend-graph.json" in e for e in errors)
+
+
+def test_frontend_batch_passes_when_graph_exists(tmp_path, verify):
+    """Batch mode with --repo-type=frontend should pass when frontend-graph.json exists."""
+    wiki_dir = tmp_path / ".understand-anything" / "wiki"
+    wiki_dir.mkdir(parents=True)
+    for f in ("index.json", "meta.json", "overview.json", "architecture.json"):
+        (wiki_dir / f).write_text('{"name": "test"}', encoding="utf-8")
+    # Write cross-service-relationships.json to satisfy that check
+    (tmp_path / ".understand-anything" / "cross-service-relationships.json").write_text("[]")
+    # Write frontend-graph.json
+    (tmp_path / ".understand-anything" / "frontend-graph.json").write_text(
+        '{"facetType": "frontend"}', encoding="utf-8"
+    )
+
+    errors, _ = verify.check_parent_wiki(tmp_path, "frontend")
+    assert not any("frontend-graph.json" in e for e in errors)
