@@ -78,3 +78,9 @@ class TestLoadFrontendFeatures:
         (tmp_path / "frontend").mkdir()
         features = _load_frontend_features(str(tmp_path), facet)
         assert features == []
+
+    def test_absolute_facet_path_returns_empty(self, tmp_path):
+        """An absolute facet path must not escape the project root."""
+        facet = {"type": "frontend", "path": "/etc"}
+        features = _load_frontend_features(str(tmp_path), facet)
+        assert features == []

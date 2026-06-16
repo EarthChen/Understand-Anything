@@ -260,10 +260,13 @@ def to_phase3_format(associations: list) -> list:
 
 def _load_frontend_features(project_root_str: str, facet: dict) -> list:
     """Load features from frontend-graph.json for a frontend facet."""
+    project_root = Path(project_root_str).resolve()
     fg_path = (
-        Path(project_root_str) / facet.get('path', '') /
+        project_root / facet.get('path', '') /
         '.understand-anything' / 'frontend-graph.json'
-    )
+    ).resolve()
+    if not fg_path.is_relative_to(project_root):
+        return []
     if not fg_path.exists():
         return []
     try:
