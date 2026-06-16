@@ -279,15 +279,20 @@ class TestValidate:
         valid, _, _ = _validate(graph)
         assert not valid
 
-    def test_missing_content_hash_is_invalid(self):
-        graph = {
-            "facetType": "frontend",
-            "project": {"provenance": {}},
-            "features": [{"routes": ["/x"], "pages": [], "apiCalls": [],
-                          "stateStores": [], "components": []}],
-        }
-        valid, _, _ = _validate(graph)
-        assert not valid
+    def test_missing_content_hash_is_invalid(self, tmp_path):
+        """build_frontend_graph must always produce a contentHash in the output file.
+
+        The contentHash check was removed from _validate (since hash must be computed
+        after validation so that degraded state is included). This test verifies the
+        contract via build_frontend_graph instead.
+        """
+        ua = tmp_path / ".understand-anything"
+        ua.mkdir()
+        (ua / "knowledge-graph.json").write_text(json.dumps(_minimal_kg()))
+        (ua / "domain-graph.json").write_text(json.dumps(_minimal_dg()))
+        build_frontend_graph(str(tmp_path))
+        result = json.loads((ua / "frontend-graph.json").read_text())
+        assert result["contentHash"].startswith("sha256:")
 
     def test_partial_evidence_marks_degraded(self):
         """Feature with no evidence in an otherwise-valid graph → degraded, not invalid."""

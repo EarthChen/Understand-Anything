@@ -98,7 +98,7 @@ def _extract_state_stores(root: Path, kg: dict) -> list[str]:
     return sorted(set(stores))
 
 
-def _fp_to_route(fp: str, strip_prefixes: list[str]) -> str:
+def _fp_to_route(fp: str, strip_prefixes: list[str]) -> str | None:
     """Convert a file path to a URL route by stripping known prefixes and index/page stems."""
     parts = Path(fp).parts
     for prefix in strip_prefixes:
@@ -108,7 +108,9 @@ def _fp_to_route(fp: str, strip_prefixes: list[str]) -> str:
             break
     if parts:
         stem = Path(parts[-1]).stem
-        if stem in ("index", "page", "layout", "+page", "+layout", "_app", "_document"):
+        if stem in ("+layout", "layout", "_app", "_document"):
+            return None  # layout wrappers are not navigable routes
+        elif stem in ("index", "page", "+page"):
             parts = parts[:-1]
         elif stem.startswith("[") and stem.endswith("]"):
             parts = (*parts[:-1], ":" + stem[1:-1])
@@ -195,7 +197,10 @@ def _extract_api_calls(root: Path, kg: dict) -> list[dict]:
         })
 
     if not calls:
+        found_enough = False
         for suffix in (".ts", ".tsx", ".js", ".jsx"):
+            if found_enough:
+                break
             for fp in root.rglob(f"*{suffix}"):
                 if _skip(fp.relative_to(root)):
                     continue
@@ -215,6 +220,7 @@ def _extract_api_calls(root: Path, kg: dict) -> list[dict]:
                                 "source": str(fp.relative_to(root)),
                             })
                 if len(calls) >= 200:
+                    found_enough = True
                     break
 
     return calls[:200]
@@ -292,8 +298,6 @@ def _validate(graph: dict) -> tuple[bool, bool, list[str]]:
         return False, False, ['facetType must be "frontend"']
     if "provenance" not in graph.get("project", {}):
         return False, False, ["project.provenance missing"]
-    if not graph.get("contentHash"):
-        return False, False, ["contentHash missing"]
 
     features = graph.get("features", [])
     if not features:
@@ -368,10 +372,6 @@ def build_frontend_graph(service_root_str: str) -> dict:
         "features": features,
     }
 
-    # Hash without contentHash field so consumers can verify integrity
-    raw = json.dumps(graph, indent=2, ensure_ascii=False)
-    graph["contentHash"] = "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
-
     valid, degraded, warnings = _validate(graph)
     if not valid:
         raise ValueError(f"[build-frontend-graph] Validation failed: {warnings}")
@@ -379,6 +379,11 @@ def build_frontend_graph(service_root_str: str) -> dict:
     graph["project"]["provenance"]["degraded"] = degraded
     for w in warnings:
         print(f"[build-frontend-graph] WARN: {w}", file=sys.stderr)
+
+    # Hash after all fields including degraded are finalized; consumers verify by
+    # removing contentHash, serialising with indent=2 ensure_ascii=False, and re-hashing.
+    raw = json.dumps(graph, indent=2, ensure_ascii=False)
+    graph["contentHash"] = "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
 
     content = json.dumps(graph, indent=2, ensure_ascii=False)
     output_path = ua_dir / "frontend-graph.json"
