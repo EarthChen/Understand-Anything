@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import sys
 from typing import Any
-from _utils import fetch_json, build_url, _IMPL_SUFFIXES, _CONFIG_SUFFIXES
+from _utils import fetch_json, build_url, url_quote, _IMPL_SUFFIXES, _CONFIG_SUFFIXES
 
 def _score_node_relevance(node: dict[str, Any], query: str) -> float:
     """Score a node's relevance to the query using language-agnostic structural signals."""
