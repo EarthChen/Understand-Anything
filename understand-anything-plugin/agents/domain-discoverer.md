@@ -35,6 +35,11 @@ Identify 3-8 business domains. For each domain, determine which modules belong t
 9. **Merge condition**: Only merge modules into the same domain when ALL of: (a) they share the same core entity noun, (b) their tags overlap >50%, (c) they have direct cross-module call edges. If any condition fails, keep them separate.
 10. **Prefer-split principle**: When uncertain, err on the side of more domains. An over-split domain graph can be refined by merging; an over-merged graph has lost domain boundaries permanently.
 11. **Exclude pure-documentation modules**: Modules whose paths are exclusively documentation directories (e.g. `docs/`, `doc/`, `docs/PROCESS/`, `docs/STATE/`) do NOT form business domains. Do NOT create a domain for documentation-only module groups. Documentation modules may be assigned to a code domain if they describe that domain's behavior, but never constitute a domain on their own.
+12. **Frontend/client domain splitting heuristic**: When the project is a frontend or mobile app (detected by: majority of modules are in `pages/`, `screens/`, `views/`, `features/`, `components/`, or module names contain "Screen"/"Page"/"View"/"Feature"):
+    - Group by **feature module** (e.g., "Login", "Profile", "Cart", "Feed") rather than by API endpoint group
+    - Each feature module typically contains: screens/pages + related components + feature-specific state + feature-specific API calls
+    - **Shared layers are NOT separate domains**: `components/`, `utils/`, `hooks/`, `services/`, `store/` that serve multiple features are cross-cutting concerns, not independent domains. Assign shared modules to the domain they most closely serve, or mark as `utility` if truly generic.
+    - **Navigation as domain boundary signal**: If two screen groups have NO navigation edges between them (users can't navigate from one to the other without going through a hub), they are likely different domains.
 
 ## Split/Merge Decision Process
 

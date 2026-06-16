@@ -13,7 +13,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-KEY_NODE_TYPES = frozenset({"endpoint", "service", "pipeline", "table", "schema"})
+KEY_NODE_TYPES = frozenset({"endpoint", "service", "pipeline", "table", "schema", "screen", "page"})
 MAX_SUMMARIES_PER_MODULE = 3
 MAX_EDGE_SAMPLES = 3
 

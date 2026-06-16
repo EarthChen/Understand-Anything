@@ -102,7 +102,7 @@ The rule engine maps annotations (e.g., `@Autowired`, `@DubboService`, `@FeignCl
 EXTRACT_FILE="$PROJECT_ROOT/.understand-anything/tmp/ua-extract-results-full.json"
 RULE_OUTPUT="$PROJECT_ROOT/.understand-anything/tmp/rule-engine-results.json"
 
-node <PLUGIN_ROOT>/packages/core/dist/analyzer/rule-engine-postprocess.mjs \
+node <SKILL_DIR>/rule-engine-postprocess.mjs \
   "$EXTRACT_FILE" \
   "$RULE_OUTPUT" \
   --mode=extraction-input

@@ -10,6 +10,7 @@ import { vueConfig } from "./vue.js";
 import { springConfig } from "./spring.js";
 import { railsConfig } from "./rails.js";
 import { ginConfig } from "./gin.js";
+import { hiltConfig } from "./hilt.js";
 
 export const builtinFrameworkConfigs: FrameworkConfig[] = [
   djangoConfig,
@@ -22,6 +23,7 @@ export const builtinFrameworkConfigs: FrameworkConfig[] = [
   springConfig,
   railsConfig,
   ginConfig,
+  hiltConfig,
 ];
 
 export {
@@ -35,4 +37,5 @@ export {
   springConfig,
   railsConfig,
   ginConfig,
+  hiltConfig,
 };

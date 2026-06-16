@@ -31,7 +31,7 @@ MAX_OUTPUT_BYTES = 512 * 1024  # 512 KB — keeps output within agent context li
 
 # File extensions we care about for domain analysis
 SOURCE_EXTENSIONS = {
-    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue",
     ".py", ".pyi",
     ".go",
     ".rs",
@@ -67,50 +67,54 @@ METADATA_FILES = [
 
 # ── Entry point detection patterns ─────────────────────────────────────────
 
-ENTRY_POINT_PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
+ENTRY_POINT_PATTERNS: list[tuple[str, str, re.Pattern[str], set[str] | None]] = [
     # HTTP routes
     ("http", "Express/Koa route", re.compile(
         r"""(?:app|router|server)\s*\.\s*(?:get|post|put|patch|delete|all|use)\s*\(\s*['"](/[^'"]*?)['"]""",
         re.IGNORECASE,
-    )),
+    ), None),
     ("http", "Decorator route (Flask/FastAPI/NestJS)", re.compile(
         r"""@(?:app\.)?(?:route|get|post|put|patch|delete|api_view|RequestMapping|GetMapping|PostMapping)\s*\(\s*['"](/[^'"]*?)['"]""",
         re.IGNORECASE,
-    )),
+    ), None),
     ("http", "Next.js/Remix route handler", re.compile(
         r"""export\s+(?:async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b""",
-    )),
+    ), None),
     # CLI
     ("cli", "CLI command", re.compile(
         r"""\.command\s*\(\s*['"]([\w\-:]+)['"]""",
-    )),
+    ), None),
     ("cli", "argparse subparser", re.compile(
         r"""add_parser\s*\(\s*['"]([\w\-]+)['"]""",
-    )),
+    ), None),
     # Event handlers
     ("event", "Event listener", re.compile(
         r"""\.on\s*\(\s*['"]([\w\-:.]+)['"]""",
-    )),
+    ), None),
     ("event", "Event subscriber decorator", re.compile(
         r"""@(?:EventHandler|Subscribe|Listener|on_event)\s*\(\s*['"]([\w\-:.]+)['"]""",
-    )),
+    ), None),
     # Cron / scheduled
     ("cron", "Cron schedule", re.compile(
         r"""@?(?:Cron|Schedule|Scheduled|crontab)\s*\(\s*['"]([^'"]+)['"]""",
         re.IGNORECASE,
-    )),
+    ), None),
     # GraphQL
     ("http", "GraphQL resolver", re.compile(
         r"""@(?:Query|Mutation|Subscription|Resolver)\s*\(""",
-    )),
+    ), None),
     # gRPC (only in .proto files — handled by file extension check below)
     ("http", "gRPC service", re.compile(
         r"""^service\s+(\w+)\s*\{""", re.MULTILINE,
-    )),
+    ), None),
     # Exported handlers (generic)
     ("manual", "Exported handler", re.compile(
         r"""export\s+(?:async\s+)?function\s+(handle\w+|process\w+|on\w+)\b""",
-    )),
+    ), None),
+    # Frontend page/route definitions
+    ("navigation", "Vue Router route", re.compile(
+        r"""path\s*:\s*['"](/[^'"]*?)['"]""",
+    ), {".vue"}),
 ]
 
 
@@ -213,7 +217,10 @@ def detect_entry_points(root: Path, file_paths: list[str]) -> list[dict[str, Any
             continue
 
         lines = content.splitlines()
-        for entry_type, description, pattern in ENTRY_POINT_PATTERNS:
+        file_ext = os.path.splitext(rel_path)[1].lower()
+        for entry_type, description, pattern, allowed_exts in ENTRY_POINT_PATTERNS:
+            if allowed_exts and file_ext not in allowed_exts:
+                continue
             for match in pattern.finditer(content):
                 # Find line number
                 line_no = content[:match.start()].count("\n") + 1

@@ -13,6 +13,7 @@ Reads:
 Output:
     business-landscape/feature-interactions/feature-<slug>.json
 """
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -168,8 +169,18 @@ def _to_slug(name: str) -> str:
     return slug
 
 
+def _compute_skeleton_hash(skeleton: dict) -> str:
+    """Compute a stable hash of the skeleton for incremental detection."""
+    raw = json.dumps(skeleton, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
 def run_build_interactions(project_root_str: str) -> dict:
-    """Full pipeline: read features, build skeletons, write output."""
+    """Full pipeline with incremental support.
+
+    Skips features whose skeleton hasn't changed and already have
+    a completed interaction document (_status == "complete").
+    """
     project_root = Path(project_root_str)
     features_path = project_root / '.understand-anything' / 'business-landscape' / 'business-features.json'
 
@@ -185,18 +196,49 @@ def run_build_interactions(project_root_str: str) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     results = []
+    skipped = 0
+    regenerated = 0
     for feature in data.get('features', []):
         skeleton = build_interaction_skeleton(feature)
+        skeleton_hash = _compute_skeleton_hash(skeleton)
         slug = _to_slug(feature.get('name', 'unknown'))
         output_file = output_dir / f'feature-{slug}.json'
+
+        if output_file.exists():
+            try:
+                existing = json.loads(output_file.read_text())
+                if (existing.get('_status') == 'complete'
+                        and existing.get('_skeletonHash') == skeleton_hash):
+                    skipped += 1
+                    results.append({
+                        'feature': skeleton['featureName'],
+                        'file': str(output_file),
+                        'action': 'skipped',
+                    })
+                    continue
+            except (json.JSONDecodeError, IOError):
+                pass
+
+        regenerated += 1
         output_file.write_text(json.dumps({
             'skeleton': skeleton,
             'prompt': build_interaction_prompt(feature, skeleton),
             '_status': 'skeleton_ready',
+            '_skeletonHash': skeleton_hash,
         }, indent=2, ensure_ascii=False))
-        results.append({'feature': skeleton['featureName'], 'file': str(output_file)})
+        results.append({
+            'feature': skeleton['featureName'],
+            'file': str(output_file),
+            'action': 'skeleton_ready',
+        })
 
-    return {'generated': len(results), 'outputDir': str(output_dir), 'results': results}
+    return {
+        'generated': regenerated,
+        'skipped': skipped,
+        'total': len(results),
+        'outputDir': str(output_dir),
+        'results': results,
+    }
 
 
 if __name__ == '__main__':
@@ -208,4 +250,4 @@ if __name__ == '__main__':
     if 'error' in result:
         print(f"ERROR: {result['error']}", file=sys.stderr)
         sys.exit(1)
-    print(f"Generated {result['generated']} interaction skeletons at {result['outputDir']}")
+    print(f"Generated {result['generated']}, skipped {result.get('skipped', 0)}/{result['total']} at {result['outputDir']}")

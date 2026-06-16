@@ -760,6 +760,52 @@ python3 "$SKILL_DIR/detect_platforms.py" "$PROJECT_ROOT"
 
 ---
 
+## Incremental Processing (LLM Phases Only)
+
+Non-LLM phases (0, 1, routing, 4b, cross-ref, wiki-ref, platform, 5) always run full — they are deterministic and fast.
+
+LLM-intensive phases support incremental processing via prompt/skeleton hashing:
+
+### Phase 2 — Association Discovery (Incremental)
+
+`association_discovery.py` computes a `_promptHash` (SHA-256 of feature metadata + server domain summaries) for each feature. On subsequent runs:
+
+1. Load previous `phase2-associations.json` if it exists
+2. For each feature, compute `_promptHash` from current inputs
+3. If hash matches a previous result with no error → **reuse** (skip LLM call)
+4. If hash differs or no previous result → **call LLM** and store new hash
+
+Output includes `llmCalls` and `reusedFromCache` counts.
+
+**Invalidation triggers** (prompt hash changes when):
+- Feature name, implType, deliveryPlatforms, or mergedSummary changes (wiki update on any client)
+- Any server domain's summary or endpoints change (wiki update on any server service)
+
+### Phase 4c — Feature Interaction Docs (Incremental)
+
+`build_feature_interactions.py` computes a `_skeletonHash` (SHA-256 of the deterministic skeleton) for each feature. On subsequent runs:
+
+1. Check if output file already exists with `_status: "complete"` and matching `_skeletonHash`
+2. If match → **skip** (no skeleton regeneration, no LLM needed)
+3. If no match → write new skeleton with `_status: "skeleton_ready"` for agent LLM processing
+
+**Agent-level Phase 4c processing must also respect this**: only send LLM prompts for files with `_status: "skeleton_ready"`, skip files with `_status: "complete"`.
+
+Output includes `generated` (need LLM) and `skipped` (cache hit) counts.
+
+**Invalidation triggers** (skeleton hash changes when):
+- Feature's clientLayer.platforms or serverLayer associations change (Phase 2 re-association)
+- New platforms added or removed
+
+### Incremental Report Format
+
+```
+Phase 2: 17 features, 3 LLM calls, 14 reused from cache
+Phase 4c: 17 features, 3 need LLM, 14 skipped (unchanged)
+```
+
+---
+
 ## Error Handling
 
 | Scenario | Action |

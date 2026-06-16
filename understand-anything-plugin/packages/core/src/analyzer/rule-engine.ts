@@ -35,6 +35,7 @@ const KNOWN_EDGE_TYPES = new Set<string>([
   "provides_rpc", "consumes_rpc",
   "provides_route", "consumes_route",
   "provides_api", "consumes_api", "injects",
+  "navigates_to",
   "reads_from", "writes_to", "transforms", "validates",
   "depends_on", "tested_by", "configures",
   "related", "similar_to",
@@ -129,6 +130,21 @@ export const BUILTIN_RULES: FrameworkRule[] = [
     },
   },
   {
+    id: "hilt",
+    displayName: "Hilt/Dagger",
+    detectionKeywords: ["hilt-android", "dagger", "dagger.hilt", "com.google.dagger"],
+    annotations: {
+      "HiltAndroidApp": { edge: "configures", weight: 0.8 },
+      "AndroidEntryPoint": { edge: "injects", weight: 0.9 },
+      "HiltViewModel": { edge: "injects", weight: 0.9 },
+      "Inject": { edge: "injects", weight: 0.9, role: "target" },
+      "Module": { edge: "configures", weight: 0.7 },
+      "Provides": { edge: "provides_api", weight: 0.8 },
+      "Binds": { edge: "provides_api", weight: 0.8 },
+      "InstallIn": { edge: "configures", weight: 0.6 },
+    },
+  },
+  {
     id: "react",
     displayName: "React",
     detectionKeywords: ["react", "react-dom"],
@@ -216,6 +232,7 @@ export function mapAnnotationsToEdges(
   const unresolved: UnresolvedAnnotation[] = [];
 
   for (const file of extractionResults) {
+    if (!Array.isArray(file.classes)) continue;
     for (const cls of file.classes) {
       const classNodeId = `class:${file.path}:${cls.name}`;
 
@@ -384,12 +401,14 @@ export function runRuleEngine(
 
   // Step 3: Meta-annotation expansion (global, JVM only)
   const allClasses = extractionResults.flatMap((f) =>
-    f.classes.map((c) => ({ name: c.name, annotations: (c.annotations ?? []) as AnnotationInfo[] })),
+    (f.classes ?? []).map((c) => ({ name: c.name, annotations: (c.annotations ?? []) as AnnotationInfo[] })),
   );
 
   const classMap = new Map(allClasses.map((c) => [c.name, c]));
 
+  const existingKeys = new Set(allEdges.map((e) => `${e.source}|${e.target}|${e.type}`));
   for (const file of extractionResults) {
+    if (!Array.isArray(file.classes)) continue;
     for (const cls of file.classes) {
       if (!cls.annotations?.length) continue;
       const expanded = resolveMetaAnnotations(cls.name, classMap);
@@ -398,7 +417,6 @@ export function runRuleEngine(
         const tempClass = { ...cls, annotations: [...(cls.annotations ?? []), ...expanded] };
         const tempFile = { ...file, classes: [tempClass] };
         const extraResult = mapAnnotationsToEdges([tempFile], { frameworks, userRules: options.userRules });
-        const existingKeys = new Set(allEdges.map((e) => `${e.source}|${e.target}|${e.type}`));
         for (const edge of extraResult.edges) {
           const key = `${edge.source}|${edge.target}|${edge.type}`;
           if (!existingKeys.has(key)) {
@@ -416,11 +434,11 @@ export function runRuleEngine(
     functions: f.functions,
     callGraph: f.callGraph ?? [],
     imports: f.imports,
-    classes: f.classes.map((c) => ({
+    classes: (f.classes ?? []).map((c) => ({
       name: c.name,
       lineRange: c.lineRange,
-      methods: c.methods,
-      properties: c.properties,
+      methods: c.methods ?? [],
+      properties: c.properties ?? [],
       typedProperties: c.typedProperties,
     })),
   }));
@@ -444,7 +462,7 @@ export function runRuleEngine(
     stats: {
       totalFiles: extractionResults.length,
       annotationsFound: extractionResults.reduce(
-        (sum, f) => sum + f.classes.reduce((s, c) => s + (c.annotations?.length ?? 0), 0),
+        (sum, f) => sum + (f.classes ?? []).reduce((s, c) => s + (c.annotations?.length ?? 0), 0),
         0,
       ),
       edgesProduced: allEdges.length,

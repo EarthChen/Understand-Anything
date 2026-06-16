@@ -8,7 +8,7 @@ const jieba = new Jieba()
  * Used as MiniSearch's `tokenize` option.
  */
 export function codeTokenize(text: string): string[] {
-  if (!text.trim()) return []
+  if (text == null || !text.trim()) return []
 
   const tokens: string[] = []
 

@@ -117,6 +117,30 @@ Use `$PLUGIN_ROOT` for every reference to agent definitions in subsequent phases
    - Otherwise → **report error and stop**:
      > `Error: Knowledge graph not found at .understand-anything/knowledge-graph.json. Run /understand first, or use --standalone for lightweight scan without a knowledge graph.`
 
+### Phase 1.5: Platform Type Detection
+
+Detect the project's platform type to select appropriate flow extraction strategy in Phase 4c.
+
+1. Read project metadata from KG (`project.frameworks`, `project.languages`) or scan results (for Path 1)
+2. Classify into one of: `backend`, `frontend`, `mobile-client`, `fullstack`
+
+**Classification rules (in priority order):**
+
+| Signal | Classification |
+|---|---|
+| frameworks contains any of: Android, Jetpack Compose, iOS, SwiftUI, UIKit, Flutter, React Native, HarmonyOS | `mobile-client` |
+| frameworks contains any of: Vue, React, Next.js, Nuxt, Svelte, uni-app AND no backend framework present | `frontend` |
+| frameworks contains any of: Spring, Spring Boot, Express, Django, FastAPI, Gin, Rails, NestJS, Flask | `backend` |
+| frameworks contains BOTH a frontend/mobile AND a backend framework | `fullstack` |
+| >70% files are .kt/.swift/.dart AND paths contain Activity/Fragment/ViewController | `mobile-client` |
+| >70% files are .vue/.tsx/.jsx AND paths contain pages/views/components (no controller/) | `frontend` |
+| Default (none of the above) | `backend` |
+
+3. Store as `$PLATFORM_TYPE` for use in Phase 4c.
+4. Report: `Platform detected: $PLATFORM_TYPE`
+
+---
+
 ### Phase 2: Lightweight Scan (Path 1)
 
 The preprocessing script does NOT produce a domain graph — it produces **raw material** (file tree, entry points, exports/imports) so the domain-analyzer agent can focus on the actual domain analysis instead of spending dozens of tool calls exploring the codebase. Think of it as a cheat sheet: cheap Python preprocessing → expensive LLM gets a clean, small input → better results for less cost.
@@ -216,18 +240,27 @@ This phase uses different strategies depending on Path:
 
 #### Phase 4c: Flow Extraction (parallel, up to 10 concurrent)
 
-1. Read the `domain-flow-extractor` agent prompt from `$PLUGIN_ROOT/agents/domain-flow-extractor.md`
-2. **Domain-level incremental detection:** For each domain in `domain-discovery.json`, compute a content fingerprint of the domain's KG subset (`intermediate/domain-<name>.json`). Store fingerprints in `$PROJECT_ROOT/.understand-anything/intermediate/domain-fingerprints.json`. Compare against the previous run's fingerprints (if file exists). Domains with unchanged fingerprints are eligible for skip.
-3. **Before dispatching**, unless `--full` was passed, detect already-extracted domains by checking if `intermediate/flows-<name>.json` exists, is non-empty, and contains **valid JSON with a non-empty `flows` array**. Skip domains that pass all three checks (this enables automatic resume when a previous run was interrupted). If `--full` was passed, re-extract all domains (checkpoint and `flows-*.json` files were deleted in Phase 1). If an output file exists but contains invalid JSON (e.g. truncated from a crash), or the `flows` array is empty/missing, treat it as incomplete and re-process. If all domains are complete, skip directly to Phase 4d.
-4. **Filter documentation-only domains:** Before dispatching, skip any domain whose `modules` are all documentation paths (e.g. `docs/`, `doc/`, `docs/PROCESS/`). Documentation modules do not contain business logic and cannot produce meaningful flows. The merge script also filters them as a safety net.
-5. For each remaining domain in `domain-discovery.json`:
+1. **Load platform-specific strategy.** Based on `$PLATFORM_TYPE` from Phase 1.5, read the appropriate strategy file:
+   - `backend` → `$PLUGIN_ROOT/skills/understand-domain/platforms/backend-flow.md`
+   - `frontend` → `$PLUGIN_ROOT/skills/understand-domain/platforms/frontend-flow.md`
+   - `mobile-client` → `$PLUGIN_ROOT/skills/understand-domain/platforms/mobile-flow.md`
+   - `fullstack` → load **both** `backend-flow.md` and `frontend-flow.md` (or `mobile-flow.md` if mobile is present). Apply each strategy to its respective domain subsets.
+
+   The strategy file defines: entry point types, edge types to trace, domain splitting heuristics, and output format conventions for that platform.
+
+2. Read the `domain-flow-extractor` agent prompt from `$PLUGIN_ROOT/agents/domain-flow-extractor.md`
+3. **Domain-level incremental detection:** For each domain in `domain-discovery.json`, compute a content fingerprint of the domain's KG subset (`intermediate/domain-<name>.json`). Store fingerprints in `$PROJECT_ROOT/.understand-anything/intermediate/domain-fingerprints.json`. Compare against the previous run's fingerprints (if file exists). Domains with unchanged fingerprints are eligible for skip.
+4. **Before dispatching**, unless `--full` was passed, detect already-extracted domains by checking if `intermediate/flows-<name>.json` exists, is non-empty, and contains **valid JSON with a non-empty `flows` array**. Skip domains that pass all three checks (this enables automatic resume when a previous run was interrupted). If `--full` was passed, re-extract all domains (checkpoint and `flows-*.json` files were deleted in Phase 1). If an output file exists but contains invalid JSON (e.g. truncated from a crash), or the `flows` array is empty/missing, treat it as incomplete and re-process. If all domains are complete, skip directly to Phase 4d.
+5. **Filter documentation-only domains:** Before dispatching, skip any domain whose `modules` are all documentation paths (e.g. `docs/`, `doc/`, `docs/PROCESS/`). Documentation modules do not contain business logic and cannot produce meaningful flows. The merge script also filters them as a safety net.
+6. For each remaining domain in `domain-discovery.json`:
    - Read `intermediate/domain-<name>.json` as context
-   - Dispatch a subagent with the `domain-flow-extractor` prompt + domain KG subset
+   - **Include the loaded platform strategy** as additional context for the subagent
+   - Dispatch a subagent with the `domain-flow-extractor` prompt + domain KG subset + platform strategy
    - The agent writes to `intermediate/flows-<name>.json`
-6. Run up to **10 subagents concurrently**
-7. If a domain's flow extraction fails, retry once. If it fails again, skip that domain and continue with others.
-8. **Update fingerprints:** After all extractions complete, write the current fingerprints to `domain-fingerprints.json` for future incremental comparisons.
-9. Wait for all to complete.
+7. Run up to **10 subagents concurrently**
+8. If a domain's flow extraction fails, retry once. If it fails again, skip that domain and continue with others.
+9. **Update fingerprints:** After all extractions complete, write the current fingerprints to `domain-fingerprints.json` for future incremental comparisons.
+10. Wait for all to complete.
 
 #### Phase 4d: Merge
 

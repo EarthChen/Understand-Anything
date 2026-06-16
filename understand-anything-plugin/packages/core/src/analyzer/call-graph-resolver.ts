@@ -34,13 +34,13 @@ export function resolveCallGraph(files: FileExtraction[]): {
   // 1. Build global symbol index: functionName -> filePath[]
   const symbolIndex = new Map<string, string[]>();
   for (const file of files) {
-    for (const fn of file.functions) {
+    for (const fn of file.functions ?? []) {
       const existing = symbolIndex.get(fn.name) ?? [];
       if (!existing.includes(file.path)) existing.push(file.path);
       symbolIndex.set(fn.name, existing);
     }
-    for (const cls of file.classes) {
-      for (const method of cls.methods) {
+    for (const cls of file.classes ?? []) {
+      for (const method of cls.methods ?? []) {
         const existing = symbolIndex.get(method) ?? [];
         if (!existing.includes(file.path)) existing.push(file.path);
         symbolIndex.set(method, existing);
@@ -52,7 +52,7 @@ export function resolveCallGraph(files: FileExtraction[]): {
   const importMaps = new Map<string, Map<string, string>>();
   for (const file of files) {
     const imap = new Map<string, string>();
-    for (const imp of file.imports) {
+    for (const imp of file.imports ?? []) {
       const resolvedPath = resolveImportPath(file.path, imp.source, files);
       if (resolvedPath) {
         for (const spec of imp.specifiers) {
@@ -70,7 +70,7 @@ export function resolveCallGraph(files: FileExtraction[]): {
   for (const file of files) {
     const imap = importMaps.get(file.path)!;
 
-    for (const entry of file.callGraph) {
+    for (const entry of file.callGraph ?? []) {
       let calleeName = entry.callee;
       let resolvedFile: string | null = null;
 
@@ -81,7 +81,7 @@ export function resolveCallGraph(files: FileExtraction[]): {
         const methodName = parts[parts.length - 1];
 
         // Try to find obj's type from class typedProperties
-        for (const cls of file.classes) {
+        for (const cls of file.classes ?? []) {
           const prop = cls.typedProperties?.find((p) => p.name === objName);
           if (prop?.type) {
             const typeFile = findFileContainingClass(files, prop.type);
@@ -168,7 +168,7 @@ function normalizePath(p: string): string {
 
 function findFileContainingClass(files: FileExtraction[], className: string): string | null {
   for (const file of files) {
-    if (file.classes.some((c) => c.name === className)) return file.path;
+    if ((file.classes ?? []).some((c) => c.name === className)) return file.path;
   }
   return null;
 }

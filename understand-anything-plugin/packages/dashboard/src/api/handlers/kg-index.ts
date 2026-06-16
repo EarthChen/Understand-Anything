@@ -81,10 +81,10 @@ export class KgIndex {
     return [...byId.values()]
       .map((node) => ({
         id: node.id,
-        name: node.name,
+        name: node.name ?? "",
         summary: node.summary ?? "",
         tags: (node.tags ?? []).join(" "),
-        type: node.type,
+        type: node.type ?? "",
         service: serviceName,
         filePath: node.filePath ?? "",
         startLine: node.lineRange?.[0] ?? 0,

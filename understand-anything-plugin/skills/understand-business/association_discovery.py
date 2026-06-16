@@ -17,11 +17,33 @@ Reads:
 Output:
     <project-root>/.understand-anything/intermediate/phase2-associations.json
 """
+import hashlib
 import json
 import sys
 from pathlib import Path
 
 MIN_CONFIDENCE_DEFAULT = 0.5
+
+
+def compute_prompt_hash(feature: dict, server_domains: dict) -> str:
+    """Compute a stable hash of the LLM prompt inputs for change detection.
+
+    Covers feature metadata + sorted server domain summaries/endpoints.
+    If hash matches previous run, LLM call can be skipped.
+    """
+    key_parts = [
+        feature.get('name', ''),
+        feature.get('implType', ''),
+        json.dumps(sorted(feature.get('deliveryPlatforms', [])), ensure_ascii=False),
+        feature.get('mergedSummary', ''),
+    ]
+    for name in sorted(server_domains.keys()):
+        info = server_domains[name]
+        key_parts.append(name)
+        key_parts.append(info.get('data', {}).get('summary', '')[:120])
+        key_parts.append(','.join((info.get('endpoints', []) or [])[:3]))
+    raw = '\n'.join(key_parts)
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 def build_discovery_prompt(feature: dict, server_domains: dict, max_summary_len: int = 120) -> str:
@@ -146,40 +168,63 @@ def discover_associations(
     features: list,
     server_domains: dict,
     min_confidence: float = MIN_CONFIDENCE_DEFAULT,
-) -> list:
-    """Run association discovery for all consolidated features.
+    previous_results: list | None = None,
+) -> tuple[list, int, int]:
+    """Run association discovery with incremental support.
 
     Args:
         features: List of consolidated client features from Phase 1a.
         server_domains: Dict of server domain name → {data, endpoints, service}.
         min_confidence: Minimum confidence threshold for supporting servers.
+        previous_results: Previous association results for cache comparison.
 
     Returns:
-        List of association results, one per feature.
+        Tuple of (results, llm_calls, reused_count).
     """
     results = []
     valid_domain_names = set(server_domains.keys())
 
+    prev_by_name: dict[str, dict] = {}
+    if previous_results:
+        for r in previous_results:
+            fname = r.get('featureName', '')
+            if fname and r.get('_promptHash') and not r.get('error'):
+                prev_by_name[fname] = r
+
+    llm_calls = 0
+    reused = 0
+
     for feature in features:
         feature_name = feature.get('name', 'unknown')
+        prompt_hash = compute_prompt_hash(feature, server_domains)
+
+        prev = prev_by_name.get(feature_name)
+        if prev and prev.get('_promptHash') == prompt_hash:
+            results.append(prev)
+            reused += 1
+            continue
+
         prompt = build_discovery_prompt(feature, server_domains)
         try:
             response = _call_llm(prompt)
+            llm_calls += 1
         except (NotImplementedError, RuntimeError, OSError) as e:
             results.append({
                 'featureName': feature_name,
                 'primaryServer': None,
                 'supportingServers': [],
                 'error': str(e),
+                '_promptHash': prompt_hash,
             })
             continue
 
         result = parse_discovery_response(
             response, feature_name, min_confidence, valid_domain_names
         )
+        result['_promptHash'] = prompt_hash
         results.append(result)
 
-    return results
+    return results, llm_calls, reused
 
 
 def to_phase3_format(associations: list) -> list:
@@ -266,19 +311,34 @@ def run_association_discovery(project_root_str: str) -> dict:
         else:
             unsupported_facets.append(client_facet.get('name', client_facet.get('type')))
 
+    previous_results = None
+    prev_path = intermediate_dir / 'phase2-associations.json'
+    if prev_path.exists():
+        try:
+            prev_data = json.loads(prev_path.read_text())
+            previous_results = prev_data.get('associations')
+        except (json.JSONDecodeError, IOError):
+            pass
+
     output = {
         'associations': [],
         'phase3_compatible': [],
         'featureCount': len(all_features),
         'serverDomainCount': len(server_domains),
-        'llmCalls': len(all_features),
+        'llmCalls': 0,
+        'reusedFromCache': 0,
         'unsupportedFacets': unsupported_facets,
     }
 
     if all_features:
-        results = discover_associations(all_features, server_domains)
+        results, llm_calls, reused = discover_associations(
+            all_features, server_domains,
+            previous_results=previous_results,
+        )
         output['associations'] = results
         output['phase3_compatible'] = to_phase3_format(results)
+        output['llmCalls'] = llm_calls
+        output['reusedFromCache'] = reused
 
     intermediate_dir.mkdir(parents=True, exist_ok=True)
     (intermediate_dir / 'phase2-associations.json').write_text(
@@ -296,5 +356,8 @@ if __name__ == '__main__':
     if 'error' in result:
         print(f"ERROR: {result['error']}", file=sys.stderr)
         sys.exit(1)
+    total = result['featureCount']
+    reused = result.get('reusedFromCache', 0)
+    llm = result.get('llmCalls', 0)
     print(f"Associations: {len(result['associations'])} features → {result['serverDomainCount']} server domains")
-    print(f"LLM calls: {result['llmCalls']} (vs {result['featureCount'] * result['serverDomainCount']} pairwise)")
+    print(f"LLM calls: {llm}, reused: {reused}/{total}")

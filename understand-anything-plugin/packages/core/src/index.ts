@@ -153,3 +153,5 @@ export type {
   SystemGraphValidationResult,
 } from "./system-graph.js";
 export { validateSystemGraph } from "./system-graph.js";
+export { runRuleEngine } from "./analyzer/rule-engine.js";
+export type { AnnotationEdge, UnresolvedAnnotation } from "./analyzer/rule-engine.js";

@@ -83,10 +83,10 @@ export class WikiIndex {
     return [...byId.values()]
       .map((entry) => ({
         id: entry.id,
-        name: entry.name,
+        name: entry.name ?? "",
         summary: entry.summary ?? "",
         content: entry.content ?? "",
-        type: entry.type,
+        type: entry.type ?? "",
         service: entry.service ?? serviceName ?? "",
       }))
   }
