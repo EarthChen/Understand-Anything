@@ -23,24 +23,26 @@ from pathlib import Path
 def _build_feature_document(feature_data: dict, association: dict) -> dict:
     """Build a single feature document combining client and server layers."""
     name = feature_data.get('name', 'unknown')
+    facet_type = feature_data.get('facetType', 'mobile')
 
-    # Build client layer from consolidation data
+    # Build clientLayers entry for this feature
     platforms_dict = {}
     for impl in feature_data.get('implementations', []):
         platforms_dict[impl.get('platform', '')] = {
             k: v for k, v in impl.items() if k != 'platform'
         }
-    # For standalone features with no implementations list
     if not platforms_dict:
         for p in feature_data.get('platforms', []):
             platforms_dict[p] = {}
 
-    client_layer = {
+    client_layer_entry = {
+        'facetType': facet_type,
         'implType': feature_data.get('implType', 'unknown'),
         'platforms': platforms_dict,
         'deliveryPlatforms': feature_data.get('deliveryPlatforms', []),
         'summary': feature_data.get('mergedSummary', ''),
     }
+    client_layers = [client_layer_entry]
 
     # Build server layer from association (skip if errored)
     primary = association.get('primaryServer') if not association.get('error') else None
@@ -71,7 +73,8 @@ def _build_feature_document(feature_data: dict, association: dict) -> dict:
     return {
         'id': f'feature:{name}',
         'name': name,
-        'clientLayer': client_layer,
+        'clientLayers': client_layers,
+        'clientLayer': client_layer_entry,  # backward-compat: first entry in clientLayers
         'serverLayer': server_layer,
     }
 
@@ -190,9 +193,45 @@ def run_assemble_features(project_root_str: str) -> dict:
             c = _consolidate_mobile_domains(
                 project_root_str, facet_path, facet.get('subPaths', [])
             )
+            for item in c['consolidated']:
+                item.setdefault('facetType', 'mobile')
+            for item in c['standalone']:
+                item.setdefault('facetType', 'mobile')
             consolidation['consolidated'].extend(c['consolidated'])
             consolidation['standalone'].extend(c['standalone'])
             consolidation['infrastructure'].extend(c['infrastructure'])
+        elif facet.get('type') == 'frontend':
+            facet_path_str = facet.get('path', '')
+            fg_path = (
+                project_root / facet_path_str /
+                '.understand-anything' / 'frontend-graph.json'
+            )
+            if not fg_path.exists():
+                continue
+            try:
+                fg = json.loads(fg_path.read_text(encoding='utf-8'))
+            except (json.JSONDecodeError, OSError):
+                continue
+            frameworks = fg.get('project', {}).get('frameworks', [])
+            for feat in fg.get('features', []):
+                routes = feat.get('routes', [])
+                api_calls = feat.get('apiCalls', [])
+                summary_parts = []
+                if routes:
+                    summary_parts.append('Routes: ' + ', '.join(routes[:3]))
+                if api_calls:
+                    summary_parts.append('API: ' + ', '.join(
+                        f"{c.get('method')} {c.get('path')}" for c in api_calls[:3]
+                    ))
+                consolidation['consolidated'].append({
+                    'name': feat.get('name', ''),
+                    'implType': 'frontend-web',
+                    'platforms': ['web'],
+                    'deliveryPlatforms': frameworks,
+                    'implementations': [],
+                    'mergedSummary': '. '.join(summary_parts),
+                    'facetType': 'frontend',
+                })
 
     result = assemble_features(associations, consolidation)
 
