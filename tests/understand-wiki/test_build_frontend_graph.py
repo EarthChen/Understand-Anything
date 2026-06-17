@@ -22,6 +22,7 @@ _discover_repos = _mod._discover_repos
 _frontend_subpaths = _mod._frontend_subpaths
 _aggregate_features = _mod._aggregate_features
 _union = _mod._union
+_extract_repo = _mod._extract_repo
 
 
 def _minimal_kg(name="admin-web", extra_nodes=None):
@@ -486,3 +487,27 @@ class TestAggregateFeatures:
         assert features[0]["sourceRepos"] == ["a", "b"]
         assert len(links) == 1
         assert links[0]["mappings"] == {"a": "feature:x", "b": "feature:y"}
+
+
+class TestExtractRepo:
+    def test_returns_pieces_for_valid_repo(self, tmp_path):
+        repo = _make_repo(tmp_path, "web-app", kg=_minimal_kg(), dg=_minimal_dg())
+        out = _extract_repo("web-app", repo)
+        assert out is not None
+        assert out["name"] == "web-app"
+        assert "src/pages/orders/List.tsx" in out["pages"]
+        assert len(out["features"]) == 1
+        assert out["features"][0]["name"] == "Order Management"
+        assert out["project"]["name"] == "admin-web"  # carried from KG project block
+
+    def test_missing_kg_returns_none_and_warns(self, tmp_path, capsys):
+        repo = _make_repo(tmp_path, "admin", dg=_minimal_dg())  # DG only, no KG
+        out = _extract_repo("admin", repo)
+        assert out is None
+        assert "WARN" in capsys.readouterr().err
+
+    def test_missing_dg_returns_none_and_warns(self, tmp_path, capsys):
+        repo = _make_repo(tmp_path, "admin", kg=_minimal_kg())  # KG only, no DG
+        out = _extract_repo("admin", repo)
+        assert out is None
+        assert "WARN" in capsys.readouterr().err

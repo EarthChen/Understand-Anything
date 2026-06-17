@@ -457,6 +457,45 @@ def _aggregate_features(per_repo: list[dict]) -> tuple[list[dict], list[dict]]:
     return features, domain_links
 
 
+def _extract_repo(repo_name: str, repo_root: Path) -> dict | None:
+    """Load one repo's KG+DG and run all extractors.
+
+    Returns the raw per-repo pieces, or None (with a WARN) if either graph is
+    missing, so the aggregate can skip the repo and continue.
+    """
+    ua_dir = repo_root / ".understand-anything"
+    kg_path = ua_dir / "knowledge-graph.json"
+    dg_path = ua_dir / "domain-graph.json"
+    if not kg_path.exists() or not dg_path.exists():
+        print(
+            f"[build-frontend-graph] WARN: skipping {repo_name} — missing "
+            f"knowledge-graph.json or domain-graph.json",
+            file=sys.stderr,
+        )
+        return None
+
+    kg = json.loads(kg_path.read_text(encoding="utf-8"))
+    dg = json.loads(dg_path.read_text(encoding="utf-8"))
+
+    routes = _extract_routes(repo_root, kg)
+    pages = _extract_pages(repo_root, kg)
+    components = _extract_components(repo_root, kg)
+    stores = _extract_state_stores(repo_root, kg)
+    api_calls = _extract_api_calls(repo_root, kg)
+    features = _build_features(dg, routes, pages, components, stores, api_calls)
+
+    return {
+        "name": repo_name,
+        "project": kg.get("project", {}),
+        "routes": routes,
+        "pages": pages,
+        "components": components,
+        "stores": stores,
+        "apiCalls": api_calls,
+        "features": features,
+    }
+
+
 def build_frontend_graph(service_root_str: str) -> dict:
     service_root = Path(service_root_str).resolve()
     ua_dir = service_root / ".understand-anything"
