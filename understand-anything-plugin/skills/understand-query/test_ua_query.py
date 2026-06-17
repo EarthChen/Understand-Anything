@@ -858,7 +858,7 @@ class TestCmdAsk(unittest.TestCase):
     @patch("_commands._detect_and_follow_cross_service_rpc", return_value=None)
     @patch("_commands.cmd_trace")
     @patch("_helpers.fetch_json")
-    @patch("_helpers._search_api")
+    @patch("_commands._search_api")
     def test_ask_structure_fallback(self, mock_search_api, mock_fetch, mock_trace, mock_cross):
         """When ask finds no KG matches, should fallback to structure search."""
         mock_search_api.return_value = []
@@ -879,11 +879,12 @@ class TestCmdAsk(unittest.TestCase):
         ]
         assert len(structure_calls) == 1
         assert "q=PK" in structure_calls[0][0][0]
+        mock_search_api.assert_called()
 
     @patch("_commands._detect_and_follow_cross_service_rpc", return_value=None)
     @patch("_commands.cmd_trace")
     @patch("_helpers.fetch_json")
-    @patch("_helpers._search_api")
+    @patch("_commands._search_api")
     def test_ask_source_fallback(self, mock_search_api, mock_fetch, mock_trace, mock_cross):
         """When ask finds no KG or structure matches, should fallback to source grep."""
         mock_search_api.return_value = []
@@ -914,11 +915,12 @@ class TestCmdAsk(unittest.TestCase):
         ]
         assert len(source_calls) == 1
         assert "q=RoomManager" in source_calls[0][0][0]
+        mock_search_api.assert_called()
 
     @patch("_commands._detect_and_follow_cross_service_rpc", return_value=None)
     @patch("_commands.cmd_trace")
     @patch("_helpers.fetch_json")
-    @patch("_helpers._search_api")
+    @patch("_commands._search_api")
     def test_ask_chinese_source_fallback(self, mock_search_api, mock_fetch, mock_trace, mock_cross):
         """Chinese-only queries should use original query for source grep fallback."""
         mock_search_api.return_value = []
@@ -947,11 +949,12 @@ class TestCmdAsk(unittest.TestCase):
         assert len(source_calls) == 1
         assert "q=" in source_calls[0][0][0]
         assert "%E6%88%BF%E9%97%B4" in source_calls[0][0][0] or "房间管理" in source_calls[0][0][0]
+        mock_search_api.assert_called()
 
     @patch("_commands._detect_and_follow_cross_service_rpc", return_value=None)
     @patch("_commands.cmd_trace")
     @patch("_helpers.fetch_json")
-    @patch("_helpers._search_api")
+    @patch("_commands._search_api")
     def test_ask_propagates_trace_hint(self, mock_search_api, mock_fetch, mock_trace, mock_cross):
         """ask propagates hint from trace result"""
         mock_search_api.return_value = []
@@ -967,11 +970,12 @@ class TestCmdAsk(unittest.TestCase):
         assert result["traceHint"] == "No KG nodes matched in service"
         assert result["crossServiceTrace"] == mock_trace.return_value["crossServiceTrace"]
         assert result["crossServiceRpcHint"] == mock_trace.return_value["crossServiceRpcHint"]
+        mock_search_api.assert_called()
 
     @patch("_commands._detect_and_follow_cross_service_rpc", return_value=None)
     @patch("_commands.cmd_trace")
     @patch("_helpers.fetch_json")
-    @patch("_helpers._search_api")
+    @patch("_commands._search_api")
     def test_ask_source_fallback_full_query(self, mock_search_api, mock_fetch, mock_trace, mock_cross):
         """ask sourceFallback uses full query including Chinese"""
         mock_search_api.return_value = []
@@ -1001,11 +1005,12 @@ class TestCmdAsk(unittest.TestCase):
         call_url = source_calls[0][0][0]
         assert "PK" in call_url
         assert "%E8%B6%85%E6%97%B6" in call_url or "超时" in call_url
+        mock_search_api.assert_called()
 
     @patch("_commands._detect_and_follow_cross_service_rpc", return_value=None)
     @patch("_commands.cmd_trace")
     @patch("_helpers.fetch_json")
-    @patch("_helpers._search_api")
+    @patch("_commands._search_api")
     def test_ask_source_fallback_handles_fetch_error(self, mock_search_api, mock_fetch, mock_trace, mock_cross):
         """ask sourceFallback survives fetch_json errors"""
         mock_search_api.return_value = []
@@ -1023,6 +1028,7 @@ class TestCmdAsk(unittest.TestCase):
         from ua_query import cmd_ask
         result = cmd_ask(args)
         assert "sourceFallback" not in result
+        mock_search_api.assert_called()
 
 
 class TestCmdTrace(unittest.TestCase):
