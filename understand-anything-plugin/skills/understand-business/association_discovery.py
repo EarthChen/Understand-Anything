@@ -184,26 +184,34 @@ def discover_associations(
     results = []
     valid_domain_names = set(server_domains.keys())
 
-    prev_by_name: dict[str, dict] = {}
+    from facets import canonical_facet
+
+    def _key(facet_type, project, name):
+        return (canonical_facet(facet_type or ''), project or '', name)
+
+    prev_by_key: dict[tuple, dict] = {}
     if previous_results:
         for r in previous_results:
             fname = r.get('featureName', '')
             if fname and r.get('_promptHash') and not r.get('error'):
-                prev_by_name[fname] = r
+                prev_by_key[_key(r.get('facetType'), r.get('project'), fname)] = r
 
     llm_calls = 0
     reused = 0
 
     for feature in features:
         feature_name = feature.get('name', 'unknown')
+        project = feature.get('project')
+        fkey = _key(feature.get('facetType'), project, feature_name)
         prompt_hash = compute_prompt_hash(feature, server_domains)
 
-        prev = prev_by_name.get(feature_name)
+        prev = prev_by_key.get(fkey)
         if prev and prev.get('_promptHash') == prompt_hash:
             # Shallow copy so the reused record reflects the CURRENT feature's
-            # facet, not the stale facet from the previous run.
+            # facet/project, not the stale values from the previous run.
             r = dict(prev)
             r['facetType'] = feature.get('facetType', prev.get('facetType', ''))
+            r['project'] = project
             results.append(r)
             reused += 1
             continue
@@ -220,6 +228,7 @@ def discover_associations(
                 'error': str(e),
                 '_promptHash': prompt_hash,
                 'facetType': feature.get('facetType', ''),
+                'project': project,
             })
             continue
 
@@ -228,6 +237,7 @@ def discover_associations(
         )
         result['_promptHash'] = prompt_hash
         result['facetType'] = feature.get('facetType', '')
+        result['project'] = project
         results.append(result)
 
     return results, llm_calls, reused
