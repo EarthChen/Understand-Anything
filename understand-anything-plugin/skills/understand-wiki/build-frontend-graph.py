@@ -379,6 +379,84 @@ def _discover_repos(root: Path) -> list[tuple[str, Path]]:
     return repos
 
 
+def _normalize_feature_name(name: str) -> str:
+    return name.lower().replace("-", "_").replace(" ", "_")
+
+
+def _union(lists: list[list[str]]) -> list[str]:
+    out: set[str] = set()
+    for lst in lists:
+        out.update(lst)
+    return sorted(out)
+
+
+def _union_api_calls(lists: list[list[dict]]) -> list[dict]:
+    seen: set[tuple[str, str]] = set()
+    out: list[dict] = []
+    for lst in lists:
+        for c in lst:
+            key = (c.get("method", ""), c.get("path", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(c)
+    out.sort(key=lambda c: (c.get("path", ""), c.get("method", "")))
+    return out
+
+
+def _aggregate_features(per_repo: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Group features across repos by normalized name.
+
+    Returns (features, domainLinks). Unique features pass through with
+    sourceRepos=[repo]; features sharing a normalized name merge into one entry
+    (deduped-union list fields, sourceRepos = every repo). Each shared (>=2 repo)
+    group yields one domainLink mapping repo -> that repo's feature id.
+    """
+    groups: dict[str, list[tuple[str, dict]]] = {}
+    order: list[str] = []  # preserve first-seen order for deterministic grouping
+    for repo in per_repo:
+        for feat in repo["features"]:
+            key = _normalize_feature_name(feat.get("name", ""))
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append((repo["name"], feat))
+
+    features: list[dict] = []
+    domain_links: list[dict] = []
+    for key in order:
+        members = groups[key]
+        repos_in_group = sorted({name for name, _ in members})
+        _, first_feat = members[0]
+        features.append({
+            "id": first_feat["id"],
+            "name": first_feat["name"],
+            "sourceDomain": first_feat.get("sourceDomain", ""),
+            "sourceRepos": repos_in_group,
+            "routes": _union([f.get("routes", []) for _, f in members]),
+            "pages": _union([f.get("pages", []) for _, f in members]),
+            "components": _union([f.get("components", []) for _, f in members]),
+            "stateStores": _union([f.get("stateStores", []) for _, f in members]),
+            "apiCalls": _union_api_calls([f.get("apiCalls", []) for _, f in members]),
+            "uiRules": [],
+            "interactionRules": [],
+            "stateTransitions": [],
+            "apiSequence": [],
+        })
+        if len(repos_in_group) >= 2:
+            mappings: dict[str, str] = {}
+            for name, f in members:
+                mappings.setdefault(name, f["id"])  # first occurrence per repo
+            domain_links.append({
+                "canonicalFeature": first_feat["name"],
+                "mappings": mappings,
+            })
+
+    features.sort(key=lambda f: f["id"])
+    domain_links.sort(key=lambda d: d["canonicalFeature"])
+    return features, domain_links
+
+
 def build_frontend_graph(service_root_str: str) -> dict:
     service_root = Path(service_root_str).resolve()
     ua_dir = service_root / ".understand-anything"

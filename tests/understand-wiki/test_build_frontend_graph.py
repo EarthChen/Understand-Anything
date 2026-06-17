@@ -20,6 +20,8 @@ build_frontend_graph = _mod.build_frontend_graph
 _validate = _mod._validate
 _discover_repos = _mod._discover_repos
 _frontend_subpaths = _mod._frontend_subpaths
+_aggregate_features = _mod._aggregate_features
+_union = _mod._union
 
 
 def _minimal_kg(name="admin-web", extra_nodes=None):
@@ -406,3 +408,81 @@ class TestFrontendSubpaths:
         ua.mkdir()
         (ua / "system.json").write_text("{not valid json")
         assert _frontend_subpaths(tmp_path) == []
+
+
+def _feat(fid, name, *, routes=None, pages=None, components=None,
+          stores=None, api=None):
+    return {
+        "id": fid,
+        "name": name,
+        "sourceDomain": fid.replace("feature:", "domain:", 1),
+        "routes": routes or [],
+        "pages": pages or [],
+        "components": components or [],
+        "stateStores": stores or [],
+        "apiCalls": api or [],
+        "uiRules": [], "interactionRules": [],
+        "stateTransitions": [], "apiSequence": [],
+    }
+
+
+class TestUnion:
+    def test_dedups_and_sorts(self):
+        assert _union([["b", "a"], ["a", "c"]]) == ["a", "b", "c"]
+
+    def test_empty(self):
+        assert _union([]) == []
+
+
+class TestAggregateFeatures:
+    def test_distinct_names_no_links(self):
+        per_repo = [
+            {"name": "web-app", "features": [_feat("feature:order", "Orders", pages=["p/order.tsx"])]},
+            {"name": "admin", "features": [_feat("feature:perm", "Permission", pages=["p/perm.tsx"])]},
+        ]
+        features, links = _aggregate_features(per_repo)
+        assert links == []
+        by_name = {f["name"]: f for f in features}
+        assert set(by_name) == {"Orders", "Permission"}
+        assert by_name["Orders"]["sourceRepos"] == ["web-app"]
+        assert by_name["Permission"]["sourceRepos"] == ["admin"]
+
+    def test_shared_name_merges_and_links(self):
+        per_repo = [
+            {"name": "web-app", "features": [
+                _feat("feature:order", "Order Management",
+                      pages=["p/order-list.tsx"], routes=["/orders"],
+                      api=[{"method": "POST", "path": "/api/orders", "source": "a.ts", "lineRange": []}])]},
+            {"name": "admin", "features": [
+                _feat("feature:order", "order_management",
+                      pages=["p/order-admin.tsx"], routes=["/orders"],
+                      api=[{"method": "GET", "path": "/api/orders/export", "source": "b.ts", "lineRange": []}])]},
+        ]
+        features, links = _aggregate_features(per_repo)
+        assert len(features) == 1
+        merged = features[0]
+        assert merged["sourceRepos"] == ["admin", "web-app"]
+        assert merged["pages"] == ["p/order-admin.tsx", "p/order-list.tsx"]
+        assert merged["routes"] == ["/orders"]  # deduped union
+        assert {(c["method"], c["path"]) for c in merged["apiCalls"]} == {
+            ("POST", "/api/orders"), ("GET", "/api/orders/export")}
+        assert len(links) == 1
+        assert links[0]["canonicalFeature"] == "Order Management"  # first-seen display name
+        assert links[0]["mappings"] == {"web-app": "feature:order", "admin": "feature:order"}
+
+    def test_single_repo_sets_source_repos(self):
+        per_repo = [{"name": "web-app", "features": [_feat("feature:order", "Orders", pages=["p.tsx"])]}]
+        features, links = _aggregate_features(per_repo)
+        assert features[0]["sourceRepos"] == ["web-app"]
+        assert links == []
+
+    def test_normalization_groups_hyphen_space_case(self):
+        per_repo = [
+            {"name": "a", "features": [_feat("feature:x", "User-Auth", pages=["p.tsx"])]},
+            {"name": "b", "features": [_feat("feature:y", "user auth", pages=["q.tsx"])]},
+        ]
+        features, links = _aggregate_features(per_repo)
+        assert len(features) == 1
+        assert features[0]["sourceRepos"] == ["a", "b"]
+        assert len(links) == 1
+        assert links[0]["mappings"] == {"a": "feature:x", "b": "feature:y"}
