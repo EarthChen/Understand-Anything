@@ -636,23 +636,31 @@ export interface BusinessRule {
   relatedFlows?: string[];
 }
 
+// One client-delivery layer (one per facet, e.g. mobile or frontend)
+export interface BusinessClientLayer {
+  implType: "cross-platform" | "flutter-only" | "native-specific" | "frontend-web" | "unknown";
+  facetType: string;
+  platforms: Record<string, {
+    domainName?: string;
+    domainId?: string;
+    wikiRef?: string;
+    flowCount?: number;
+    summary?: string;
+    standardPlatform?: "android" | "ios" | "flutter" | "react-native" | "kotlin-multiplatform" | "web" | "unknown";
+    repo?: string;
+    repos?: string[];
+  }>;
+  units: Record<string, Record<string, unknown>>;
+  deliveryPlatforms: string[];
+  summary: string;
+}
+
 // Feature-centric business document (from association discovery)
 export interface BusinessFeature {
   id: string;
   name: string;
-  clientLayer: {
-    implType: "cross-platform" | "flutter-only" | "native-specific" | "unknown";
-    platforms: Record<string, {
-      domainName?: string;
-      domainId?: string;
-      wikiRef?: string;
-      flowCount?: number;
-      summary?: string;
-      standardPlatform?: "android" | "ios" | "flutter" | "react-native" | "kotlin-multiplatform" | "web" | "unknown";
-    }>;
-    deliveryPlatforms: string[];
-    summary: string;
-  };
+  clientLayer: BusinessClientLayer;
+  clientLayers?: BusinessClientLayer[];
   serverLayer: {
     primaryDomain: {
       name: string;
@@ -672,9 +680,27 @@ export interface BusinessFeature {
   };
 }
 
+export interface ServerIndexEntry {
+  features: string[];
+  refCount: number;
+  service: string;
+  touchpoints?: Array<{
+    feature: string;
+    facet: string;
+    role: "primary" | "supporting";
+    flagged?: { reason: string };
+  }>;
+  capability?: {
+    label: string;
+    relationship: "replication" | "complementary-split" | "shared-infrastructure" | "unknown";
+    summary: string;
+  };
+  _capabilityHash?: string;
+}
+
 export interface BusinessFeaturesDocument {
   platformMapping?: Record<string, string>;
   features: BusinessFeature[];
-  serverIndex: Record<string, { features: string[]; refCount: number; service: string }>;
+  serverIndex: Record<string, ServerIndexEntry>;
   stats: { totalFeatures: number; withServerAssociation: number; serverDomainsReferenced: number };
 }

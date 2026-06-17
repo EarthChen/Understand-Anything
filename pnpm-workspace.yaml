@@ -2,3 +2,25 @@ packages:
   - 'understand-anything-plugin/packages/*'
   - 'understand-anything-plugin'
   - 'homepage'
+
+# Build-script approval. pnpm v10 reads these from pnpm-workspace.yaml; the former
+# package.json "pnpm.onlyBuiltDependencies" field is no longer read (it was silently
+# ignored, which is why installs kept re-prompting / rewriting approval state). Lists
+# every dependency with an install/build script we approve compiling.
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - '@tree-sitter-grammars/tree-sitter-kotlin'
+  - tree-sitter-c
+  - tree-sitter-c-sharp
+  - tree-sitter-cli
+  - tree-sitter-cpp
+  - tree-sitter-go
+  - tree-sitter-java
+  - tree-sitter-javascript
+  - tree-sitter-objc
+  - tree-sitter-php
+  - tree-sitter-python
+  - tree-sitter-ruby
+  - tree-sitter-rust
+  - tree-sitter-typescript

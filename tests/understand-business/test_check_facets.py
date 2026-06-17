@@ -67,3 +67,37 @@ class TestCheckFacets:
         assert output_path.exists()
         saved = json.loads(output_path.read_text())
         assert saved == result
+
+
+class TestFrontendFacet:
+    def test_frontend_facet_available_when_graph_and_wiki_exist(self, tmp_project):
+        system = {"facets": [{"id": "web", "path": "frontend/", "type": "frontend"}]}
+        (tmp_project / ".understand-anything" / "system.json").write_text(json.dumps(system))
+        fe_ua = tmp_project / "frontend" / ".understand-anything"
+        fe_ua.mkdir(parents=True)
+        (fe_ua / "frontend-graph.json").write_text("{}")
+        wiki_dir = fe_ua / "wiki"
+        wiki_dir.mkdir()
+        (wiki_dir / "meta.json").write_text("{}")
+        result = check_facets(str(tmp_project))
+        assert len(result["facets"]) == 1
+        fe = result["facets"][0]
+        assert fe["status"] == "available"
+        assert fe["hasGraph"] is True
+
+    def test_frontend_facet_degraded_when_wiki_only(self, tmp_project):
+        system = {"facets": [{"id": "web", "path": "frontend/", "type": "frontend"}]}
+        (tmp_project / ".understand-anything" / "system.json").write_text(json.dumps(system))
+        fe_ua = tmp_project / "frontend" / ".understand-anything"
+        wiki_dir = fe_ua / "wiki"
+        wiki_dir.mkdir(parents=True)
+        (wiki_dir / "meta.json").write_text("{}")
+        result = check_facets(str(tmp_project))
+        assert result["facets"][0]["status"] == "degraded"
+
+    def test_frontend_facet_missing_when_neither_exists(self, tmp_project):
+        system = {"facets": [{"id": "web", "path": "frontend/", "type": "frontend"}]}
+        (tmp_project / ".understand-anything" / "system.json").write_text(json.dumps(system))
+        (tmp_project / "frontend").mkdir()
+        result = check_facets(str(tmp_project))
+        assert result["facets"][0]["status"] == "missing"
