@@ -362,6 +362,29 @@ def _frontend_subpaths(root: Path) -> list[str]:
     return []
 
 
+def _frontend_merge_groups(root: Path) -> list[dict]:
+    """Return the frontend facet's frontendMergeGroups from a discoverable system.json.
+
+    Same lookup order as _frontend_subpaths (root then root.parent). Missing or
+    unreadable config yields []. Each group is {canonicalName, members:[{project, feature}]}.
+    """
+    bases = [root]
+    if root.parent != root:
+        bases.append(root.parent)
+    for base in bases:
+        sys_path = base / ".understand-anything" / "system.json"
+        if not sys_path.is_file():
+            continue
+        try:
+            cfg = json.loads(sys_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return []
+        for facet in cfg.get("facets", []):
+            if facet.get("type") == "frontend":
+                return facet.get("frontendMergeGroups", []) or []
+    return []
+
+
 def _discover_repos(root: Path) -> list[tuple[str, Path]]:
     """Resolve the web repos this aggregate covers, as (name, root) pairs.
 
@@ -435,33 +458,58 @@ def _content_hash(graph: dict) -> str:
     return "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _aggregate_features(per_repo: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Group features across repos by normalized name.
+def _aggregate_features(
+    per_repo: list[dict], merge_groups: list[dict] | None = None
+) -> tuple[list[dict], list[dict]]:
+    """Aggregate per-repo features. Each project is a merge boundary.
 
-    Returns (features, domainLinks). Unique features pass through with
-    sourceRepos=[repo]; features sharing a normalized name merge into one entry
-    (deduped-union list fields, sourceRepos = every repo). Each shared (>=2 repo)
-    group yields one domainLink mapping repo -> that repo's feature id.
+    Default: features are NOT merged across projects by name; every (repo, feature)
+    becomes its own entry with a project-scoped id, project=<repo>, sourceRepos=[repo].
+    Only members listed in merge_groups (from system.json frontendMergeGroups) are
+    merged into one entry (deduped-union fields, sourceRepos=all listed repos, one
+    domainLink). Returns (features, domainLinks).
     """
-    groups: dict[str, list[tuple[str, dict]]] = {}
-    order: list[str] = []  # preserve first-seen order for deterministic grouping
+    merge_groups = merge_groups or []
+
+    # Index every (repo, normalized-name) -> (repo, feature). A same-repo normalize
+    # collision is last-wins (two features in one repo with the same normalized name);
+    # domains within a project are expected to be distinct, so this is acceptable.
+    by_key: dict[tuple[str, str], tuple[str, dict]] = {}
+    order: list[tuple[str, str]] = []
     for repo in per_repo:
         for feat in repo["features"]:
-            key = _normalize_feature_name(feat.get("name", ""))
-            if key not in groups:
-                groups[key] = []
+            key = (repo["name"], _normalize_feature_name(feat.get("name", "")))
+            if key not in by_key:
                 order.append(key)
-            groups[key].append((repo["name"], feat))
+            by_key[key] = (repo["name"], feat)
 
     features: list[dict] = []
     domain_links: list[dict] = []
-    for key in order:
-        members = groups[key]
+    consumed: set[tuple[str, str]] = set()
+
+    # 1) Explicit merge groups. A group merges only when >=2 of its declared members
+    #    actually resolve; a lone resolved member is left to the per-project pass (a
+    #    1-member "merge" carries no cross-feature information).
+    for group in merge_groups:
+        members: list[tuple[str, dict]] = []
+        member_keys: list[tuple[str, str]] = []
+        for m in group.get("members", []):
+            k = (m.get("project", ""), _normalize_feature_name(m.get("feature", "")))
+            if k in by_key:
+                members.append(by_key[k])
+                member_keys.append(k)
+        if len(members) < 2:
+            continue  # not a real merge; any resolved member stays a per-project entry
+        for k in member_keys:
+            consumed.add(k)
         repos_in_group = sorted({name for name, _ in members})
         _, first_feat = members[0]
+        canonical = group.get("canonicalName") or first_feat["name"]
         features.append({
-            "id": first_feat["id"],
-            "name": first_feat["name"],
+            "id": f"feature:{canonical}",
+            "name": canonical,
+            # None when the merge spans multiple projects; the single repo otherwise.
+            "project": None if len(repos_in_group) >= 2 else repos_in_group[0],
             "sourceDomain": first_feat.get("sourceDomain", ""),
             "sourceRepos": repos_in_group,
             "routes": _union([f.get("routes", []) for _, f in members]),
@@ -474,14 +522,35 @@ def _aggregate_features(per_repo: list[dict]) -> tuple[list[dict], list[dict]]:
             "stateTransitions": [],
             "apiSequence": [],
         })
-        if len(repos_in_group) >= 2:
-            mappings: dict[str, str] = {}
-            for name, f in members:
-                mappings.setdefault(name, f["id"])  # first occurrence per repo
-            domain_links.append({
-                "canonicalFeature": first_feat["name"],
-                "mappings": mappings,
-            })
+        # mappings record provenance: repo -> the SOURCE per-repo feature id that fed
+        # this merge (members are consumed, so these ids are not emitted in features[]).
+        mappings: dict[str, str] = {}
+        for name, f in members:
+            mappings.setdefault(name, f["id"])
+        domain_links.append({"canonicalFeature": canonical, "mappings": mappings})
+
+    # 2) Everything else: per-project, no name-based merge.
+    for key in order:
+        if key in consumed:
+            continue
+        repo_name, feat = by_key[key]
+        suffix = feat["id"].split(":", 1)[1] if ":" in feat["id"] else feat["id"]
+        features.append({
+            "id": f"feature:{repo_name}:{suffix}",
+            "name": feat["name"],
+            "project": repo_name,
+            "sourceDomain": feat.get("sourceDomain", ""),
+            "sourceRepos": [repo_name],
+            "routes": feat.get("routes", []),
+            "pages": feat.get("pages", []),
+            "components": feat.get("components", []),
+            "stateStores": feat.get("stateStores", []),
+            "apiCalls": feat.get("apiCalls", []),
+            "uiRules": [],
+            "interactionRules": [],
+            "stateTransitions": [],
+            "apiSequence": [],
+        })
 
     features.sort(key=lambda f: f["id"])
     domain_links.sort(key=lambda d: d["canonicalFeature"])
@@ -581,7 +650,7 @@ def build_frontend_graph(service_root_str: str) -> dict:
             })
     all_api_calls.sort(key=lambda c: (c["repo"], c["path"], c["method"]))
 
-    features, domain_links = _aggregate_features(per_repo)
+    features, domain_links = _aggregate_features(per_repo, _frontend_merge_groups(root))
 
     # Project metadata: single repo keeps its KG name (backward compat); aggregate
     # uses the facet/root dir name. Frameworks/languages are unioned.
