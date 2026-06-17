@@ -19,7 +19,28 @@
         "path": { "type": "string" },
         "subPaths": { "type": "array", "items": { "type": "string" } },
         "services": { "type": "array", "items": { "$ref": "#/definitions/service" } },
-        "platformMapping": { "type": "object" }
+        "platformMapping": { "type": "object" },
+        "frontendMergeGroups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["canonicalName", "members"],
+            "properties": {
+              "canonicalName": { "type": "string" },
+              "members": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["project", "feature"],
+                  "properties": {
+                    "project": { "type": "string" },
+                    "feature": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "service": {
