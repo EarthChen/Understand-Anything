@@ -497,29 +497,54 @@ def _extract_repo(repo_name: str, repo_root: Path) -> dict | None:
 
 
 def build_frontend_graph(service_root_str: str) -> dict:
-    service_root = Path(service_root_str).resolve()
-    ua_dir = service_root / ".understand-anything"
+    root = Path(service_root_str).resolve()
+    repos = _discover_repos(root)
 
-    kg_path = ua_dir / "knowledge-graph.json"
-    dg_path = ua_dir / "domain-graph.json"
+    per_repo: list[dict] = []
+    for repo_name, repo_root in repos:
+        extracted = _extract_repo(repo_name, repo_root)
+        if extracted is not None:
+            per_repo.append(extracted)
 
-    if not kg_path.exists():
-        raise FileNotFoundError(f"knowledge-graph.json not found at {kg_path}")
-    if not dg_path.exists():
-        raise FileNotFoundError(f"domain-graph.json not found at {dg_path}")
+    if not per_repo:
+        raise FileNotFoundError(
+            f"No web repo with knowledge-graph.json + domain-graph.json found under {root}"
+        )
 
-    kg = json.loads(kg_path.read_text(encoding="utf-8"))
-    dg = json.loads(dg_path.read_text(encoding="utf-8"))
+    # Union scalar inventories across repos (stay as sorted string lists).
+    routes = _union([r["routes"] for r in per_repo])
+    pages = _union([r["pages"] for r in per_repo])
+    components = _union([r["components"] for r in per_repo])
+    stores = _union([r["stores"] for r in per_repo])
 
-    proj = kg.get("project", {})
-    prov = proj.get("provenance", {})
+    # Union top-level apiCalls with per-repo provenance (dedup per (repo, method, path)).
+    all_api_calls: list[dict] = []
+    seen_api: set[tuple[str, str, str]] = set()
+    for r in per_repo:
+        for c in r["apiCalls"]:
+            key = (r["name"], c["method"], c["path"])
+            if key in seen_api:
+                continue
+            seen_api.add(key)
+            all_api_calls.append({
+                "method": c["method"], "path": c["path"],
+                "source": c["source"], "repo": r["name"],
+            })
+    all_api_calls.sort(key=lambda c: (c["repo"], c["path"], c["method"]))
 
-    routes = _extract_routes(service_root, kg)
-    pages = _extract_pages(service_root, kg)
-    components = _extract_components(service_root, kg)
-    stores = _extract_state_stores(service_root, kg)
-    api_calls = _extract_api_calls(service_root, kg)
-    features = _build_features(dg, routes, pages, components, stores, api_calls)
+    features, domain_links = _aggregate_features(per_repo)
+
+    # Project metadata: single repo keeps its KG name (backward compat); aggregate
+    # uses the facet/root dir name. Frameworks/languages are unioned.
+    project_name = (
+        per_repo[0]["project"].get("name", root.name) if len(per_repo) == 1 else root.name
+    )
+    frameworks = _union([r["project"].get("frameworks", []) for r in per_repo])
+    languages = _union([r["project"].get("languages", []) for r in per_repo])
+    degraded_in = any(
+        r["project"].get("provenance", {}).get("degraded", False) for r in per_repo
+    )
+    git_hash = per_repo[0]["project"].get("gitCommitHash", "")
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
@@ -527,39 +552,42 @@ def build_frontend_graph(service_root_str: str) -> dict:
         "version": VERSION,
         "facetType": "frontend",
         "project": {
-            "name": proj.get("name", service_root.name),
-            "frameworks": proj.get("frameworks", []),
-            "languages": proj.get("languages", []),
+            "name": project_name,
+            "frameworks": frameworks,
+            "languages": languages,
             "provenance": {
                 "generationMode": "wiki",
-                "degraded": prov.get("degraded", False),
+                "degraded": degraded_in,
                 "generatedAt": now,
-                "gitCommitHash": proj.get("gitCommitHash", ""),
+                "gitCommitHash": git_hash,
             },
         },
+        "repos": [r["name"] for r in per_repo],
         "routes": routes,
         "pages": pages,
         "components": components,
         "stateStores": stores,
-        "apiCalls": [{"method": a["method"], "path": a["path"], "source": a["source"]}
-                     for a in api_calls],
+        "apiCalls": all_api_calls,
         "features": features,
+        "domainLinks": domain_links,
     }
 
     valid, degraded, warnings = _validate(graph)
     if not valid:
         raise ValueError(f"[build-frontend-graph] Validation failed: {warnings}")
 
-    graph["project"]["provenance"]["degraded"] = degraded
+    graph["project"]["provenance"]["degraded"] = degraded_in or degraded
     for w in warnings:
         print(f"[build-frontend-graph] WARN: {w}", file=sys.stderr)
 
     # Hash after all fields including degraded are finalized; consumers verify by
-    # removing contentHash, serialising with indent=2 ensure_ascii=False, and re-hashing.
+    # removing contentHash, serialising with indent=2 ensure_ascii=False, re-hashing.
     raw = json.dumps(graph, indent=2, ensure_ascii=False)
     graph["contentHash"] = "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
 
     content = json.dumps(graph, indent=2, ensure_ascii=False)
+    ua_dir = root / ".understand-anything"
+    ua_dir.mkdir(parents=True, exist_ok=True)
     output_path = ua_dir / "frontend-graph.json"
     tmp = output_path.with_suffix(".json.tmp")
     tmp.write_text(content, encoding="utf-8")
@@ -567,8 +595,9 @@ def build_frontend_graph(service_root_str: str) -> dict:
 
     print(
         f"[build-frontend-graph] Generated frontend-graph.json: "
-        f"{len(features)} features, {len(routes)} routes, {len(api_calls)} API calls"
-        + (" [degraded]" if degraded else "")
+        f"{len(per_repo)} repo(s), {len(features)} features, {len(routes)} routes, "
+        f"{len(all_api_calls)} API calls, {len(domain_links)} domain links"
+        + (" [degraded]" if (degraded_in or degraded) else "")
     )
     return graph
 

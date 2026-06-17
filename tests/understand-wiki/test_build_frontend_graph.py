@@ -511,3 +511,137 @@ class TestExtractRepo:
         out = _extract_repo("admin", repo)
         assert out is None
         assert "WARN" in capsys.readouterr().err
+
+
+def _kg_with_page(name, page_path, *, api_edge=None):
+    """KG with one page node; optionally a consumes_api edge to an endpoint."""
+    nodes = [{
+        "id": f"file:{page_path}", "type": "file", "name": Path(page_path).name,
+        "filePath": page_path, "tags": ["page"], "summary": "page",
+    }]
+    edges = []
+    if api_edge:
+        method, path = api_edge
+        nodes.append({"id": f"endpoint:{method}:{path}", "type": "endpoint",
+                      "name": path, "path": path, "method": method})
+        edges.append({"source": f"file:{page_path}", "target": f"endpoint:{method}:{path}",
+                      "type": "consumes_api", "direction": "forward", "weight": 0.9})
+    return {
+        "project": {"name": name, "frameworks": ["react"], "languages": ["typescript"],
+                    "gitCommitHash": "abc1234", "provenance": {"generationMode": "full", "degraded": False}},
+        "nodes": nodes, "edges": edges,
+    }
+
+
+def _dg_with_domain(did, name):
+    return {"project": {"name": "x"},
+            "nodes": [{"id": did, "type": "domain", "name": name, "summary": "d"}],
+            "edges": []}
+
+
+def _read_graph(root):
+    return json.loads((root / ".understand-anything" / "frontend-graph.json").read_text())
+
+
+class TestMultiRepoAggregate:
+    def test_distinct_modules_union(self, tmp_path):
+        _make_repo(tmp_path, "web-app",
+                   kg=_kg_with_page("web-app", "src/pages/orders/List.tsx"),
+                   dg=_dg_with_domain("domain:order", "Orders"))
+        _make_repo(tmp_path, "admin",
+                   kg=_kg_with_page("admin", "src/pages/permissions/Index.tsx"),
+                   dg=_dg_with_domain("domain:permission", "Permission"))
+        build_frontend_graph(str(tmp_path))
+        data = _read_graph(tmp_path)
+        assert data["repos"] == ["admin", "web-app"]
+        names = {f["name"] for f in data["features"]}
+        assert names == {"Orders", "Permission"}
+        assert data["domainLinks"] == []
+        for f in data["features"]:
+            assert len(f["sourceRepos"]) == 1
+
+    def test_cross_repo_shared_feature_merges(self, tmp_path):
+        _make_repo(tmp_path, "web-app",
+                   kg=_kg_with_page("web-app", "src/pages/orders/List.tsx", api_edge=("POST", "/api/orders")),
+                   dg=_dg_with_domain("domain:order", "Orders"))
+        _make_repo(tmp_path, "admin",
+                   kg=_kg_with_page("admin", "src/pages/orders/Manage.tsx", api_edge=("GET", "/api/orders/export")),
+                   dg=_dg_with_domain("domain:order", "Orders"))
+        build_frontend_graph(str(tmp_path))
+        data = _read_graph(tmp_path)
+        order_feats = [f for f in data["features"] if f["name"] == "Orders"]
+        assert len(order_feats) == 1
+        assert order_feats[0]["sourceRepos"] == ["admin", "web-app"]
+        assert {(c["method"], c["path"]) for c in order_feats[0]["apiCalls"]} == {
+            ("POST", "/api/orders"), ("GET", "/api/orders/export")}
+        assert len(data["domainLinks"]) == 1
+        assert set(data["domainLinks"][0]["mappings"]) == {"admin", "web-app"}
+
+    def test_apicalls_have_repo_and_routes_stay_strings(self, tmp_path):
+        _make_repo(tmp_path, "web-app",
+                   kg=_kg_with_page("web-app", "src/pages/orders/List.tsx", api_edge=("POST", "/api/orders")),
+                   dg=_dg_with_domain("domain:order", "Orders"))
+        build_frontend_graph(str(tmp_path))
+        data = _read_graph(tmp_path)
+        assert data["apiCalls"], "expected at least one api call"
+        for c in data["apiCalls"]:
+            assert c["repo"] == "web-app"
+        assert isinstance(data["routes"], list)
+        assert all(isinstance(r, str) for r in data["routes"])  # guards the non-breaking decision
+
+    def test_single_repo_backward_compat(self, minimal_project):
+        build_frontend_graph(str(minimal_project))
+        data = _read_graph(minimal_project)
+        assert len(data["repos"]) == 1
+        assert data["domainLinks"] == []
+        assert data["project"]["name"] == "admin-web"  # KG name preserved for single repo
+        feat = data["features"][0]
+        assert feat["name"] == "Order Management"
+        assert feat["sourceDomain"] == "domain:order-management"
+        assert feat["sourceRepos"] == data["repos"]
+        for key in ("id", "name", "sourceDomain", "routes", "pages", "components",
+                    "stateStores", "apiCalls", "uiRules", "interactionRules",
+                    "stateTransitions", "apiSequence"):
+            assert key in feat
+
+    def test_missing_sub_repo_kg_is_skipped_with_warn(self, tmp_path, capsys):
+        _make_repo(tmp_path, "web-app",
+                   kg=_kg_with_page("web-app", "src/pages/orders/List.tsx"),
+                   dg=_dg_with_domain("domain:order", "Orders"))
+        # admin is discovered (has DG) but missing KG -> skipped with WARN
+        _make_repo(tmp_path, "admin", dg=_dg_with_domain("domain:permission", "Permission"))
+        build_frontend_graph(str(tmp_path))
+        captured = capsys.readouterr()
+        data = _read_graph(tmp_path)
+        assert data["repos"] == ["web-app"]
+        assert "admin" in captured.err and "WARN" in captured.err
+
+    def test_content_hash_verifiable(self, tmp_path):
+        import hashlib
+        _make_repo(tmp_path, "web-app",
+                   kg=_kg_with_page("web-app", "src/pages/orders/List.tsx"),
+                   dg=_dg_with_domain("domain:order", "Orders"))
+        _make_repo(tmp_path, "admin",
+                   kg=_kg_with_page("admin", "src/pages/permissions/Index.tsx"),
+                   dg=_dg_with_domain("domain:permission", "Permission"))
+        build_frontend_graph(str(tmp_path))
+        data = _read_graph(tmp_path)
+        stored = data.pop("contentHash")
+        raw = json.dumps(data, indent=2, ensure_ascii=False)
+        assert stored == "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
+
+    def test_subpaths_override_end_to_end(self, tmp_path):
+        _make_repo(tmp_path, "web-app",
+                   kg=_kg_with_page("web-app", "src/pages/orders/List.tsx"),
+                   dg=_dg_with_domain("domain:order", "Orders"))
+        _make_repo(tmp_path, "admin",
+                   kg=_kg_with_page("admin", "src/pages/permissions/Index.tsx"),
+                   dg=_dg_with_domain("domain:permission", "Permission"))
+        sys_ua = tmp_path / ".understand-anything"
+        sys_ua.mkdir()
+        (sys_ua / "system.json").write_text(json.dumps({
+            "facets": [{"type": "frontend", "path": "", "subPaths": ["web-app/", "admin/"]}]
+        }))
+        build_frontend_graph(str(tmp_path))
+        data = _read_graph(tmp_path)
+        assert data["repos"] == ["web-app", "admin"]  # declared order, not sorted
