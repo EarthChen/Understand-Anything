@@ -130,6 +130,34 @@ class TestRunCapabilityReview:
         result = run_capability_review(str(tmp_path))
         assert "error" in result
 
+    def test_stale_flag_cleared_when_regrouping_unflags(self, tmp_path):
+        bf = _write_business_features(tmp_path, _multi_facet_index())
+        # Run 1: LLM flags 订单跟踪.
+        capability_review._call_llm = lambda prompt: json.dumps({
+            "label": "订单管理", "relationship": "complementary-split", "summary": "x",
+            "flagged": [{"feature": "订单跟踪", "reason": "weak"}]})
+        run_capability_review(str(tmp_path))
+        # Change the grouping (append a touchpoint → hash changes); LLM now flags nothing.
+        data = json.loads(bf.read_text(encoding="utf-8"))
+        data["serverIndex"]["OrderService"]["touchpoints"].append(
+            {"feature": "退款", "facet": "frontend", "role": "supporting"})
+        bf.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        capability_review._call_llm = lambda prompt: json.dumps({
+            "label": "订单管理", "relationship": "complementary-split", "summary": "x", "flagged": []})
+        run_capability_review(str(tmp_path))
+        tps = json.loads(bf.read_text(encoding="utf-8"))["serverIndex"]["OrderService"]["touchpoints"]
+        tracking = next(t for t in tps if t["feature"] == "订单跟踪")
+        assert "flagged" not in tracking  # stale flag cleared on re-review
+
+    def test_unexpected_llm_exception_degrades_gracefully(self, tmp_path):
+        bf = _write_business_features(tmp_path, _multi_facet_index())
+        def boom(prompt):
+            raise ValueError("unexpected provider error")
+        capability_review._call_llm = boom
+        result = run_capability_review(str(tmp_path))  # must NOT raise
+        cap = json.loads(bf.read_text(encoding="utf-8"))["serverIndex"]["OrderService"]["capability"]
+        assert cap["relationship"] == "unknown"  # mechanical fallback
+
 
 class TestBuildReviewPrompt:
     def test_prompt_mentions_domain_and_touchpoints(self):

@@ -131,12 +131,17 @@ def run_capability_review(project_root_str: str) -> dict:
             reused += 1
             continue
 
+        # (Re)processing this domain — clear any stale advisory flags from a prior
+        # run so the new review's flagged set fully replaces the old one.
+        for tp in touchpoints:
+            tp.pop('flagged', None)
+
         if len(touchpoints) >= 2 and len(facets) >= 2:
             domain_summary = entry.get('summary') or entry.get('service', '')
             prompt = build_review_prompt(domain_name, domain_summary, touchpoints)
             try:
                 response = _call_llm(prompt)
-            except (NotImplementedError, RuntimeError, OSError):
+            except Exception:  # any LLM failure → degrade this domain to a mechanical label
                 entry['capability'] = _mechanical_capability(domain_name)
                 mechanical += 1
             else:
