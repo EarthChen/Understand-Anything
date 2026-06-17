@@ -23,6 +23,9 @@ _frontend_subpaths = _mod._frontend_subpaths
 _aggregate_features = _mod._aggregate_features
 _union = _mod._union
 _extract_repo = _mod._extract_repo
+_slug_in = _mod._slug_in
+_extract_routes = _mod._extract_routes
+_API_CALL_RE = _mod._API_CALL_RE
 
 _vspec = importlib.util.spec_from_file_location(
     "verify_wiki_completeness", SCRIPTS_DIR / "verify-wiki-completeness.py"
@@ -635,6 +638,9 @@ class TestMultiRepoAggregate:
         build_frontend_graph(str(tmp_path))
         data = _read_graph(tmp_path)
         stored = data.pop("contentHash")
+        # Consumer contract: also strip the volatile provenance fields before re-hashing.
+        data["project"]["provenance"].pop("generatedAt", None)
+        data["project"]["provenance"].pop("gitCommitHash", None)
         raw = json.dumps(data, indent=2, ensure_ascii=False)
         assert stored == "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
 
@@ -690,6 +696,198 @@ class TestMultiRepoAggregate:
         }))
         with pytest.raises(ValueError, match="Duplicate repo name"):
             build_frontend_graph(str(tmp_path))
+
+
+class TestExtractRoutesApiClassification:
+    """Finding #11 — standalone endpoint nodes that look like API endpoints must not
+    become frontend routes."""
+
+    def test_api_endpoint_node_is_not_a_route(self, tmp_path):
+        kg = _minimal_kg(extra_nodes=[
+            {"id": "endpoint:/api/orders", "type": "endpoint",
+             "name": "/api/orders", "path": "/api/orders", "method": "GET"},
+            {"id": "endpoint:/api/v1/users", "type": "endpoint",
+             "name": "/api/v1/users", "path": "/api/v1/users", "method": "GET"},
+        ])
+        routes = _extract_routes(tmp_path, kg)
+        assert "/api/orders" not in routes
+        assert "/api/v1/users" not in routes
+
+    def test_non_api_endpoint_node_is_still_a_route(self, tmp_path):
+        kg = _minimal_kg(extra_nodes=[
+            {"id": "endpoint:/orders", "type": "endpoint",
+             "name": "/orders", "path": "/orders", "method": "GET"},
+        ])
+        routes = _extract_routes(tmp_path, kg)
+        assert "/orders" in routes
+
+    def test_routes_edge_to_api_endpoint_stays(self, tmp_path):
+        # The edges-of-type-'routes' loop is the legitimate route source and stays unchanged.
+        kg = _minimal_kg(extra_nodes=[
+            {"id": "endpoint:/api/orders", "type": "endpoint",
+             "name": "/api/orders", "path": "/api/orders", "method": "GET"},
+        ])
+        kg["edges"].append(
+            {"source": "file:src/pages/orders/List.tsx", "target": "endpoint:/api/orders",
+             "type": "routes", "direction": "forward", "weight": 1.0}
+        )
+        routes = _extract_routes(tmp_path, kg)
+        assert "/api/orders" in routes
+
+
+class TestSlugIn:
+    """Finding #12 — per-word matching must respect segment boundaries."""
+
+    def test_word_does_not_match_substring(self):
+        assert _slug_in("Order Management", "/reorder-history") is False
+
+    def test_word_matches_path_segment(self):
+        assert _slug_in("Order Management", "/orders/list") is True
+
+    def test_full_slug_still_matches(self):
+        assert _slug_in("Order Management", "order-management.tsx") is True
+
+    def test_management_does_not_match_arbitrary_substring(self):
+        # 'management' must not match inside an unrelated token
+        assert _slug_in("Order Management", "/premanagementx") is False
+
+    def test_word_matches_dotted_filename_segment(self):
+        assert _slug_in("Order Management", "order.service.ts") is True
+
+
+class TestApiCallRegex:
+    """Finding (below-cut) — fetch must have a word boundary before it."""
+
+    def test_prefetch_does_not_match(self):
+        assert _API_CALL_RE.search("prefetch('/api/x')") is None
+
+    def test_unfetch_does_not_match(self):
+        assert _API_CALL_RE.search("unfetch('/api/x')") is None
+
+    def test_plain_fetch_matches(self):
+        m = _API_CALL_RE.search("fetch('/api/x')")
+        assert m is not None and m.group(1) == "/api/x"
+
+    def test_axios_get_matches(self):
+        m = _API_CALL_RE.search("axios.get('/api/y')")
+        assert m is not None and m.group(1) == "/api/y"
+
+
+class TestCorruptSubRepoSkipped:
+    """Finding #14 — a corrupt sub-repo JSON must be skipped, not abort the whole run."""
+
+    def test_corrupt_kg_returns_none_and_warns(self, tmp_path, capsys):
+        ua = tmp_path / "admin" / ".understand-anything"
+        ua.mkdir(parents=True)
+        (ua / "knowledge-graph.json").write_text("{not valid json")
+        (ua / "domain-graph.json").write_text(json.dumps(_minimal_dg()))
+        out = _extract_repo("admin", tmp_path / "admin")
+        assert out is None
+        assert "WARN" in capsys.readouterr().err
+
+    def test_corrupt_dg_returns_none_and_warns(self, tmp_path, capsys):
+        ua = tmp_path / "admin" / ".understand-anything"
+        ua.mkdir(parents=True)
+        (ua / "knowledge-graph.json").write_text(json.dumps(_minimal_kg()))
+        (ua / "domain-graph.json").write_text("{not valid json")
+        out = _extract_repo("admin", tmp_path / "admin")
+        assert out is None
+        assert "WARN" in capsys.readouterr().err
+
+    def test_one_corrupt_repo_does_not_abort_aggregate(self, tmp_path):
+        _make_repo(tmp_path, "web-app",
+                   kg=_kg_with_page("web-app", "src/pages/orders/List.tsx"),
+                   dg=_dg_with_domain("domain:order", "Orders"))
+        bad = tmp_path / "admin" / ".understand-anything"
+        bad.mkdir(parents=True)
+        (bad / "knowledge-graph.json").write_text("{not valid json")
+        (bad / "domain-graph.json").write_text(json.dumps(_dg_with_domain("domain:perm", "Permission")))
+        build_frontend_graph(str(tmp_path))
+        data = _read_graph(tmp_path)
+        assert data["repos"] == ["web-app"]
+
+
+class TestContentHashStable:
+    """Finding #15 — contentHash must be stable across runs (excludes volatile provenance)."""
+
+    def test_content_hash_helper_excludes_volatile_provenance(self):
+        _content_hash = _mod._content_hash
+        base = {
+            "facetType": "frontend",
+            "project": {"provenance": {
+                "generationMode": "wiki", "degraded": False,
+                "generatedAt": "2026-01-01T00:00:00.000Z", "gitCommitHash": "aaa",
+            }},
+            "features": [],
+        }
+        other = json.loads(json.dumps(base))
+        other["project"]["provenance"]["generatedAt"] = "2027-12-31T23:59:59.000Z"
+        other["project"]["provenance"]["gitCommitHash"] = "zzz"
+        assert _content_hash(base) == _content_hash(other)
+
+    def test_content_hash_helper_ignores_preexisting_contenthash(self):
+        _content_hash = _mod._content_hash
+        a = {"facetType": "frontend", "project": {"provenance": {}}, "features": []}
+        b = dict(a)
+        b = json.loads(json.dumps(a))
+        b["contentHash"] = "sha256:" + "f" * 64
+        assert _content_hash(a) == _content_hash(b)
+
+    def test_build_twice_same_content_hash(self, tmp_path, monkeypatch):
+        _make_repo(tmp_path, "web-app",
+                   kg=_kg_with_page("web-app", "src/pages/orders/List.tsx"),
+                   dg=_dg_with_domain("domain:order", "Orders"))
+
+        class _FakeDateTime:
+            _calls = [0]
+
+            @staticmethod
+            def now(tz=None):
+                # Return a different timestamp on each call to prove the hash ignores it.
+                from datetime import datetime as _dt, timezone as _tz
+                _FakeDateTime._calls[0] += 1
+                return _dt(2026, 1, 1, _FakeDateTime._calls[0], 0, 0, tzinfo=_tz.utc)
+
+        monkeypatch.setattr(_mod, "datetime", _FakeDateTime)
+        build_frontend_graph(str(tmp_path))
+        first = _read_graph(tmp_path)
+        build_frontend_graph(str(tmp_path))
+        second = _read_graph(tmp_path)
+        assert first["project"]["provenance"]["generatedAt"] != \
+            second["project"]["provenance"]["generatedAt"]
+        assert first["contentHash"] == second["contentHash"]
+
+
+class TestDiscoverReposSubPathsNoFallthrough:
+    """Finding (below-cut) — explicit subPaths must not fall through to scan-all."""
+
+    def test_declared_subpaths_partial_do_not_scan_undeclared_dirs(self, tmp_path):
+        # Declared subPaths ['web', 'admin'] where only 'web' has a domain-graph.json,
+        # and an undeclared 'other' dir also has one — 'other' must NOT be picked up.
+        _make_repo(tmp_path, "web", dg=_minimal_dg())
+        (tmp_path / "admin").mkdir()  # declared, but no domain-graph.json
+        _make_repo(tmp_path, "other", dg=_minimal_dg())  # undeclared, has DG
+        sys_ua = tmp_path / ".understand-anything"
+        sys_ua.mkdir()
+        (sys_ua / "system.json").write_text(json.dumps({
+            "facets": [{"type": "frontend", "path": "", "subPaths": ["web", "admin"]}]
+        }))
+        repos = _discover_repos(tmp_path)
+        assert [name for name, _ in repos] == ["web"]
+
+    def test_declared_subpaths_none_present_do_not_fall_through(self, tmp_path):
+        # NONE of the declared subPaths have a domain-graph.json (repos empty);
+        # an undeclared 'other' dir does. The code must NOT fall through to scanning.
+        (tmp_path / "web").mkdir()    # declared, no DG
+        (tmp_path / "admin").mkdir()  # declared, no DG
+        _make_repo(tmp_path, "other", dg=_minimal_dg())  # undeclared, has DG
+        sys_ua = tmp_path / ".understand-anything"
+        sys_ua.mkdir()
+        (sys_ua / "system.json").write_text(json.dumps({
+            "facets": [{"type": "frontend", "path": "", "subPaths": ["web", "admin"]}]
+        }))
+        repos = _discover_repos(tmp_path)
+        assert repos == []
 
 
 class TestGateAcceptsRealAggregate:

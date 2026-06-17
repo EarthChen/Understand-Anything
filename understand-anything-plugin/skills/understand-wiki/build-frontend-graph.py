@@ -12,6 +12,7 @@ Usage:
     python3 build-frontend-graph.py <service-root>
 """
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -45,7 +46,7 @@ _SKIP_DIRS = frozenset(("node_modules", "dist", "build", ".git", ".understand-an
                         "__pycache__", ".next", ".nuxt", ".svelte-kit"))
 
 _API_CALL_RE = re.compile(
-    r"""(?:fetch|axios\.(?:get|post|put|delete|patch))\s*\(\s*['"`]([^'"`\s]+)['"`]""",
+    r"""(?<![\w.])(?:fetch|axios\.(?:get|post|put|delete|patch))\s*\(\s*['"`]([^'"`\s]+)['"`]""",
     re.MULTILINE,
 )
 
@@ -135,8 +136,12 @@ def _extract_routes(root: Path, kg: dict) -> list[str]:
     for node in kg.get("nodes", []):
         if node.get("type") == "endpoint":
             path = node.get("path", "") or node.get("name", "")
-            if path and path.startswith("/") and "." not in Path(path).name:
-                routes.add(path)
+            if not path or not path.startswith("/") or "." in Path(path).name:
+                continue
+            # Skip backend API endpoints — they are consumed, not navigated to.
+            if path.startswith("/api") or "/api/" in path:
+                continue
+            routes.add(path)
 
     # File-based: Next.js pages/ and app/
     for pattern in (
@@ -237,7 +242,16 @@ def _slug_in(name: str, text: str) -> bool:
     slug = name.lower().replace(" ", "-").replace("_", "-")
     if slug in lower_text:
         return True
-    # Also match on individual significant words (singularised via simple stem)
+    # Also match on individual significant words (singularised via simple stem),
+    # but only against whole path/word segments so "order" matches "orders/" but
+    # not "reorder-history". Singularise tokens too so name "order" hits "orders".
+    tokens: set[str] = set()
+    for tok in re.split(r"[\s/_\-.]+", lower_text):
+        if not tok:
+            continue
+        tokens.add(tok)
+        if tok.endswith("s"):
+            tokens.add(tok[:-1])
     words = re.split(r"[\s_\-]+", name.lower())
     for word in words:
         if len(word) < 4:
@@ -247,7 +261,7 @@ def _slug_in(name: str, text: str) -> bool:
         if word.endswith("s"):
             candidates.add(word[:-1])
         for candidate in candidates:
-            if candidate in lower_text:
+            if candidate in tokens:
                 return True
     return False
 
@@ -369,8 +383,9 @@ def _discover_repos(root: Path) -> list[tuple[str, Path]]:
             d = root / sp.rstrip("/")
             if (d / ".understand-anything" / "domain-graph.json").is_file():
                 repos.append((d.name, d))
-        if repos:
-            return repos
+        # Explicit config present — honour it exactly; never fall through to scanning
+        # undeclared subdirs, even if some/all declared repos are missing a domain-graph.
+        return repos
 
     repos = []
     for d in sorted(root.iterdir(), key=lambda p: p.name):
@@ -402,6 +417,22 @@ def _union_api_calls(lists: list[list[dict]]) -> list[dict]:
             out.append(c)
     out.sort(key=lambda c: (c.get("path", ""), c.get("method", "")))
     return out
+
+
+def _content_hash(graph: dict) -> str:
+    """Compute a stable sha256 over the graph, excluding volatile fields.
+
+    Drops any existing contentHash and the per-run provenance fields
+    (generatedAt, gitCommitHash) so byte-identical inputs produce the same hash
+    across runs. Consumers reproduce it the same way.
+    """
+    snapshot = copy.deepcopy(graph)
+    snapshot.pop("contentHash", None)
+    prov = snapshot.get("project", {}).get("provenance", {})
+    prov.pop("generatedAt", None)
+    prov.pop("gitCommitHash", None)
+    raw = json.dumps(snapshot, indent=2, ensure_ascii=False)
+    return "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
 
 
 def _aggregate_features(per_repo: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -474,8 +505,16 @@ def _extract_repo(repo_name: str, repo_root: Path) -> dict | None:
         )
         return None
 
-    kg = json.loads(kg_path.read_text(encoding="utf-8"))
-    dg = json.loads(dg_path.read_text(encoding="utf-8"))
+    try:
+        kg = json.loads(kg_path.read_text(encoding="utf-8"))
+        dg = json.loads(dg_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        print(
+            f"[build-frontend-graph] WARN: skipping {repo_name} — unreadable/corrupt "
+            f"knowledge-graph.json or domain-graph.json ({e})",
+            file=sys.stderr,
+        )
+        return None
 
     routes = _extract_routes(repo_root, kg)
     pages = _extract_pages(repo_root, kg)
@@ -591,10 +630,12 @@ def build_frontend_graph(service_root_str: str) -> dict:
     for w in warnings:
         print(f"[build-frontend-graph] WARN: {w}", file=sys.stderr)
 
-    # Hash after all fields including degraded are finalized; consumers verify by
-    # removing contentHash, serialising with indent=2 ensure_ascii=False, re-hashing.
-    raw = json.dumps(graph, indent=2, ensure_ascii=False)
-    graph["contentHash"] = "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
+    # Hash after all fields including degraded are finalized. The hash deliberately
+    # excludes the volatile provenance fields so byte-identical inputs hash equal
+    # across runs. Consumers reproduce it by removing contentHash and
+    # project.provenance.generatedAt/gitCommitHash, then serialising with
+    # indent=2 ensure_ascii=False and re-hashing.
+    graph["contentHash"] = _content_hash(graph)
 
     content = json.dumps(graph, indent=2, ensure_ascii=False)
     ua_dir = root / ".understand-anything"
