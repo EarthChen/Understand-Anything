@@ -204,7 +204,7 @@ def assemble_features(associations: list, consolidation: dict) -> dict:
     A name with <=1 distinct frontend project keeps today's behavior — all facets
     combine into one business feature (preserves frontend↔mobile same-name merge).
     """
-    from facets import canonical_facet, FRONTEND_FACET_TYPES
+    from facets import canonical_facet, FRONTEND_FACET_TYPES, feature_key
 
     def _is_frontend(fd):
         return canonical_facet(fd.get('facetType', '')) in FRONTEND_FACET_TYPES
@@ -236,7 +236,7 @@ def assemble_features(associations: list, consolidation: dict) -> dict:
     for assoc in associations:
         nm = assoc.get('featureName', '')
         assoc_by_name.setdefault(nm, []).append(assoc)
-        key = (canonical_facet(assoc.get('facetType', '')), assoc.get('project') or '', nm)
+        key = feature_key(assoc.get('facetType', ''), assoc.get('project'), nm)
         assoc_by_key[key] = assoc
 
     ordered_names = list(feature_lookup.keys())
@@ -279,7 +279,7 @@ def assemble_features(associations: list, consolidation: dict) -> dict:
         for p in distinct_projects:
             p_data = [fd for fd in frontend_with_project if fd.get('project') == p]
             # Exactly one frontend assoc per project, so no _merge_feature_associations needed.
-            assoc = assoc_by_key.get(('frontend', p, name)) or {}
+            assoc = assoc_by_key.get(feature_key('frontend', p, name)) or {}
             doc = _build_feature_document(p_data, assoc)
             doc['id'] = f'feature:{name}@{p}'
             doc['project'] = p
@@ -295,8 +295,7 @@ def assemble_features(associations: list, consolidation: dict) -> dict:
         # Non-frontend members (e.g. mobile) become their own business feature.
         if other_data:
             other_assocs = [
-                assoc_by_key.get((canonical_facet(fd.get('facetType', '')),
-                                  fd.get('project') or '', name))
+                assoc_by_key.get(feature_key(fd.get('facetType', ''), fd.get('project'), name))
                 for fd in other_data
             ]
             merged = _merge_feature_associations([a for a in other_assocs if a] or [{}])

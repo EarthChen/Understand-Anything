@@ -44,6 +44,18 @@ def is_supported_facet(facet_type: str) -> bool:
     return bool(meta and meta["supported"])
 
 
+def feature_key(facet_type: str, project, name: str) -> tuple:
+    """Canonical identity tuple for a client feature across the pipeline.
+
+    (canonical facet, project-or-empty-string, feature name). Used as the
+    association cache key and the per-(facet, project) association lookup key so
+    every stage agrees on what makes two features 'the same'. facetType is part
+    of identity so a frontend merge-canonical (project=None) and a mobile feature
+    (project=None) with the same name do not collide.
+    """
+    return (canonical_facet(facet_type or ''), project or '', name)
+
+
 # NOTE: these sets hold CANONICAL types only. Callers must run canonical_facet(t)
 # BEFORE membership-testing a raw system.json facet type, so aliases ('backend',
 # 'web') resolve in rather than silently falling through.

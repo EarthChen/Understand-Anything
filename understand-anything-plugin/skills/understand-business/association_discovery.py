@@ -184,10 +184,7 @@ def discover_associations(
     results = []
     valid_domain_names = set(server_domains.keys())
 
-    from facets import canonical_facet
-
-    def _key(facet_type, project, name):
-        return (canonical_facet(facet_type or ''), project or '', name)
+    from facets import feature_key as _key
 
     prev_by_key: dict[tuple, dict] = {}
     if previous_results:
@@ -328,7 +325,8 @@ def run_association_discovery(project_root_str: str) -> dict:
              'platforms': [d.get('platform', '')],
              'deliveryPlatforms': d.get('deliveryPlatforms', []),
              'mergedSummary': d.get('summary', ''),
-             'facetType': d.get('facetType') or facet_type}
+             'facetType': d.get('facetType') or facet_type,
+             'project': d.get('project')}
             for d in c['standalone']
         ])
 
