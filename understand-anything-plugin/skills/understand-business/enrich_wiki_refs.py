@@ -229,13 +229,17 @@ def enrich_wiki_refs(project_root_str: str) -> dict:
             else:
                 not_found += 1
 
-        client_layer = feature.get("clientLayer") or {}
-        for platform_name, platform in (client_layer.get("platforms") or {}).items():
-            total += 1
-            if _resolve_client_platform(platform, platform_name, project_root, client_cache, facet_paths):
-                enriched += 1
-            else:
-                not_found += 1
+        client_layers = feature.get("clientLayers") or [feature.get("clientLayer") or {}]
+        for layer in client_layers:
+            for platform_name, platform in ((layer or {}).get("platforms") or {}).items():
+                total += 1
+                if _resolve_client_platform(platform, platform_name, project_root, client_cache, facet_paths):
+                    enriched += 1
+                else:
+                    not_found += 1
+        # Resync the backward-compat singular so clientLayer == clientLayers[0] on disk.
+        if feature.get("clientLayers"):
+            feature["clientLayer"] = feature["clientLayers"][0]
 
     features_path.write_text(
         json.dumps(features_data, indent=2, ensure_ascii=False) + "\n"

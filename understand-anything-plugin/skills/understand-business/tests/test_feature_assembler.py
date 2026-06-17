@@ -162,14 +162,24 @@ class TestAssembleFeatures:
         assert "Cosmos IM" in result["serverIndex"]
 
     def test_skips_errored_associations_gracefully(self, consolidation_data):
-        """Errored associations should produce degraded feature docs."""
+        """Errored associations should produce degraded feature docs.
+
+        Documents are emitted per unique feature NAME, not per association, so the
+        standalone "苹果支付" (which has no association here) still appears — see
+        DEFECT 4. The errored "即时通讯" association yields a null primaryDomain.
+        """
         assocs = [
             {"featureName": "即时通讯", "primaryServer": None, "supportingServers": [], "error": "timeout"},
             {"featureName": "家族运营", "primaryServer": {"domain": "X", "service": "y", "confidence": 0.8}, "supportingServers": [], "error": None},
         ]
         result = assemble_features(assocs, consolidation_data)
-        assert len(result["features"]) == 2
-        assert result["features"][0]["serverLayer"]["primaryDomain"] is None
+        by_name = {f["name"]: f for f in result["features"]}
+        # All consolidated + standalone names produce a document, regardless of
+        # whether an association exists for them.
+        assert set(by_name) == {"即时通讯", "家族运营", "苹果支付"}
+        assert by_name["即时通讯"]["serverLayer"]["primaryDomain"] is None
+        assert by_name["苹果支付"]["serverLayer"]["primaryDomain"] is None
+        assert by_name["家族运营"]["serverLayer"]["primaryDomain"]["name"] == "X"
 
     def test_output_includes_stats(self, association_results, consolidation_data):
         """Output should include coverage statistics."""

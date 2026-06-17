@@ -200,7 +200,11 @@ def discover_associations(
 
         prev = prev_by_name.get(feature_name)
         if prev and prev.get('_promptHash') == prompt_hash:
-            results.append(prev)
+            # Shallow copy so the reused record reflects the CURRENT feature's
+            # facet, not the stale facet from the previous run.
+            r = dict(prev)
+            r['facetType'] = feature.get('facetType', prev.get('facetType', ''))
+            results.append(r)
             reused += 1
             continue
 
@@ -215,6 +219,7 @@ def discover_associations(
                 'supportingServers': [],
                 'error': str(e),
                 '_promptHash': prompt_hash,
+                'facetType': feature.get('facetType', ''),
             })
             continue
 
@@ -222,6 +227,7 @@ def discover_associations(
             response, feature_name, min_confidence, valid_domain_names
         )
         result['_promptHash'] = prompt_hash
+        result['facetType'] = feature.get('facetType', '')
         results.append(result)
 
     return results, llm_calls, reused
@@ -272,8 +278,9 @@ def run_association_discovery(project_root_str: str) -> dict:
     except (json.JSONDecodeError, IOError) as e:
         return {'error': f'Failed to parse system.json: {e}'}
 
-    from domain_matcher import _load_server_domains, _consolidate_mobile_domains
+    from domain_matcher import _load_server_domains
     from scenario_detector import CLIENT_FACET_TYPES
+    from client_facets import load_client_features
 
     server_facet = None
     client_facets = []
@@ -293,23 +300,26 @@ def run_association_discovery(project_root_str: str) -> dict:
         project_root_str, server_facet['path'], server_facet.get('subPaths', [])
     )
 
-    # Consolidate features from all client facets
+    # Consolidate features from all client facets through the strategy registry.
     all_features = []
     unsupported_facets = []
     for client_facet in client_facets:
-        if client_facet.get('type') == 'mobile':
-            consolidation = _consolidate_mobile_domains(
-                project_root_str, client_facet['path'], client_facet.get('subPaths', [])
-            )
-            all_features.extend(consolidation['consolidated'])
-            all_features.extend([
-                {'name': d['name'], 'implType': d['implType'],
-                 'platforms': [d['platform']], 'deliveryPlatforms': d['deliveryPlatforms'],
-                 'mergedSummary': d.get('summary', '')}
-                for d in consolidation['standalone']
-            ])
-        else:
+        c = load_client_features(project_root_str, client_facet)
+        if c is None:
             unsupported_facets.append(client_facet.get('name', client_facet.get('type')))
+            continue
+        facet_type = client_facet.get('type', '')
+        for item in c['consolidated']:
+            item.setdefault('facetType', facet_type)
+        all_features.extend(c['consolidated'])
+        all_features.extend([
+            {'name': d['name'], 'implType': d.get('implType', ''),
+             'platforms': [d.get('platform', '')],
+             'deliveryPlatforms': d.get('deliveryPlatforms', []),
+             'mergedSummary': d.get('summary', ''),
+             'facetType': d.get('facetType') or facet_type}
+            for d in c['standalone']
+        ])
 
     previous_results = None
     prev_path = intermediate_dir / 'phase2-associations.json'

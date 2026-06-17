@@ -445,10 +445,15 @@ def enrich_standard_platforms(project_root_str: str) -> dict:
     data["platformMapping"] = standard_to_repo
 
     for feature in data.get("features", []):
-        platforms = feature.get("clientLayer", {}).get("platforms", {})
-        for repo_name, entry in platforms.items():
-            if repo_name in repo_to_standard:
-                entry["standardPlatform"] = repo_to_standard[repo_name]
+        client_layers = feature.get("clientLayers") or [feature.get("clientLayer", {})]
+        for layer in client_layers:
+            platforms = (layer or {}).get("platforms", {})
+            for repo_name, entry in platforms.items():
+                if repo_name in repo_to_standard:
+                    entry["standardPlatform"] = repo_to_standard[repo_name]
+        # Resync the backward-compat singular so clientLayer == clientLayers[0] on disk.
+        if feature.get("clientLayers"):
+            feature["clientLayer"] = feature["clientLayers"][0]
 
     with open(features_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)

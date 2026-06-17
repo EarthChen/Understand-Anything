@@ -277,6 +277,28 @@ Reads `intermediate/phase2-associations.json` (association_discovery format) and
 
 Report: `Phase 4b complete. <N> features assembled, <M> with server associations.`
 
+##### Phase 4b.1 — Capability Review (server-anchored)
+
+Report: `[Phase 4b.1/5] Reviewing cross-client capabilities...`
+
+```bash
+python3 "$SKILL_DIR/capability_review.py" "$PROJECT_ROOT"
+```
+
+Enriches each `serverIndex[domain].capability` in `business-features.json`. Runs
+the LLM only for domains touched by ≥2 client features across ≥2 facets
+(single-facet domains get a mechanical label). For these multi-facet domains:
+
+1. **LLM step:** classify the relationship of the touchpoints
+   (`replication` | `complementary-split` | `shared-infrastructure`), produce a
+   canonical `label` + one-line `summary`, and optionally `flagged[]` touchpoints
+   whose association looks implausible (advisory — annotated, never deleted).
+2. **Validate & degrade:** on no-LLM / malformed response, fall back to a
+   mechanical label `{label: <domain>, relationship: "unknown", summary: ""}`.
+   For `shared-infrastructure`, the label stays the domain's own name.
+
+Report: `Phase 4b.1 complete. <N> domains reviewed, <M> mechanical.`
+
 ##### Phase 4c — Feature Interaction Generation
 
 Report: `[Phase 4c/5] Generating feature interaction documents...`
@@ -746,6 +768,7 @@ Feature-centric path execution order. Steps 1–8 are documented in **Workflow P
 | 3 | `association_discovery.py` | Phase 2 | `phase2-associations.json` — M:N client→server associations |
 | 4 | `route_phase3.py` | Routing | `feature_centric` or `domain_centric` route decision |
 | 5 | `assemble_business_features.py` | Phase 4b | `business-features.json` — `clientLayer` + `serverLayer` |
+| 5.1 | `capability_review.py` | Phase 4b.1 | `business-features.json` — `serverIndex[domain].capability` labels |
 | 6 | `build_feature_interactions.py` | Phase 4c | `feature-interactions/feature-*.json` — end-to-end flow docs |
 | 7 | `cross_reference.py` | Cross-ref | Bidirectional `relatedFeatures` / `relatedDomainDocs` |
 | 8 | `enrich_wiki_refs.py` | Wiki-ref | `wikiRef` + `flowCount` on client platforms and server domains |
