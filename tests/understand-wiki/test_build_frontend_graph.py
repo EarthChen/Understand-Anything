@@ -24,6 +24,13 @@ _aggregate_features = _mod._aggregate_features
 _union = _mod._union
 _extract_repo = _mod._extract_repo
 
+_vspec = importlib.util.spec_from_file_location(
+    "verify_wiki_completeness", SCRIPTS_DIR / "verify-wiki-completeness.py"
+)
+_vmod = importlib.util.module_from_spec(_vspec)
+_vspec.loader.exec_module(_vmod)
+check_parent_wiki = _vmod.check_parent_wiki
+
 
 def _minimal_kg(name="admin-web", extra_nodes=None):
     nodes = [
@@ -683,3 +690,19 @@ class TestMultiRepoAggregate:
         }))
         with pytest.raises(ValueError, match="Duplicate repo name"):
             build_frontend_graph(str(tmp_path))
+
+
+class TestGateAcceptsRealAggregate:
+    def test_real_aggregate_satisfies_frontend_batch_gate(self, tmp_path):
+        web = tmp_path / "web"
+        web.mkdir()
+        _make_repo(web, "web-app",
+                   kg=_kg_with_page("web-app", "src/pages/orders/List.tsx"),
+                   dg=_dg_with_domain("domain:order", "Orders"))
+        _make_repo(web, "admin",
+                   kg=_kg_with_page("admin", "src/pages/permissions/Index.tsx"),
+                   dg=_dg_with_domain("domain:permission", "Permission"))
+        build_frontend_graph(str(web))
+        assert (web / ".understand-anything" / "frontend-graph.json").exists()
+        errors, _ = check_parent_wiki(web, "frontend")
+        assert not any("frontend-graph.json" in e for e in errors)
