@@ -146,6 +146,7 @@ def consolidate_frontend(project_root: str, facet: dict) -> dict:
             'mergedSummary': _summarize(feat),
             'facetType': 'frontend',
             'sourceRepos': source_repos,
+            'project': feat.get('project'),
         })
     return {
         'consolidated': consolidated,
