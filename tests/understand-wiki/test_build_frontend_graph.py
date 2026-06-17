@@ -459,7 +459,7 @@ class TestAggregateFeatures:
         assert by_name["Orders"]["sourceRepos"] == ["web-app"]
         assert by_name["Permission"]["sourceRepos"] == ["admin"]
 
-    def test_shared_name_merges_and_links(self):
+    def test_shared_name_stays_per_project_without_merge_group(self):
         per_repo = [
             {"name": "web-app", "features": [
                 _feat("feature:order", "Order Management",
@@ -470,17 +470,21 @@ class TestAggregateFeatures:
                       pages=["p/order-admin.tsx"], routes=["/orders"],
                       api=[{"method": "GET", "path": "/api/orders/export", "source": "b.ts", "lineRange": []}])]},
         ]
+        # No merge_groups supplied — each (repo, feature) stays as its own entry.
         features, links = _aggregate_features(per_repo)
-        assert len(features) == 1
-        merged = features[0]
-        assert merged["sourceRepos"] == ["admin", "web-app"]
-        assert merged["pages"] == ["p/order-admin.tsx", "p/order-list.tsx"]
-        assert merged["routes"] == ["/orders"]  # deduped union
-        assert {(c["method"], c["path"]) for c in merged["apiCalls"]} == {
-            ("POST", "/api/orders"), ("GET", "/api/orders/export")}
-        assert len(links) == 1
-        assert links[0]["canonicalFeature"] == "Order Management"  # first-seen display name
-        assert links[0]["mappings"] == {"web-app": "feature:order", "admin": "feature:order"}
+        assert len(features) == 2
+        # Each entry is scoped to its own repo.
+        by_id = {f["id"]: f for f in features}
+        assert "feature:web-app:order" in by_id
+        assert "feature:admin:order" in by_id
+        web_feat = by_id["feature:web-app:order"]
+        admin_feat = by_id["feature:admin:order"]
+        assert web_feat["project"] == "web-app"
+        assert web_feat["sourceRepos"] == ["web-app"]
+        assert admin_feat["project"] == "admin"
+        assert admin_feat["sourceRepos"] == ["admin"]
+        # No domain links without an explicit merge group.
+        assert links == []
 
     def test_single_repo_sets_source_repos(self):
         per_repo = [{"name": "web-app", "features": [_feat("feature:order", "Orders", pages=["p.tsx"])]}]
@@ -488,16 +492,31 @@ class TestAggregateFeatures:
         assert features[0]["sourceRepos"] == ["web-app"]
         assert links == []
 
-    def test_normalization_groups_hyphen_space_case(self):
+    def test_merge_group_matches_normalized_member_names(self):
+        # _normalize_feature_name is used to match members when merge_groups are provided.
+        # "Order Management" and "order-management" normalize to the same key, so the
+        # explicit merge group successfully resolves both and merges them into one entry.
         per_repo = [
-            {"name": "a", "features": [_feat("feature:x", "User-Auth", pages=["p.tsx"])]},
-            {"name": "b", "features": [_feat("feature:y", "user auth", pages=["q.tsx"])]},
+            {"name": "repo-a", "features": [_feat("feature:order", "Order Management", pages=["p.tsx"])]},
+            {"name": "repo-b", "features": [_feat("feature:order", "order-management", pages=["q.tsx"])]},
         ]
-        features, links = _aggregate_features(per_repo)
-        assert len(features) == 1
-        assert features[0]["sourceRepos"] == ["a", "b"]
+        merge_groups = [{
+            "canonicalName": "Order Management",
+            "members": [
+                {"project": "repo-a", "feature": "Order Management"},
+                {"project": "repo-b", "feature": "order-management"},
+            ],
+        }]
+        features, links = _aggregate_features(per_repo, merge_groups=merge_groups)
+        # The two repos' features are merged into one canonical entry.
+        order_feats = [f for f in features if f["name"] == "Order Management"]
+        assert len(order_feats) == 1
+        merged = order_feats[0]
+        assert set(merged["sourceRepos"]) == {"repo-a", "repo-b"}
+        # Exactly one domain link produced.
         assert len(links) == 1
-        assert links[0]["mappings"] == {"a": "feature:x", "b": "feature:y"}
+        assert links[0]["canonicalFeature"] == "Order Management"
+        assert links[0]["mappings"] == {"repo-a": "feature:order", "repo-b": "feature:order"}
 
 
 class TestExtractRepo:
@@ -578,13 +597,32 @@ class TestMultiRepoAggregate:
         _make_repo(tmp_path, "admin",
                    kg=_kg_with_page("admin", "src/pages/orders/Manage.tsx", api_edge=("GET", "/api/orders/export")),
                    dg=_dg_with_domain("domain:order", "Orders"))
+        # Write a system.json with a frontendMergeGroups entry that declares the two
+        # repos' Orders features as members, exercising the explicit-merge path end-to-end.
+        sys_ua = tmp_path / ".understand-anything"
+        sys_ua.mkdir(exist_ok=True)
+        (sys_ua / "system.json").write_text(json.dumps({
+            "facets": [{
+                "type": "frontend",
+                "path": "",
+                "frontendMergeGroups": [{
+                    "canonicalName": "Orders",
+                    "members": [
+                        {"project": "web-app", "feature": "Orders"},
+                        {"project": "admin", "feature": "Orders"},
+                    ],
+                }],
+            }]
+        }))
         build_frontend_graph(str(tmp_path))
         data = _read_graph(tmp_path)
         order_feats = [f for f in data["features"] if f["name"] == "Orders"]
+        # With the explicit merge group the two repos' features collapse into one.
         assert len(order_feats) == 1
-        assert order_feats[0]["sourceRepos"] == ["admin", "web-app"]
+        assert set(order_feats[0]["sourceRepos"]) == {"admin", "web-app"}
         assert {(c["method"], c["path"]) for c in order_feats[0]["apiCalls"]} == {
             ("POST", "/api/orders"), ("GET", "/api/orders/export")}
+        # One domainLink produced by the merge.
         assert len(data["domainLinks"]) == 1
         assert set(data["domainLinks"][0]["mappings"]) == {"admin", "web-app"}
 
