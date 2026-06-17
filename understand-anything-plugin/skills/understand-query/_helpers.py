@@ -40,16 +40,16 @@ def _score_node_relevance(node: dict[str, Any], query: str) -> float:
     elif any(raw_name.endswith(s) for s in _CONFIG_SUFFIXES):
         score -= 2.0
 
-    # 新增：标签匹配
+    # 新增：标签匹配 (empty query must not match)
     tags = node.get("tags", [])
-    if tags:
+    if q and tags:
         tag_text = " ".join(tags).lower()
         if q in tag_text:
             score += 4.0
 
-    # 新增：摘要匹配
+    # 新增：摘要匹配 (empty query must not match)
     summary = node.get("summary", "").lower()
-    if summary and q in summary:
+    if q and summary and q in summary:
         score += 3.0
 
     return max(score, 0.0)

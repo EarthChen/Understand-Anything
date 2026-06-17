@@ -118,6 +118,20 @@ def test_empty_query() -> None:
     assert score == 2.0  # class type bonus
 
 
+def test_empty_query_ignores_tags_and_summary() -> None:
+    """An empty query must not match via tags or summary (empty string is a
+    substring of everything). Only the base type bonus should remain."""
+    assert _score_node_relevance(
+        {"name": "test", "type": "class", "tags": ["order", "payment"]}, ""
+    ) == 2.0
+    assert _score_node_relevance(
+        {"name": "test", "type": "class", "summary": "handles orders"}, ""
+    ) == 2.0
+    assert _score_node_relevance(
+        {"name": "test", "type": "class", "tags": ["order"], "summary": "handles orders"}, ""
+    ) == 2.0
+
+
 def test_case_insensitive() -> None:
     """Test matching is case insensitive."""
     node = {"name": "UserService", "type": "class"}
