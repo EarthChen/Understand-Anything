@@ -97,6 +97,7 @@ def _build_feature_document(feature_data, association: dict) -> dict:
     return {
         'id': f'feature:{name}',
         'name': name,
+        'project': None,
         'clientLayers': client_layers,
         'clientLayer': client_layers[0] if client_layers else {},  # backward-compat
         'serverLayer': server_layer,
@@ -109,7 +110,7 @@ def _merge_server_associations(associations: list, facet_map: dict | None = None
     Each domain entry carries:
       - features[]: legacy feature-name list (retained for backward compat)
       - refCount, service: retained for backward compat
-      - touchpoints[]: {feature, facet, role}, role ∈ {primary, supporting} — the
+      - touchpoints[]: {feature, facet, project, role}, role ∈ {primary, supporting} — the
         server-anchored join. Indexing primary ∪ supporting under each domain
         already co-locates features that touch the same backend domain.
 
@@ -123,6 +124,8 @@ def _merge_server_associations(associations: list, facet_map: dict | None = None
             index[domain] = {'features': [], 'refCount': 0, 'service': service, 'touchpoints': []}
         return index[domain]
 
+    from facets import canonical_facet
+
     for assoc in associations:
         if assoc.get('error'):
             continue
@@ -130,7 +133,8 @@ def _merge_server_associations(associations: list, facet_map: dict | None = None
         # Prefer the association's own facet (each facet contributes its own
         # correctly-labeled touchpoints); fall back to facet_map for old phase2
         # files that predate the additive facetType key.
-        facet = assoc.get('facetType') or facet_map.get(feature_name, 'unknown')
+        facet = canonical_facet(assoc.get('facetType') or facet_map.get(feature_name, 'unknown'))
+        project = assoc.get('project')
 
         primary = assoc.get('primaryServer')
         if primary and isinstance(primary, dict):
@@ -146,7 +150,7 @@ def _merge_server_associations(associations: list, facet_map: dict | None = None
                     entry['features'].append(feature_name)
                     entry['refCount'] += 1
                 entry['touchpoints'].append(
-                    {'feature': feature_name, 'facet': facet, 'role': 'primary'}
+                    {'feature': feature_name, 'facet': facet, 'project': project, 'role': 'primary'}
                 )
 
         for s in (assoc.get('supportingServers') or []):
@@ -159,7 +163,7 @@ def _merge_server_associations(associations: list, facet_map: dict | None = None
                     entry['features'].append(feature_name)
                     entry['refCount'] += 1
                 entry['touchpoints'].append(
-                    {'feature': feature_name, 'facet': facet, 'role': 'supporting'}
+                    {'feature': feature_name, 'facet': facet, 'project': project, 'role': 'supporting'}
                 )
 
     return index
@@ -191,8 +195,20 @@ def _merge_feature_associations(assocs: list) -> dict:
 
 
 def assemble_features(associations: list, consolidation: dict) -> dict:
-    """Assemble feature-centric documents from associations and consolidation data."""
-    # Build name→[feature_data] lookup; list supports multiple facets per feature name.
+    """Assemble feature-centric documents from associations and consolidation data.
+
+    Frontend projects are merge boundaries: a name shared by 2+ distinct frontend
+    projects splits into one business feature per project (id=feature:<name>@<project>),
+    and any non-frontend (e.g. mobile) member with that name becomes its own feature.
+    A name with <=1 distinct frontend project keeps today's behavior — all facets
+    combine into one business feature (preserves frontend↔mobile same-name merge).
+    """
+    from facets import canonical_facet, FRONTEND_FACET_TYPES
+
+    def _is_frontend(fd):
+        return canonical_facet(fd.get('facetType', '')) in FRONTEND_FACET_TYPES
+
+    # Build name→[feature_data] lookup; list supports multiple facets/projects per name.
     feature_lookup: dict = {}
     facet_map: dict = {}
     for f in consolidation.get('consolidated', []):
@@ -207,40 +223,85 @@ def assemble_features(associations: list, consolidation: dict) -> dict:
             'implementations': [],
             'mergedSummary': '',
             'facetType': f.get('facetType', 'mobile'),
+            'project': f.get('project'),
         })
         facet_map.setdefault(f['name'], f.get('facetType', 'mobile'))
 
-    # Group associations by feature name (a name may have one association per facet).
+    # Index associations: by name (merge case) and by precise (facet, project, name).
+    # assoc_by_key is last-wins per precise key; association_discovery dedups by the
+    # same (facet, project, name) tuple upstream, so duplicates are not expected.
     assoc_by_name: dict = {}
+    assoc_by_key: dict = {}
     for assoc in associations:
-        assoc_by_name.setdefault(assoc.get('featureName', ''), []).append(assoc)
+        nm = assoc.get('featureName', '')
+        assoc_by_name.setdefault(nm, []).append(assoc)
+        key = (canonical_facet(assoc.get('facetType', '')), assoc.get('project') or '', nm)
+        assoc_by_key[key] = assoc
 
-    # Ordered unique feature names: consolidation order first (insertion-ordered
-    # feature_lookup), then any association-only names not in consolidation.
     ordered_names = list(feature_lookup.keys())
     for name in assoc_by_name:
         if name not in feature_lookup:
             ordered_names.append(name)
 
-    # Build feature documents — ONE per unique feature name.
     features = []
     with_association = 0
-    for name in ordered_names:
-        feature_data_list = feature_lookup.get(name) or [{
-            'name': name,
-            'implType': 'unknown',
-            'platforms': [],
-            'deliveryPlatforms': [],
-            'implementations': [],
-            'mergedSummary': '',
-            'facetType': 'unknown',
-        }]
-        assocs = assoc_by_name.get(name) or [{}]
-        merged = _merge_feature_associations(assocs)
-        doc = _build_feature_document(feature_data_list, merged)
-        features.append(doc)
+
+    def _count(doc):
+        nonlocal with_association
         if doc['serverLayer']['primaryDomain'] is not None:
             with_association += 1
+
+    for name in ordered_names:
+        data_list = feature_lookup.get(name) or [{
+            'name': name, 'implType': 'unknown', 'platforms': [],
+            'deliveryPlatforms': [], 'implementations': [],
+            'mergedSummary': '', 'facetType': 'unknown', 'project': None,
+        }]
+        frontend_data = [fd for fd in data_list if _is_frontend(fd)]
+        other_data = [fd for fd in data_list if not _is_frontend(fd)]
+        distinct_projects = sorted({
+            fd.get('project') for fd in frontend_data if fd.get('project')
+        })
+
+        if len(distinct_projects) <= 1:
+            # No cross-project collision: combine all facets into one feature (today's behavior).
+            merged = _merge_feature_associations(assoc_by_name.get(name) or [{}])
+            doc = _build_feature_document(data_list, merged)
+            doc['project'] = distinct_projects[0] if distinct_projects else None
+            features.append(doc)
+            _count(doc)
+            continue
+
+        # Collision: split each frontend project into its own business feature.
+        frontend_with_project = [fd for fd in frontend_data if fd.get('project')]
+        frontend_canonical = [fd for fd in frontend_data if not fd.get('project')]
+        for p in distinct_projects:
+            p_data = [fd for fd in frontend_with_project if fd.get('project') == p]
+            # Exactly one frontend assoc per project, so no _merge_feature_associations needed.
+            assoc = assoc_by_key.get(('frontend', p, name)) or {}
+            doc = _build_feature_document(p_data, assoc)
+            doc['id'] = f'feature:{name}@{p}'
+            doc['project'] = p
+            features.append(doc)
+            _count(doc)
+        # A cross-project merge-group canonical (frontend, project=None) is already
+        # merged upstream; keep it as its own feature so it is never silently dropped.
+        if frontend_canonical:
+            c_assoc = assoc_by_key.get(('frontend', '', name)) or {}
+            doc = _build_feature_document(frontend_canonical, c_assoc)
+            features.append(doc)
+            _count(doc)
+        # Non-frontend members (e.g. mobile) become their own business feature.
+        if other_data:
+            other_assocs = [
+                assoc_by_key.get((canonical_facet(fd.get('facetType', '')),
+                                  fd.get('project') or '', name))
+                for fd in other_data
+            ]
+            merged = _merge_feature_associations([a for a in other_assocs if a] or [{}])
+            doc = _build_feature_document(other_data, merged)
+            features.append(doc)
+            _count(doc)
 
     server_index = _merge_server_associations(associations, facet_map)
 
