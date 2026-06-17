@@ -23,7 +23,7 @@ from association_discovery import _extract_json
 _VALID_RELATIONSHIPS = ('replication', 'complementary-split', 'shared-infrastructure')
 
 
-def build_review_prompt(domain_name: str, domain_service: str, touchpoints: list) -> str:
+def build_review_prompt(domain_name: str, domain_summary: str, touchpoints: list) -> str:
     """Build an LLM prompt asking how the touchpoints on a backend domain relate."""
     tp_lines = []
     for t in touchpoints:
@@ -32,7 +32,7 @@ def build_review_prompt(domain_name: str, domain_service: str, touchpoints: list
         )
     tp_block = '\n'.join(tp_lines)
     return f"""以下是多个客户端功能,它们都关联到同一个后端业务域:
-后端域: {domain_name} (服务: {domain_service})
+后端域: {domain_name} (服务/摘要: {domain_summary})
 
 关联的客户端触点:
 {tp_block}
@@ -132,7 +132,8 @@ def run_capability_review(project_root_str: str) -> dict:
             continue
 
         if len(touchpoints) >= 2 and len(facets) >= 2:
-            prompt = build_review_prompt(domain_name, entry.get('service', ''), touchpoints)
+            domain_summary = entry.get('summary') or entry.get('service', '')
+            prompt = build_review_prompt(domain_name, domain_summary, touchpoints)
             try:
                 response = _call_llm(prompt)
             except (NotImplementedError, RuntimeError, OSError):
