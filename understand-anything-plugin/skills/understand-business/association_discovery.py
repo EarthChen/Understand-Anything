@@ -200,7 +200,11 @@ def discover_associations(
 
         prev = prev_by_name.get(feature_name)
         if prev and prev.get('_promptHash') == prompt_hash:
-            results.append(prev)
+            # Shallow copy so the reused record reflects the CURRENT feature's
+            # facet, not the stale facet from the previous run.
+            r = dict(prev)
+            r['facetType'] = feature.get('facetType', prev.get('facetType', ''))
+            results.append(r)
             reused += 1
             continue
 
@@ -215,6 +219,7 @@ def discover_associations(
                 'supportingServers': [],
                 'error': str(e),
                 '_promptHash': prompt_hash,
+                'facetType': feature.get('facetType', ''),
             })
             continue
 
@@ -222,6 +227,7 @@ def discover_associations(
             response, feature_name, min_confidence, valid_domain_names
         )
         result['_promptHash'] = prompt_hash
+        result['facetType'] = feature.get('facetType', '')
         results.append(result)
 
     return results, llm_calls, reused
@@ -302,12 +308,16 @@ def run_association_discovery(project_root_str: str) -> dict:
         if c is None:
             unsupported_facets.append(client_facet.get('name', client_facet.get('type')))
             continue
+        facet_type = client_facet.get('type', '')
+        for item in c['consolidated']:
+            item.setdefault('facetType', facet_type)
         all_features.extend(c['consolidated'])
         all_features.extend([
             {'name': d['name'], 'implType': d.get('implType', ''),
              'platforms': [d.get('platform', '')],
              'deliveryPlatforms': d.get('deliveryPlatforms', []),
-             'mergedSummary': d.get('summary', '')}
+             'mergedSummary': d.get('summary', ''),
+             'facetType': d.get('facetType') or facet_type}
             for d in c['standalone']
         ])
 

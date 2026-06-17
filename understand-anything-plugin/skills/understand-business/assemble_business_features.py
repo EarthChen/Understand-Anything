@@ -41,7 +41,16 @@ def _build_feature_document(feature_data, association: dict) -> dict:
         units = {}
         for impl in fd.get('implementations', []):
             platform = impl.get('platform', '')
-            platforms_dict[platform] = {k: v for k, v in impl.items() if k != 'platform'}
+            if facet_type == 'frontend':
+                # Frontend emits one implementation per repo, all on platform 'web'.
+                # Keying platforms_dict by platform alone would drop every repo but
+                # the last, so aggregate repos under the single 'web' entry.
+                entry = platforms_dict.setdefault(platform, {'repos': []})
+                repo = impl.get('repo', '')
+                if repo and repo not in entry['repos']:
+                    entry['repos'].append(repo)
+            else:
+                platforms_dict[platform] = {k: v for k, v in impl.items() if k != 'platform'}
             unit_key = impl.get('repo', '') if facet_type == 'frontend' else platform
             if unit_key:
                 units[unit_key] = {k: v for k, v in impl.items() if k not in ('platform', 'repo')}
@@ -116,7 +125,10 @@ def _merge_server_associations(associations: list, facet_map: dict | None = None
         if assoc.get('error'):
             continue
         feature_name = assoc.get('featureName', '')
-        facet = facet_map.get(feature_name, 'unknown')
+        # Prefer the association's own facet (each facet contributes its own
+        # correctly-labeled touchpoints); fall back to facet_map for old phase2
+        # files that predate the additive facetType key.
+        facet = assoc.get('facetType') or facet_map.get(feature_name, 'unknown')
 
         primary = assoc.get('primaryServer')
         if primary and isinstance(primary, dict):
@@ -145,6 +157,31 @@ def _merge_server_associations(associations: list, facet_map: dict | None = None
     return index
 
 
+def _merge_feature_associations(assocs: list) -> dict:
+    """Combine the associations for one feature name (one per facet) into a single
+    association for the feature document. Single/!valid cases pass through unchanged."""
+    valid = [a for a in assocs if a and not a.get('error')]
+    if not valid:
+        return assocs[0] if assocs else {}
+    if len(valid) == 1:
+        return valid[0]
+    primaries = [a['primaryServer'] for a in valid
+                 if isinstance(a.get('primaryServer'), dict) and a['primaryServer'].get('domain')]
+    chosen = max(primaries, key=lambda p: p.get('confidence', 0)) if primaries else None
+    seen = {chosen.get('domain')} if chosen else set()
+    supporting = []
+    for p in primaries:                      # demote non-chosen primaries to supporting
+        if p is not chosen and p.get('domain') not in seen:
+            seen.add(p.get('domain'))
+            supporting.append({**p, 'relationship': p.get('relationship', 'depends_on')})
+    for a in valid:
+        for s in (a.get('supportingServers') or []):
+            if isinstance(s, dict) and s.get('domain') and s.get('domain') not in seen:
+                seen.add(s.get('domain'))
+                supporting.append(s)
+    return {'primaryServer': chosen, 'supportingServers': supporting, 'error': None}
+
+
 def assemble_features(associations: list, consolidation: dict) -> dict:
     """Assemble feature-centric documents from associations and consolidation data."""
     # Build name→[feature_data] lookup; list supports multiple facets per feature name.
@@ -165,13 +202,24 @@ def assemble_features(associations: list, consolidation: dict) -> dict:
         })
         facet_map.setdefault(f['name'], f.get('facetType', 'mobile'))
 
-    # Build feature documents
+    # Group associations by feature name (a name may have one association per facet).
+    assoc_by_name: dict = {}
+    for assoc in associations:
+        assoc_by_name.setdefault(assoc.get('featureName', ''), []).append(assoc)
+
+    # Ordered unique feature names: consolidation order first (insertion-ordered
+    # feature_lookup), then any association-only names not in consolidation.
+    ordered_names = list(feature_lookup.keys())
+    for name in assoc_by_name:
+        if name not in feature_lookup:
+            ordered_names.append(name)
+
+    # Build feature documents — ONE per unique feature name.
     features = []
     with_association = 0
-    for assoc in associations:
-        feature_name = assoc.get('featureName', '')
-        feature_data_list = feature_lookup.get(feature_name) or [{
-            'name': feature_name,
+    for name in ordered_names:
+        feature_data_list = feature_lookup.get(name) or [{
+            'name': name,
             'implType': 'unknown',
             'platforms': [],
             'deliveryPlatforms': [],
@@ -179,7 +227,9 @@ def assemble_features(associations: list, consolidation: dict) -> dict:
             'mergedSummary': '',
             'facetType': 'unknown',
         }]
-        doc = _build_feature_document(feature_data_list, assoc)
+        assocs = assoc_by_name.get(name) or [{}]
+        merged = _merge_feature_associations(assocs)
+        doc = _build_feature_document(feature_data_list, merged)
         features.append(doc)
         if doc['serverLayer']['primaryDomain'] is not None:
             with_association += 1

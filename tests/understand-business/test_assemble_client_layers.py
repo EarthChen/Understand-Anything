@@ -97,15 +97,14 @@ class TestClientLayers:
         assert feat["clientLayers"][0]["facetType"] in ("mobile", "unknown")
 
     def test_frontend_only_feature_preserved_when_no_server_association(self):
-        """A frontend feature with no matching server domain must still appear in output."""
-        assoc = [
-            {
-                "featureName": "Design System",
-                "primaryServer": None,
-                "supportingServers": [],
-                "error": None,
-            }
-        ]
+        """A frontend feature with NO association record must still appear in output.
+
+        Genuinely guards DEFECT 4: the feature has zero entries in `associations`,
+        so it can only become a document if the emit loop iterates feature names
+        (not associations). Pre-seeding an association here would pass for the
+        wrong reason.
+        """
+        assoc = []
         consol = {
             "consolidated": [
                 {
