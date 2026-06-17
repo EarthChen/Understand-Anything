@@ -1,16 +1,11 @@
 """Command handlers for all ua_query subcommands."""
 from __future__ import annotations
 import argparse
-import json
 import re
 import sys
 from typing import Any
 from urllib.parse import quote as url_quote
-from _utils import (
-    build_url, format_output, _detect_server,
-    ServerUnavailableError, _IMPL_SUFFIXES, _CONFIG_SUFFIXES,
-    DEFAULT_SERVER, DEFAULT_TIMEOUT, _short_type_name,
-)
+from _utils import build_url, _short_type_name
 import _helpers
 from _helpers import (
     _search_api, _find_symbol_node, _cross_service_symbol_search,
@@ -19,6 +14,23 @@ from _helpers import (
     _extract_code_keywords, _effective_service, _nodes_for_file,
     _is_test_path, _extract_symbol, _kg_file_toc, _cmd_structure_symbol,
 )
+
+
+def _make_trace_args(**overrides: Any) -> argparse.Namespace:
+    """Build a Namespace carrying every field cmd_trace reads, overridable per call.
+
+    Centralizes the synthetic-args construction used for cross-service / ask follow-up
+    traces so the field set can't drift between call sites (e.g. a missing `grouped`).
+    """
+    defaults: dict[str, Any] = {
+        "server": None, "service": None, "query": "", "type": None,
+        "limit": 5, "source": False, "symbol": None, "business": False,
+        "wiki": False, "domain_flows": False, "auto_discover": False,
+        "fusion": "rrf", "format": "json", "grouped": False,
+    }
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
 
 def _cmd_kg_file_summary(args: argparse.Namespace) -> Any:
     try:
@@ -128,13 +140,7 @@ def cmd_kg(args: argparse.Namespace) -> Any:
         if args.toc:
             graph_params: dict[str, str] = {"service": args.service, "file": "knowledge-graph.json"}
             graph_data = _helpers.fetch_json(build_url(args.server, "/api/graph", graph_params))
-            file_key = args.file.lower()
-            symbols = [
-                {"name": n["name"], "type": n.get("type", ""), "lineRange": n.get("lineRange"), "summary": n.get("summary", "")[:80]}
-                for n in graph_data.get("nodes", [])
-                if file_key in n.get("filePath", "").lower() or file_key in n.get("id", "").lower()
-            ]
-            symbols.sort(key=lambda s: (s.get("lineRange") or [9999])[0])
+            symbols = _kg_file_toc(args, graph_data)
             return {"file": args.file, "totalSymbols": len(symbols), "symbols": symbols}
         params: dict[str, str] = {"file": args.file, "service": args.service, "mode": "graph"}
         if args.start:
@@ -461,13 +467,11 @@ def cmd_trace(args: argparse.Namespace) -> Any:
 
             # Auto-trace in the target service
             try:
-                follow_args = argparse.Namespace(
+                follow_args = _make_trace_args(
                     server=args.server, service=target_svc,
-                    query=cross_svc_fallback["keyword"],
-                    limit=args.limit, business=False,
+                    query=cross_svc_fallback["keyword"], limit=args.limit,
                     wiki=getattr(args, "wiki", False),
                     domain_flows=getattr(args, "domain_flows", False),
-                    auto_discover=False,
                     fusion=getattr(args, "fusion", "rrf"),
                     format=getattr(args, "format", "json"),
                     type=getattr(args, "type", None),
@@ -812,23 +816,10 @@ def _detect_and_follow_cross_service_rpc(
         rpc_keywords.extend(parts[:2])
         rpc_query = ",".join(rpc_keywords)
 
-        class _NS:
-            pass
-        follow_args = _NS()
-        follow_args.server = server
-        follow_args.service = target_service
-        follow_args.query = rpc_query
-        follow_args.type = None
-        follow_args.limit = 5
-        follow_args.source = True
-        follow_args.symbol = None
-        follow_args.business = False
-        follow_args.wiki = True
-        follow_args.domain_flows = True
-        follow_args.auto_discover = False
-        follow_args.fusion = "rrf"
-        follow_args.format = "json"
-        follow_args.grouped = False
+        follow_args = _make_trace_args(
+            server=server, service=target_service, query=rpc_query,
+            limit=5, source=True, wiki=True, domain_flows=True,
+        )
 
         follow_result = cmd_trace(follow_args)
 
@@ -908,22 +899,13 @@ def cmd_ask(args: argparse.Namespace) -> Any:
         return result
 
     # Step 3: Trace (KG search + neighbors + source)
-    class _NS:
-        pass
-    trace_args = _NS()
-    trace_args.server = args.server
-    trace_args.service = service
-    trace_args.query = query
-    trace_args.type = None
-    trace_args.limit = getattr(args, "limit", 5)
-    trace_args.source = depth == "full"
-    trace_args.symbol = None
-    trace_args.business = False
-    trace_args.wiki = True
-    trace_args.domain_flows = depth == "full"
-    trace_args.auto_discover = False
-    trace_args.fusion = getattr(args, "fusion", "rrf")
-    trace_args.format = getattr(args, "format", "json")
+    trace_args = _make_trace_args(
+        server=args.server, service=service, query=query,
+        limit=getattr(args, "limit", 5), source=depth == "full",
+        wiki=True, domain_flows=depth == "full",
+        fusion=getattr(args, "fusion", "rrf"),
+        format=getattr(args, "format", "json"),
+    )
 
     trace_result = cmd_trace(trace_args)
 

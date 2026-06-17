@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """HTTP CLI for querying Understand-Anything API Server (stdlib only)."""
 import argparse
-import json
 import os
 import sys
-from typing import Any
 
 # Re-export from sub-modules so tests can import from ua_query directly
 from _utils import (
     DEFAULT_SERVER, DEFAULT_TIMEOUT, _IMPL_SUFFIXES, _CONFIG_SUFFIXES,
-    ServerUnavailableError, fetch_json, build_url, _detect_server,
+    ServerUnavailableError, fetch_json, build_url,
     format_output, _format_markdown, _short_type_name,
 )
 from _helpers import (
@@ -189,7 +187,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    args.server = _detect_server(args.server)
     try:
         handlers = {
             "kg": cmd_kg, "domain": cmd_domain, "wiki": cmd_wiki, "business": cmd_business,
@@ -209,5 +206,5 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
