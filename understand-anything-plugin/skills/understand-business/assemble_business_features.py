@@ -36,9 +36,10 @@ def _build_feature_document(feature_data, association: dict) -> dict:
 
     name = feature_data_list[0].get('name', 'unknown') if feature_data_list else 'unknown'
 
+    from facets import canonical_facet
     client_layers = []
     for fd in feature_data_list:
-        facet_type = fd.get('facetType', 'mobile')
+        facet_type = canonical_facet(fd.get('facetType', 'mobile'))
         platforms_dict = {}
         units = {}
         for impl in fd.get('implementations', []):

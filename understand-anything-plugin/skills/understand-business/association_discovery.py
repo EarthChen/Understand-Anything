@@ -291,12 +291,13 @@ def run_association_discovery(project_root_str: str) -> dict:
     from domain_matcher import _load_server_domains
     from scenario_detector import CLIENT_FACET_TYPES
     from client_facets import load_client_features
+    from facets import canonical_facet, SERVER_FACET_TYPES
 
     server_facet = None
     client_facets = []
     for facet in system_config.get('facets', []):
-        ftype = facet.get('type', '')
-        if ftype in ('server', 'backend') and server_facet is None:
+        ftype = canonical_facet(facet.get('type', ''))
+        if ftype in SERVER_FACET_TYPES and server_facet is None:
             server_facet = facet
         elif ftype in CLIENT_FACET_TYPES:
             client_facets.append(facet)
