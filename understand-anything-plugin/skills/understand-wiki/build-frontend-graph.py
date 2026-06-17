@@ -336,37 +336,13 @@ def _validate(graph: dict) -> tuple[bool, bool, list[str]]:
     return True, bool(warnings), warnings
 
 
-def _frontend_subpaths(root: Path) -> list[str]:
-    """Return subPaths declared for the frontend facet in a discoverable system.json.
+def _read_frontend_facet_field(root: Path, field: str, default):
+    """Return `field` from the frontend facet in a discoverable system.json.
 
-    Checks root/.understand-anything/system.json then root.parent/... — the
-    aggregate is invoked with the facet dir (e.g. web/), whose system.json lives
-    at the project root (root.parent). A system.json with no frontend facet does
-    not stop the search; the next base is still checked.
-    """
-    bases = [root]
-    if root.parent != root:  # avoid re-checking the same dir at the filesystem root
-        bases.append(root.parent)
-    for base in bases:
-        sys_path = base / ".understand-anything" / "system.json"
-        if not sys_path.is_file():
-            continue
-        try:
-            cfg = json.loads(sys_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return []
-        for facet in cfg.get("facets", []):
-            if facet.get("type") == "frontend":
-                return facet.get("subPaths", []) or []
-        # system.json present but no frontend facet — keep looking at the next base
-    return []
-
-
-def _frontend_merge_groups(root: Path) -> list[dict]:
-    """Return the frontend facet's frontendMergeGroups from a discoverable system.json.
-
-    Same lookup order as _frontend_subpaths (root then root.parent). Missing or
-    unreadable config yields []. Each group is {canonicalName, members:[{project, feature}]}.
+    Searches root then root.parent (the aggregate is invoked with the facet dir,
+    whose system.json lives at the project root). Accepts the 'web' alias for the
+    canonical 'frontend' facet type. Missing/unreadable config or a system.json
+    with no frontend facet yields `default`.
     """
     bases = [root]
     if root.parent != root:
@@ -378,11 +354,25 @@ def _frontend_merge_groups(root: Path) -> list[dict]:
         try:
             cfg = json.loads(sys_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            return []
+            return default
         for facet in cfg.get("facets", []):
-            if facet.get("type") == "frontend":
-                return facet.get("frontendMergeGroups", []) or []
-    return []
+            if facet.get("type") in ("frontend", "web"):
+                return facet.get(field, default) or default
+        # system.json present but no frontend facet — keep looking at the next base
+    return default
+
+
+def _frontend_subpaths(root: Path) -> list[str]:
+    """Return subPaths declared for the frontend facet (accepts the 'web' alias)."""
+    return _read_frontend_facet_field(root, "subPaths", [])
+
+
+def _frontend_merge_groups(root: Path) -> list[dict]:
+    """Return frontendMergeGroups for the frontend facet (accepts the 'web' alias).
+
+    Each group is {canonicalName, members:[{project, feature}]}.
+    """
+    return _read_frontend_facet_field(root, "frontendMergeGroups", [])
 
 
 def _discover_repos(root: Path) -> list[tuple[str, Path]]:

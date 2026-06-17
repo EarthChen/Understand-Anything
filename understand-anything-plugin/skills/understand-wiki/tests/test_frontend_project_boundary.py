@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -78,3 +79,22 @@ def test_merge_group_with_one_missing_member_falls_back_to_per_project():
     assert features[0]["id"] == "feature:seller-portal:订单"
     assert features[0]["project"] == "seller-portal"
     assert domain_links == []
+
+
+def test_web_alias_facet_is_read_for_subpaths_and_merge_groups(tmp_path):
+    ua = tmp_path / ".understand-anything"
+    ua.mkdir(parents=True)
+    (ua / "system.json").write_text(json.dumps({
+        "facets": [{
+            "type": "web", "name": "web", "path": "web",
+            "subPaths": ["seller-portal", "ops-web"],
+            "frontendMergeGroups": [
+                {"canonicalName": "订单", "members": [
+                    {"project": "seller-portal", "feature": "订单"},
+                    {"project": "ops-web", "feature": "订单管理"}]}
+            ],
+        }]
+    }, ensure_ascii=False), encoding="utf-8")
+    assert bfg._frontend_subpaths(tmp_path) == ["seller-portal", "ops-web"]
+    groups = bfg._frontend_merge_groups(tmp_path)
+    assert len(groups) == 1 and groups[0]["canonicalName"] == "订单"
