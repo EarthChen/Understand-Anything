@@ -33,6 +33,7 @@ export interface UnifiedSearchResult {
   summary: string
   score: number
   service?: string
+  domain?: string
   filePath?: string
   lineRange?: [number, number]
   tags?: string
@@ -175,6 +176,7 @@ export function unifiedSearch(
         summary: r.summary,
         score: r.score,
         service: r.service,
+        domain: r.domain,
       })
     }
   }
