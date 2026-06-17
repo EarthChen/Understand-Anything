@@ -19,16 +19,33 @@ import sys
 from pathlib import Path
 
 
+def _all_client_platforms(feature_doc: dict) -> dict:
+    """Union the `platforms` dicts across ALL clientLayers (one per facet).
+
+    Falls back to the backward-compat singular clientLayer for old documents.
+    Skips non-dict / empty layers and platform maps so callers never crash.
+    """
+    layers = feature_doc.get('clientLayers') or [feature_doc.get('clientLayer', {})]
+    merged: dict = {}
+    for layer in layers:
+        if not isinstance(layer, dict):
+            continue
+        platforms = layer.get('platforms')
+        if not isinstance(platforms, dict):
+            continue
+        for name, info in platforms.items():
+            if name not in merged:
+                merged[name] = info
+    return merged
+
+
 def build_interaction_skeleton(feature_doc: dict) -> dict:
     """Build a deterministic interaction skeleton from feature document.
 
     Layers follow the request flow: client → sdk/bridge → server
     """
-    client_layer = feature_doc.get('clientLayer', {}) or {}
     server_layer = feature_doc.get('serverLayer', {}) or {}
-    platforms = client_layer.get('platforms', {})
-    if not isinstance(platforms, dict):
-        platforms = {}
+    platforms = _all_client_platforms(feature_doc)
 
     layers = []
     involved_services = []
@@ -80,12 +97,9 @@ def build_interaction_skeleton(feature_doc: dict) -> dict:
 
 def build_interaction_prompt(feature_doc: dict, skeleton: dict) -> str:
     """Build LLM prompt for generating interaction flow steps."""
-    client = feature_doc.get('clientLayer', {})
+    client = feature_doc.get('clientLayer', {}) or {}
     server = feature_doc.get('serverLayer', {})
-    platforms = client.get('platforms', {})
-
-    if not isinstance(platforms, dict):
-        platforms = {}
+    platforms = _all_client_platforms(feature_doc)
 
     # Platform details
     platform_details = []
