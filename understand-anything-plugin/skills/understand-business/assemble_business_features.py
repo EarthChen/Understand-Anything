@@ -183,8 +183,8 @@ def run_assemble_features(project_root_str: str) -> dict:
 
     associations = assoc_data.get('associations', [])
 
-    # Re-derive consolidation from domain_matcher
-    from domain_matcher import _consolidate_mobile_domains
+    # Re-derive consolidation through the client-facet strategy registry.
+    from client_facets import load_client_features
 
     system_path = project_root / '.understand-anything' / 'system.json'
     if not system_path.exists():
@@ -197,52 +197,17 @@ def run_assemble_features(project_root_str: str) -> dict:
 
     consolidation = {'consolidated': [], 'standalone': [], 'infrastructure': []}
     for facet in system_config.get('facets', []):
-        if facet.get('type') == 'mobile':
-            facet_path = facet.get('path', '')
-            if not facet_path:
-                continue
-            c = _consolidate_mobile_domains(
-                project_root_str, facet_path, facet.get('subPaths', [])
-            )
-            for item in c['consolidated']:
-                item.setdefault('facetType', 'mobile')
-            for item in c['standalone']:
-                item.setdefault('facetType', 'mobile')
-            consolidation['consolidated'].extend(c['consolidated'])
-            consolidation['standalone'].extend(c['standalone'])
-            consolidation['infrastructure'].extend(c['infrastructure'])
-        elif facet.get('type') == 'frontend':
-            facet_path_str = facet.get('path', '')
-            fg_path = (
-                project_root / facet_path_str /
-                '.understand-anything' / 'frontend-graph.json'
-            )
-            if not fg_path.exists():
-                continue
-            try:
-                fg = json.loads(fg_path.read_text(encoding='utf-8'))
-            except (json.JSONDecodeError, OSError):
-                continue
-            frameworks = fg.get('project', {}).get('frameworks', [])
-            for feat in fg.get('features', []):
-                routes = feat.get('routes', [])
-                api_calls = feat.get('apiCalls', [])
-                summary_parts = []
-                if routes:
-                    summary_parts.append('Routes: ' + ', '.join(routes[:3]))
-                if api_calls:
-                    summary_parts.append('API: ' + ', '.join(
-                        f"{c.get('method', 'UNKNOWN')} {c.get('path', '')}" for c in api_calls[:3]
-                    ))
-                consolidation['consolidated'].append({
-                    'name': feat.get('name', ''),
-                    'implType': 'frontend-web',
-                    'platforms': ['web'],
-                    'deliveryPlatforms': frameworks,
-                    'implementations': [],
-                    'mergedSummary': '. '.join(summary_parts),
-                    'facetType': 'frontend',
-                })
+        c = load_client_features(project_root_str, facet)
+        if c is None:
+            continue
+        facet_type = facet.get('type', '')
+        for item in c['consolidated']:
+            item.setdefault('facetType', facet_type)
+        for item in c['standalone']:
+            item.setdefault('facetType', facet_type)
+        consolidation['consolidated'].extend(c['consolidated'])
+        consolidation['standalone'].extend(c['standalone'])
+        consolidation['infrastructure'].extend(c['infrastructure'])
 
     result = assemble_features(associations, consolidation)
 

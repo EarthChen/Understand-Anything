@@ -258,44 +258,6 @@ def to_phase3_format(associations: list) -> list:
     return flat
 
 
-def _load_frontend_features(project_root_str: str, facet: dict) -> list:
-    """Load features from frontend-graph.json for a frontend facet."""
-    project_root = Path(project_root_str).resolve()
-    fg_path = (
-        project_root / facet.get('path', '') /
-        '.understand-anything' / 'frontend-graph.json'
-    ).resolve()
-    if not fg_path.is_relative_to(project_root):
-        return []
-    if not fg_path.exists():
-        return []
-    try:
-        fg = json.loads(fg_path.read_text(encoding='utf-8'))
-    except (json.JSONDecodeError, OSError):
-        return []
-
-    frameworks = fg.get('project', {}).get('frameworks', [])
-    features = []
-    for feat in fg.get('features', []):
-        routes = feat.get('routes', [])
-        calls = feat.get('apiCalls', [])
-        summary_parts = []
-        if routes:
-            summary_parts.append('Routes: ' + ', '.join(routes[:3]))
-        if calls:
-            summary_parts.append('API: ' + ', '.join(
-                f"{c.get('method', 'UNKNOWN')} {c.get('path', '')}" for c in calls[:3]
-            ))
-        features.append({
-            'name': feat.get('name', ''),
-            'implType': 'frontend-web',
-            'platforms': ['web'],
-            'deliveryPlatforms': frameworks,
-            'mergedSummary': '. '.join(summary_parts),
-        })
-    return features
-
-
 def run_association_discovery(project_root_str: str) -> dict:
     """Full pipeline: load data, run discovery, write output."""
     project_root = Path(project_root_str)
@@ -310,8 +272,9 @@ def run_association_discovery(project_root_str: str) -> dict:
     except (json.JSONDecodeError, IOError) as e:
         return {'error': f'Failed to parse system.json: {e}'}
 
-    from domain_matcher import _load_server_domains, _consolidate_mobile_domains
+    from domain_matcher import _load_server_domains
     from scenario_detector import CLIENT_FACET_TYPES
+    from client_facets import load_client_features
 
     server_facet = None
     client_facets = []
@@ -331,26 +294,22 @@ def run_association_discovery(project_root_str: str) -> dict:
         project_root_str, server_facet['path'], server_facet.get('subPaths', [])
     )
 
-    # Consolidate features from all client facets
+    # Consolidate features from all client facets through the strategy registry.
     all_features = []
     unsupported_facets = []
     for client_facet in client_facets:
-        if client_facet.get('type') == 'mobile':
-            consolidation = _consolidate_mobile_domains(
-                project_root_str, client_facet['path'], client_facet.get('subPaths', [])
-            )
-            all_features.extend(consolidation['consolidated'])
-            all_features.extend([
-                {'name': d['name'], 'implType': d['implType'],
-                 'platforms': [d['platform']], 'deliveryPlatforms': d['deliveryPlatforms'],
-                 'mergedSummary': d.get('summary', '')}
-                for d in consolidation['standalone']
-            ])
-        elif client_facet.get('type') == 'frontend':
-            fe_features = _load_frontend_features(project_root_str, client_facet)
-            all_features.extend(fe_features)
-        else:
+        c = load_client_features(project_root_str, client_facet)
+        if c is None:
             unsupported_facets.append(client_facet.get('name', client_facet.get('type')))
+            continue
+        all_features.extend(c['consolidated'])
+        all_features.extend([
+            {'name': d['name'], 'implType': d.get('implType', ''),
+             'platforms': [d.get('platform', '')],
+             'deliveryPlatforms': d.get('deliveryPlatforms', []),
+             'mergedSummary': d.get('summary', '')}
+            for d in c['standalone']
+        ])
 
     previous_results = None
     prev_path = intermediate_dir / 'phase2-associations.json'
