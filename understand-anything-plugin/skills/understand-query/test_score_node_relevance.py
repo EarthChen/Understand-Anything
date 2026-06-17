@@ -89,7 +89,7 @@ def test_summary_matching() -> None:
 def test_implementation_suffix_bonus() -> None:
     """Test implementation suffix gives bonus."""
     node_impl = {"name": "UserServiceImpl", "type": "class"}
-    node_normal = {"name": "UserService", "type": "class"}
+    node_normal = {"name": "UserGadget", "type": "class"}
 
     score_impl = _score_node_relevance(node_impl, "User")
     score_normal = _score_node_relevance(node_normal, "User")

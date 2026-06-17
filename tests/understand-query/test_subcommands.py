@@ -16,7 +16,7 @@ SERVER = "http://localhost:3001"
 
 @pytest.fixture
 def mock_fetch():
-    with patch.object(ua_query, "fetch_json") as m:
+    with patch("_helpers.fetch_json") as m:
         yield m
 
 
@@ -47,10 +47,9 @@ class TestBusinessSubcommand:
         mock_fetch.return_value = {"results": [{"id": "domain:friend", "name": "ClosedFriend", "match": "挚友"}]}
         ua_query.main(["--server", SERVER, "business", "--search", "挚友,ClosedFriend"])
         url = mock_fetch.call_args[0][0]
-        assert "/api/search" in url
+        assert "/api/business/search" in url
         qs = parse_qs(urlparse(url).query)
         assert qs["q"] == ["挚友,ClosedFriend"]
-        assert qs["scope"] == ["business"]
 
 
 class TestWikiSubcommand:
