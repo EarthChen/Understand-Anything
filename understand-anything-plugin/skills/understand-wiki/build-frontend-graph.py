@@ -466,7 +466,7 @@ def _extract_repo(repo_name: str, repo_root: Path) -> dict | None:
     ua_dir = repo_root / ".understand-anything"
     kg_path = ua_dir / "knowledge-graph.json"
     dg_path = ua_dir / "domain-graph.json"
-    if not kg_path.exists() or not dg_path.exists():
+    if not kg_path.is_file() or not dg_path.is_file():
         print(
             f"[build-frontend-graph] WARN: skipping {repo_name} — missing "
             f"knowledge-graph.json or domain-graph.json",
