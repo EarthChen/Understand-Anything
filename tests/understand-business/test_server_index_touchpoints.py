@@ -66,7 +66,7 @@ class TestTouchpoints:
         order_features = {t["feature"] for t in result["serverIndex"]["OrderService"]["touchpoints"]}
         assert order_features == {"下单创建", "订单跟踪"}
         push = result["serverIndex"]["PushService"]
-        assert push["touchpoints"][0] == {"feature": "订单跟踪", "facet": "mobile", "role": "supporting"}
+        assert push["touchpoints"][0] == {"feature": "订单跟踪", "facet": "mobile", "project": None, "role": "supporting"}
 
     def test_legacy_serverindex_fields_retained(self):
         assoc = [_assoc("下单创建", {"domain": "OrderService", "service": "order", "confidence": 0.9})]
