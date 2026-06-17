@@ -52,15 +52,18 @@ def test_cache_reused_result_uses_current_feature_facettype(monkeypatch):
     )
     feat = _feature("Orders", "frontend")
     prompt_hash = ad.compute_prompt_hash(feat, _SERVER_DOMAINS)
-    # Previous run recorded this feature under a DIFFERENT facet; the reused copy
-    # must reflect the current feature's facet, not the stale one.
+    # Previous run recorded this feature under the SAME facet and project (None);
+    # the cache identity (facet, project, name) matches → cache HIT.
+    # The reused copy still reflects the current feature's values and does not
+    # mutate the cached record.
     previous = [{
         "featureName": "Orders",
         "primaryServer": {"domain": "OrderService", "service": "order", "confidence": 0.9},
         "supportingServers": [],
         "error": None,
         "_promptHash": prompt_hash,
-        "facetType": "mobile",
+        "facetType": "frontend",
+        "project": None,
     }]
     results, llm_calls, reused = ad.discover_associations(
         [feat], _SERVER_DOMAINS, previous_results=previous
@@ -69,4 +72,32 @@ def test_cache_reused_result_uses_current_feature_facettype(monkeypatch):
     assert llm_calls == 0
     assert results[0]["facetType"] == "frontend"
     # must be a copy: previous entry untouched
-    assert previous[0]["facetType"] == "mobile"
+    assert previous[0]["facetType"] == "frontend"
+
+
+def test_cache_miss_when_facet_differs(monkeypatch):
+    """Cache identity includes facet; a different-facet previous record is NOT reused."""
+    llm_hit = []
+    monkeypatch.setattr(
+        ad, "_call_llm",
+        lambda prompt: (llm_hit.append(1),
+                        '{"primaryServer": {"domain": "OrderService", "service": "order", "confidence": 0.9}, "supportingServers": []}')[1],
+    )
+    feat = _feature("Orders", "frontend")
+    prompt_hash = ad.compute_prompt_hash(feat, _SERVER_DOMAINS)
+    # Previous run was for the same feature name but a DIFFERENT facet ('mobile').
+    # Under the new (facet, project, name) identity this is a MISS → LLM called.
+    previous = [{
+        "featureName": "Orders",
+        "primaryServer": {"domain": "OrderService", "service": "order", "confidence": 0.9},
+        "supportingServers": [],
+        "error": None,
+        "_promptHash": prompt_hash,
+        "facetType": "mobile",
+        "project": None,
+    }]
+    results, llm_calls, reused = ad.discover_associations(
+        [feat], _SERVER_DOMAINS, previous_results=previous
+    )
+    assert reused == 0
+    assert llm_calls == 1

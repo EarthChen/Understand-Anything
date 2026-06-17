@@ -184,26 +184,31 @@ def discover_associations(
     results = []
     valid_domain_names = set(server_domains.keys())
 
-    prev_by_name: dict[str, dict] = {}
+    from facets import feature_key as _key
+
+    prev_by_key: dict[tuple, dict] = {}
     if previous_results:
         for r in previous_results:
             fname = r.get('featureName', '')
             if fname and r.get('_promptHash') and not r.get('error'):
-                prev_by_name[fname] = r
+                prev_by_key[_key(r.get('facetType'), r.get('project'), fname)] = r
 
     llm_calls = 0
     reused = 0
 
     for feature in features:
         feature_name = feature.get('name', 'unknown')
+        project = feature.get('project')
+        fkey = _key(feature.get('facetType'), project, feature_name)
         prompt_hash = compute_prompt_hash(feature, server_domains)
 
-        prev = prev_by_name.get(feature_name)
+        prev = prev_by_key.get(fkey)
         if prev and prev.get('_promptHash') == prompt_hash:
             # Shallow copy so the reused record reflects the CURRENT feature's
-            # facet, not the stale facet from the previous run.
+            # facet/project, not the stale values from the previous run.
             r = dict(prev)
             r['facetType'] = feature.get('facetType', prev.get('facetType', ''))
+            r['project'] = project
             results.append(r)
             reused += 1
             continue
@@ -220,6 +225,7 @@ def discover_associations(
                 'error': str(e),
                 '_promptHash': prompt_hash,
                 'facetType': feature.get('facetType', ''),
+                'project': project,
             })
             continue
 
@@ -228,6 +234,7 @@ def discover_associations(
         )
         result['_promptHash'] = prompt_hash
         result['facetType'] = feature.get('facetType', '')
+        result['project'] = project
         results.append(result)
 
     return results, llm_calls, reused
@@ -281,12 +288,13 @@ def run_association_discovery(project_root_str: str) -> dict:
     from domain_matcher import _load_server_domains
     from scenario_detector import CLIENT_FACET_TYPES
     from client_facets import load_client_features
+    from facets import canonical_facet, SERVER_FACET_TYPES
 
     server_facet = None
     client_facets = []
     for facet in system_config.get('facets', []):
-        ftype = facet.get('type', '')
-        if ftype in ('server', 'backend') and server_facet is None:
+        ftype = canonical_facet(facet.get('type', ''))
+        if ftype in SERVER_FACET_TYPES and server_facet is None:
             server_facet = facet
         elif ftype in CLIENT_FACET_TYPES:
             client_facets.append(facet)
@@ -317,7 +325,8 @@ def run_association_discovery(project_root_str: str) -> dict:
              'platforms': [d.get('platform', '')],
              'deliveryPlatforms': d.get('deliveryPlatforms', []),
              'mergedSummary': d.get('summary', ''),
-             'facetType': d.get('facetType') or facet_type}
+             'facetType': d.get('facetType') or facet_type,
+             'project': d.get('project')}
             for d in c['standalone']
         ])
 

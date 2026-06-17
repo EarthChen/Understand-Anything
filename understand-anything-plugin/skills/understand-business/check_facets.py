@@ -2,7 +2,8 @@
 """Phase 0: Check facet availability from system.json.
 
 Reads system.json, checks for each facet whether its aggregation graph
-(system-graph.json for backend, client-graph.json for mobile) and wiki exist.
+(system-graph.json for server, client-graph.json for mobile, frontend-graph.json
+for frontend) and wiki exist.
 
 Usage:
     python3 check_facets.py <project-root>
@@ -15,13 +16,7 @@ import sys
 from pathlib import Path
 
 
-GRAPH_FILE_MAP = {
-    'backend': 'system-graph.json',
-    'server': 'system-graph.json',
-    'mobile': 'client-graph.json',
-    'frontend': 'frontend-graph.json',
-    'test': None,
-}
+from facets import graph_file_for
 
 
 def check_facets(project_root_str: str) -> dict:
@@ -46,7 +41,7 @@ def check_facets(project_root_str: str) -> dict:
         if not facet_dir.is_relative_to(project_root.resolve()):
             raise ValueError(f"Path escapes project root: {facet_path}")
         ua_dir = facet_dir / '.understand-anything'
-        graph_file = GRAPH_FILE_MAP.get(facet_type)
+        graph_file = graph_file_for(facet_type)
 
         has_graph = False
         graph_path = ''

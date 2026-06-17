@@ -9,7 +9,9 @@ LEGACY_LAYER_KEYS = {"facetType", "implType", "platforms", "deliveryPlatforms", 
 LEGACY_SERVERINDEX_KEYS = {"features", "refCount", "service"}
 LEGACY_STATS_KEYS = {"totalFeatures", "withServerAssociation", "serverDomainsReferenced"}
 
-ADDITIVE_FEATURE_KEYS = set()           # feature-level: none added by assemble
+# 'project' is an intentional additive field: business features are now identified
+# per frontend project (see frontend project-boundary design).
+ADDITIVE_FEATURE_KEYS = {"project"}
 ADDITIVE_LAYER_KEYS = {"units"}          # Task 3
 ADDITIVE_SERVERINDEX_KEYS = {"touchpoints"}  # Task 3 (capability is added later by capability_review)
 

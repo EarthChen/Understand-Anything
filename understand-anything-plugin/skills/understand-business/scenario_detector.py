@@ -13,8 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-CLIENT_FACET_TYPES = {'mobile', 'frontend', 'web', 'desktop'}
-SERVER_FACET_TYPES = {'server', 'backend'}
+from facets import canonical_facet, CLIENT_FACET_TYPES, SERVER_FACET_TYPES
 
 _STRATEGY_MAP = {
     'server_only': 'pairwise',
@@ -55,7 +54,7 @@ def detect_scenario(project_root_str: str) -> dict:
     client_facets = []
 
     for facet in facets:
-        facet_type = facet.get('type', '')
+        facet_type = canonical_facet(facet.get('type', ''))
         if facet_type in SERVER_FACET_TYPES:
             if server_facet is None:
                 server_facet = facet

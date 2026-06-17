@@ -137,9 +137,10 @@ class TestLoadClientFeaturesDispatch:
         result = load_client_features(str(tmp_path), {"type": "desktop", "path": "desktop/"})
         assert result is None
 
-    def test_registry_has_mobile_frontend_and_web(self):
-        # 'web' is registered as an alias for the frontend strategy (Finding #13).
-        assert set(CLIENT_STRATEGIES.keys()) == {"mobile", "frontend", "web"}
+    def test_registry_has_mobile_and_frontend(self):
+        # 'web' is handled by canonical_facet normalization in load_client_features,
+        # not as a literal key in CLIENT_STRATEGIES (Finding #13).
+        assert set(CLIENT_STRATEGIES.keys()) == {"mobile", "frontend"}
 
 
 class TestFrontendInfraTokenMatching:
@@ -229,12 +230,13 @@ class TestWebAliasDispatch:
     """Finding #13: 'web' dispatches to the frontend strategy."""
 
     def test_web_dispatches_to_frontend_strategy(self, tmp_path):
+        from facets import canonical_facet
         _write_frontend_graph(tmp_path, [_feat("Orders", source_repos=["web-app"])], facet_path="web")
         result = load_client_features(str(tmp_path), {"type": "web", "path": "web/"})
         assert result is not None
         assert result["consolidated"][0]["implType"] == "frontend-web"
-        # Same strategy object as 'frontend'.
-        assert CLIENT_STRATEGIES["web"] is CLIENT_STRATEGIES["frontend"]
+        # 'web' normalizes to 'frontend' via canonical_facet; no literal 'web' key exists.
+        assert canonical_facet("web") == "frontend"
 
     def test_web_missing_graph_returns_empty_triple(self, tmp_path):
         (tmp_path / "web").mkdir()

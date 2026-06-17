@@ -18,27 +18,17 @@ from typing import Any
 
 SCHEMA_PATH = Path(__file__).parent / "schemas" / "system.schema.json"
 
-MOBILE_PLATFORMS = (
-    "ios",
-    "android",
-    "flutter",
-    "react-native",
-    "kotlin-multiplatform",
-    "web",
-    "unknown",
+from facets import (
+    canonical_facet,
+    FACET_REGISTRY,
+    CLIENT_PLATFORMS as _CLIENT_PLATFORMS,
+    SERVER_PLATFORMS as _SERVER_PLATFORMS,
 )
 
-SERVER_PLATFORMS = (
-    "java",
-    "java-spring",
-    "kotlin",
-    "go",
-    "python",
-    "node",
-    "dotnet",
-    "rust",
-    "unknown",
-)
+# Sorted tuple views of the registry's platform sets plus the "unknown" sentinel.
+# No positional contract — order is alphabetical and may shift as the registry grows.
+MOBILE_PLATFORMS = tuple(sorted(_CLIENT_PLATFORMS)) + ("unknown",)
+SERVER_PLATFORMS = tuple(sorted(_SERVER_PLATFORMS)) + ("unknown",)
 
 
 def _safe_relpath_name(project_path: Path) -> str:
@@ -370,7 +360,7 @@ def build_server_services(
 def read_platform_mapping_from_system(system_config: dict) -> dict[str, str]:
     """Read repo -> platform mapping from system.json mobile facet."""
     for facet in system_config.get("facets", []):
-        if facet.get("type") != "mobile":
+        if canonical_facet(facet.get("type", "")) != "mobile":
             continue
 
         platform_mapping = facet.get("platformMapping")
@@ -397,7 +387,7 @@ def detect_platform_mapping_from_files(
     """Fallback: detect platform types from project file structure via subPaths."""
     mapping: dict[str, str] = {}
     for facet in system_config.get("facets", []):
-        if facet.get("type") != "mobile":
+        if canonical_facet(facet.get("type", "")) != "mobile":
             continue
         facet_path = facet.get("path", "")
         sub_paths = facet.get("subPaths", [])
@@ -479,7 +469,7 @@ def _basic_validate(data: dict, schema: dict) -> list[str]:
         return errors
 
     facet_required = {"type", "name", "path"}
-    facet_types = {"server", "mobile", "frontend", "shared"}
+    facet_types = set(FACET_REGISTRY.keys())
     service_required = {"name", "path", "platform"}
     platform_enum = set(schema["definitions"]["service"]["properties"]["platform"]["enum"])
     confidence_enum = {"high", "low"}
@@ -512,6 +502,19 @@ def _basic_validate(data: dict, schema: dict) -> list[str]:
     return errors
 
 
+def _normalized_for_validation(data: dict) -> dict:
+    """Return a copy of system.json data with facet types canonicalized.
+
+    Lets historical aliases (backend→server, web→frontend) pass schema
+    validation without polluting the canonical schema enum.
+    """
+    out = json.loads(json.dumps(data))
+    for facet in out.get("facets", []):
+        if isinstance(facet, dict) and "type" in facet:
+            facet["type"] = canonical_facet(facet["type"])
+    return out
+
+
 def validate_system_json(project_root_str: str) -> dict:
     """Validate system.json against the JSON Schema."""
     project_root = Path(project_root_str)
@@ -522,6 +525,7 @@ def validate_system_json(project_root_str: str) -> dict:
     with open(system_path, encoding="utf-8") as f:
         data = json.load(f)
 
+    data = _normalized_for_validation(data)
     schema = _load_schema()
 
     try:
@@ -554,7 +558,7 @@ def enrich_system_json_services(project_root_str: str) -> dict:
     backend_services: list[dict] = []
 
     for facet in system_config.get("facets", []):
-        facet_type = facet.get("type")
+        facet_type = canonical_facet(facet.get("type", ""))
         facet_path = facet.get("path", "")
         sub_paths = facet.get("subPaths", [])
 

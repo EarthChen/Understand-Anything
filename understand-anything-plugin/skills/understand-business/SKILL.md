@@ -73,6 +73,35 @@ Platform types (`ios`, `android`, `flutter`) are determined once at `system.json
 
 **Downstream consumers:** `/understand-business`, `/understand-wiki`, `/understand-domain`, and `/understand-query` should read `system.json.facets[].services[].platform` (or `platformMapping`) rather than re-detecting platforms locally.
 
+#### Frontend project boundary
+
+Each frontend project (sub-repo) is a business boundary. Features are NOT merged
+across projects by name — two projects that both have a feature named "订单" produce
+two independent business features. To merge specific cross-project features into one
+business, declare them explicitly in the frontend facet:
+
+```json
+{
+  "type": "frontend",
+  "name": "web",
+  "path": "web",
+  "subPaths": ["seller-portal", "ops-web"],
+  "frontendMergeGroups": [
+    { "canonicalName": "订单",
+      "members": [
+        { "project": "seller-portal", "feature": "订单" },
+        { "project": "ops-web", "feature": "订单管理" }
+      ] }
+  ]
+}
+```
+
+A frontend feature and a same-named mobile feature still merge into one business
+feature (web+app), unless 2+ frontend projects collide on that name — then each
+frontend project splits out (id `feature:<name>@<project>`) and the mobile feature
+stands alone. A merge group needs >=2 of its members to resolve, else its lone
+member stays a per-project feature.
+
 ---
 
 ## Workflow Phases

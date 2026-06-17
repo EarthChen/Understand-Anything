@@ -139,7 +139,8 @@ Identify cross-service relationships, LLM review/organize flows, generate parent
 2. `cross-service-matcher.py` — deterministic RPC/Event/DB matching (Layer 1)
 3. **LLM Review + Supplement + Organize** — verify matches, discover missed relationships, organize into business flows (Layer 2, **always execute**)
 4. **Generate Parent Wiki** — `overview.json`, `architecture.json`, `domains/<cross-domain>.json` (**always generate**)
-5. Repo-type specific: `build-client-graph.py` (mobile) or `build-system-graph.py` (backend)
+5. Repo-type specific: `build-client-graph.py` (mobile), `build-system-graph.py` (backend), or `build-frontend-graph.py` (frontend)
+   - Features are emitted per project (id `feature:<repo>:<domain>`, `project` field, `sourceRepos=[repo]`). Cross-project merges happen only via the frontend facet's `frontendMergeGroups` in system.json; `domainLinks` are emitted only for those explicit groups.
 
 **Incremental mode:** Before running the cross-service LLM analysis, compute content hashes (SHA-256) of each service's `wiki/meta.json`. Compare against the previous run's hashes stored in `$PROJECT_ROOT/.understand-anything/wiki/service-hashes.json`. If all service hashes match, skip Phase 3 entirely. If only some changed, pass the unchanged service wikis as read-only context and focus the LLM analysis on changed services only. After completion, update `service-hashes.json`.
 
