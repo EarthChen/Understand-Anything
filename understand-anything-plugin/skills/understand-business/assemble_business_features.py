@@ -19,10 +19,7 @@ import json
 import sys
 from pathlib import Path
 
-# Facet types that use the non-lossy per-repo frontend aggregation. Mirrors the
-# alias set in client_facets.CLIENT_STRATEGIES ('web' aliases the frontend
-# strategy) so the document builder and the registry agree on what is "frontend".
-_FRONTEND_FACETS = frozenset({'frontend', 'web'})
+from facets import FRONTEND_FACET_TYPES as _FRONTEND_FACETS
 
 
 def _build_feature_document(feature_data, association: dict) -> dict:
