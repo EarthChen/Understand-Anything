@@ -14,7 +14,7 @@
       "type": "object",
       "required": ["type", "name", "path"],
       "properties": {
-        "type": { "enum": ["server", "mobile", "frontend", "shared"] },
+        "type": { "enum": ["server", "mobile", "frontend", "shared", "desktop", "test"] },
         "name": { "type": "string" },
         "path": { "type": "string" },
         "subPaths": { "type": "array", "items": { "type": "string" } },

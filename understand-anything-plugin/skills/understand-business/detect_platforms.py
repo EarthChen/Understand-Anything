@@ -18,27 +18,15 @@ from typing import Any
 
 SCHEMA_PATH = Path(__file__).parent / "schemas" / "system.schema.json"
 
-MOBILE_PLATFORMS = (
-    "ios",
-    "android",
-    "flutter",
-    "react-native",
-    "kotlin-multiplatform",
-    "web",
-    "unknown",
+from facets import (
+    canonical_facet,
+    CLIENT_PLATFORMS as _CLIENT_PLATFORMS,
+    SERVER_PLATFORMS as _SERVER_PLATFORMS,
 )
 
-SERVER_PLATFORMS = (
-    "java",
-    "java-spring",
-    "kotlin",
-    "go",
-    "python",
-    "node",
-    "dotnet",
-    "rust",
-    "unknown",
-)
+# Kept as tuples for backward compatibility with any positional consumers.
+MOBILE_PLATFORMS = tuple(sorted(_CLIENT_PLATFORMS)) + ("unknown",)
+SERVER_PLATFORMS = tuple(sorted(_SERVER_PLATFORMS)) + ("unknown",)
 
 
 def _safe_relpath_name(project_path: Path) -> str:
@@ -479,7 +467,8 @@ def _basic_validate(data: dict, schema: dict) -> list[str]:
         return errors
 
     facet_required = {"type", "name", "path"}
-    facet_types = {"server", "mobile", "frontend", "shared"}
+    from facets import FACET_REGISTRY
+    facet_types = set(FACET_REGISTRY.keys())
     service_required = {"name", "path", "platform"}
     platform_enum = set(schema["definitions"]["service"]["properties"]["platform"]["enum"])
     confidence_enum = {"high", "low"}
@@ -512,6 +501,19 @@ def _basic_validate(data: dict, schema: dict) -> list[str]:
     return errors
 
 
+def _normalized_for_validation(data: dict) -> dict:
+    """Return a copy of system.json data with facet types canonicalized.
+
+    Lets historical aliases (backend→server, web→frontend) pass schema
+    validation without polluting the canonical schema enum.
+    """
+    out = json.loads(json.dumps(data))
+    for facet in out.get("facets", []):
+        if isinstance(facet, dict) and "type" in facet:
+            facet["type"] = canonical_facet(facet["type"])
+    return out
+
+
 def validate_system_json(project_root_str: str) -> dict:
     """Validate system.json against the JSON Schema."""
     project_root = Path(project_root_str)
@@ -522,6 +524,7 @@ def validate_system_json(project_root_str: str) -> dict:
     with open(system_path, encoding="utf-8") as f:
         data = json.load(f)
 
+    data = _normalized_for_validation(data)
     schema = _load_schema()
 
     try:
