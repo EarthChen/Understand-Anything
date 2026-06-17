@@ -172,3 +172,31 @@ class TestMultiRepoFrontendNonLossy:
         assert set(layer["platforms"].keys()) == {"ios", "android"}
         # mobile entries keep their per-platform impl detail (not a repos list)
         assert "framework" in layer["platforms"]["ios"]
+
+
+class TestWebFacetAliasNonLossy:
+    def test_web_facettype_preserves_all_repos(self):
+        # FIX 2: client_facets registers 'web' as an alias for the frontend
+        # strategy. A feature whose facetType == 'web' must get the same non-lossy
+        # repo aggregation as 'frontend' — NOT the else branch that drops every
+        # repo but the last (DEFECT-5 regression).
+        fd = {
+            "name": "Orders",
+            "implType": "frontend-web",
+            "platforms": ["web"],
+            "deliveryPlatforms": ["react"],
+            "implementations": [
+                {"platform": "web", "repo": r, "ref": f"{r}/src"}
+                for r in ("web-app", "admin", "portal")
+            ],
+            "mergedSummary": "Frontend impl",
+            "facetType": "web",
+        }
+        doc = _build_feature_document(fd, {"primaryServer": None, "error": None})
+        layer = doc["clientLayers"][0]
+        assert set(layer["units"].keys()) == {"web-app", "admin", "portal"}
+        assert "web" in layer["platforms"]
+        repos = layer["platforms"]["web"].get("repos", [])
+        assert set(repos) == {"web-app", "admin", "portal"}, (
+            f"no repo may be silently dropped for the 'web' alias; got {repos}"
+        )

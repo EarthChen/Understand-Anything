@@ -4,13 +4,16 @@ import pytest
 from assemble_business_features import assemble_features, _merge_server_associations
 
 
-def _assoc(feature_name, primary, supporting=None):
-    return {
+def _assoc(feature_name, primary, supporting=None, facet=None):
+    a = {
         "featureName": feature_name,
         "primaryServer": primary,
         "supportingServers": supporting or [],
         "error": None,
     }
+    if facet is not None:
+        a["facetType"] = facet
+    return a
 
 
 def _frontend(name, repos):
@@ -85,6 +88,27 @@ class TestTouchpoints:
         index = _merge_server_associations([_assoc("X", {"domain": "D", "service": "s", "confidence": 0.9})])
         assert index["D"]["touchpoints"][0]["facet"] == "unknown"
         assert index["D"]["refCount"] == 1
+
+    def test_multifacet_primary_dedups_features_and_refcount_not_touchpoints(self):
+        # FIX 1: one feature NAME with two associations (mobile + frontend), both
+        # primaryServer → the SAME domain. features/refCount must dedup (it is ONE
+        # feature), but BOTH per-facet touchpoints must be recorded so
+        # capability_review's >=2-facet gate still fires.
+        assoc = [
+            _assoc("Order Management",
+                   {"domain": "OrderService", "service": "order", "confidence": 0.9},
+                   facet="mobile"),
+            _assoc("Order Management",
+                   {"domain": "OrderService", "service": "order", "confidence": 0.9},
+                   facet="frontend"),
+        ]
+        entry = _merge_server_associations(assoc)["OrderService"]
+        assert entry["refCount"] == 1
+        assert entry["features"] == ["Order Management"]
+        assert len(entry["touchpoints"]) == 2
+        facets = {t["facet"] for t in entry["touchpoints"]}
+        assert facets == {"mobile", "frontend"}
+        assert all(t["role"] == "primary" for t in entry["touchpoints"])
 
 
 class TestClientLayerUnits:

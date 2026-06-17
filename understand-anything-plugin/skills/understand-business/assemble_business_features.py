@@ -19,6 +19,11 @@ import json
 import sys
 from pathlib import Path
 
+# Facet types that use the non-lossy per-repo frontend aggregation. Mirrors the
+# alias set in client_facets.CLIENT_STRATEGIES ('web' aliases the frontend
+# strategy) so the document builder and the registry agree on what is "frontend".
+_FRONTEND_FACETS = frozenset({'frontend', 'web'})
+
 
 def _build_feature_document(feature_data, association: dict) -> dict:
     """Build a single feature document combining client and server layers.
@@ -41,7 +46,7 @@ def _build_feature_document(feature_data, association: dict) -> dict:
         units = {}
         for impl in fd.get('implementations', []):
             platform = impl.get('platform', '')
-            if facet_type == 'frontend':
+            if facet_type in _FRONTEND_FACETS:
                 # Frontend emits one implementation per repo, all on platform 'web'.
                 # Keying platforms_dict by platform alone would drop every repo but
                 # the last, so aggregate repos under the single 'web' entry.
@@ -51,7 +56,7 @@ def _build_feature_document(feature_data, association: dict) -> dict:
                     entry['repos'].append(repo)
             else:
                 platforms_dict[platform] = {k: v for k, v in impl.items() if k != 'platform'}
-            unit_key = impl.get('repo', '') if facet_type == 'frontend' else platform
+            unit_key = impl.get('repo', '') if facet_type in _FRONTEND_FACETS else platform
             if unit_key:
                 units[unit_key] = {k: v for k, v in impl.items() if k not in ('platform', 'repo')}
         if not platforms_dict:
@@ -135,8 +140,14 @@ def _merge_server_associations(associations: list, facet_map: dict | None = None
             domain = primary.get('domain', '')
             if domain:
                 entry = _ensure(domain, primary.get('service', ''))
-                entry['features'].append(feature_name)
-                entry['refCount'] += 1
+                # Dedup features/refCount: one feature NAME may have a primary
+                # association per facet (mobile + frontend) pointing at the same
+                # domain, but it is still ONE feature. The touchpoint append below
+                # stays UNCONDITIONAL so each facet's primary touchpoint is recorded
+                # (capability_review's >=2-facet gate depends on it).
+                if feature_name not in entry['features']:
+                    entry['features'].append(feature_name)
+                    entry['refCount'] += 1
                 entry['touchpoints'].append(
                     {'feature': feature_name, 'facet': facet, 'role': 'primary'}
                 )
