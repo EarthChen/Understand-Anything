@@ -382,3 +382,27 @@ class TestFrontendSubpaths:
 
     def test_no_system_json_returns_empty(self, tmp_path):
         assert _frontend_subpaths(tmp_path) == []
+
+    def test_non_frontend_facet_falls_back_to_parent(self, tmp_path):
+        project = tmp_path
+        web = project / "web"
+        web.mkdir()
+        # web/ has a system.json with NO frontend facet
+        web_ua = web / ".understand-anything"
+        web_ua.mkdir()
+        (web_ua / "system.json").write_text(json.dumps({
+            "facets": [{"type": "backend", "path": "api/"}]
+        }))
+        # project root has the frontend facet — must be found despite web/'s system.json
+        ua = project / ".understand-anything"
+        ua.mkdir()
+        (ua / "system.json").write_text(json.dumps({
+            "facets": [{"type": "frontend", "path": "web/", "subPaths": ["admin/"]}]
+        }))
+        assert _frontend_subpaths(web) == ["admin/"]
+
+    def test_invalid_system_json_returns_empty(self, tmp_path):
+        ua = tmp_path / ".understand-anything"
+        ua.mkdir()
+        (ua / "system.json").write_text("{not valid json")
+        assert _frontend_subpaths(tmp_path) == []

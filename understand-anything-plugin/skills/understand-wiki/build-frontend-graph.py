@@ -327,11 +327,15 @@ def _frontend_subpaths(root: Path) -> list[str]:
 
     Checks root/.understand-anything/system.json then root.parent/... — the
     aggregate is invoked with the facet dir (e.g. web/), whose system.json lives
-    at the project root (root.parent).
+    at the project root (root.parent). A system.json with no frontend facet does
+    not stop the search; the next base is still checked.
     """
-    for base in (root, root.parent):
+    bases = [root]
+    if root.parent != root:  # avoid re-checking the same dir at the filesystem root
+        bases.append(root.parent)
+    for base in bases:
         sys_path = base / ".understand-anything" / "system.json"
-        if not sys_path.exists():
+        if not sys_path.is_file():
             continue
         try:
             cfg = json.loads(sys_path.read_text(encoding="utf-8"))
@@ -340,7 +344,7 @@ def _frontend_subpaths(root: Path) -> list[str]:
         for facet in cfg.get("facets", []):
             if facet.get("type") == "frontend":
                 return facet.get("subPaths", []) or []
-        return []
+        # system.json present but no frontend facet — keep looking at the next base
     return []
 
 
@@ -355,7 +359,7 @@ def _discover_repos(root: Path) -> list[tuple[str, Path]]:
     Discovery keys on domain-graph.json, so arbitrary subdirs (docs/, scripts/)
     are simply not repos and are skipped without warning.
     """
-    if (root / ".understand-anything" / "domain-graph.json").exists():
+    if (root / ".understand-anything" / "domain-graph.json").is_file():
         return [(root.name, root)]
 
     sub_paths = _frontend_subpaths(root)
@@ -363,14 +367,14 @@ def _discover_repos(root: Path) -> list[tuple[str, Path]]:
         repos: list[tuple[str, Path]] = []
         for sp in sub_paths:
             d = root / sp.rstrip("/")
-            if (d / ".understand-anything" / "domain-graph.json").exists():
+            if (d / ".understand-anything" / "domain-graph.json").is_file():
                 repos.append((d.name, d))
         if repos:
             return repos
 
     repos = []
     for d in sorted(root.iterdir(), key=lambda p: p.name):
-        if d.is_dir() and (d / ".understand-anything" / "domain-graph.json").exists():
+        if d.is_dir() and (d / ".understand-anything" / "domain-graph.json").is_file():
             repos.append((d.name, d))
     return repos
 
