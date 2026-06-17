@@ -1,12 +1,12 @@
 ---
 name: understand-query
-description: Query the Understand-Anything knowledge base via CLI. Six-layer drill-down from services to source code, backed by the shared API server.
+description: Query the Understand-Anything knowledge base via CLI. Layered drill-down from services to source code, backed by the shared API server.
 argument-hint: ["<subcommand> [--server URL] [--format json|md] [--verbose] [subcommand-flags...]"]
 ---
 
 # /understand-query
 
-Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the shared Understand-Anything API server. Use six progressive layers — from business landscape and service discovery down to source-verified code — to answer questions without loading entire graphs into context.
+Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the shared Understand-Anything API server. Use progressively deeper layers — from business landscape and service discovery down to source-verified code — to answer questions without loading entire graphs into context.
 
 ## Source Verification Rule (MANDATORY)
 
@@ -23,9 +23,9 @@ Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the
 3. **Flag discrepancies**: If source code contradicts wiki/domain data, report the discrepancy explicitly.
 4. **Never trust wiki alone** for: parameter validation logic, error codes, conditional branches, or concurrency controls.
 
-### CRITICAL: Default Depth Must Be `full`
+### CRITICAL: Agents Must Pass `--depth full` for User-Facing Answers
 
-**When answering user-facing questions, agents MUST use `--depth full` (not `standard` or `quick`).** The `standard` depth skips source verification and may return unverified wiki/domain claims. Only use `standard`/`quick` for internal exploratory searches where the output is not directly presented to the user as factual.
+**The CLI default is `standard`, but agents MUST explicitly pass `--depth full` when answering user-facing questions (not `standard` or `quick`).** The `standard` depth skips source verification and may return unverified wiki/domain claims. Only use `standard`/`quick` for internal exploratory searches where the output is not directly presented to the user as factual.
 
 **Decision table:**
 | Scenario | Required Depth |
@@ -45,7 +45,7 @@ Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the
 | Platform | Mechanism | Type |
 |----------|-----------|------|
 | **Cursor** | `Task` tool | `subagent_type: "generalPurpose"` (needs shell for CLI) |
-| **Claude Code** | `dispatch_agent` / `Task` tool | General-purpose agent with shell access |
+| **Claude Code** | `Agent` tool (sub-agent dispatch) | General-purpose agent with shell access |
 | **Codex** | Platform-native sub-agent / task dispatch | Agent with shell access |
 
 ### When NOT to Use Sub-Agent
@@ -77,6 +77,12 @@ Both approaches search KG, retrieve neighbors, read source code, include busines
 ```bash
 python ua_query.py trace --service svc-a --query "keyword" --source --business && \
 python ua_query.py trace --service svc-b --query "keyword" --source
+```
+
+**Reading many matches at once?** Add `--grouped` to `trace --source` to return source code grouped by file (plus a relationship map between matched nodes) instead of per-node — fewer, denser reads:
+
+```bash
+python ua_query.py trace --service SERVICE --query "keyword" --source --grouped
 ```
 
 ---
@@ -190,19 +196,19 @@ python ua_query.py ask --query "PK对战,PKBattle" --platform android --depth fu
 
 ---
 
-## Six-Layer Drill-Down Model
+## Layered Drill-Down Model
 
-Aligned with the Query Escalation Protocol below. Each layer is progressively more complete but less semantically rich:
+Each layer is progressively more complete but less semantically rich. Escalate top→bottom until you get results. This is the single canonical layer reference (the Query Escalation Protocol below reuses it).
 
-| Layer | Subcommand | Answers |
-|-------|-----------|---------|
-| L1. Business | `business --search "keyword" [--platform P]` | What features/domains match? Which services own them? |
-| L2. Wiki | `wiki --search "keyword"` | Technical domain docs and service associations |
-| L3. Domain Graph | `domain --service S --search "keyword"` / `--flows` | Flow structure, relationships, step detail |
-| L4. Source-Level KG | `ask --query "keyword" --depth full` / `trace --source` | Class relationships, summaries, neighbors |
-| L5a. Structure (symbols) | `structure --service S --q "keyword"` | AST-parsed class/method/file names (deterministic) |
-| L5b. Source Search | `source --service S --search "keyword"` | Full source content search (config, comments, literals) |
-| L6. File | `source --service S --file PATH` / `structure --service S --file PATH --source` | Ground-truth source code lines |
+| Layer | Command | Answers / Searches | Reliability |
+|-------|---------|--------------------|-------------|
+| L1. Business | `business --search "keyword" [--platform P]` | Features/domains/flows that match; which services own them | LLM-generated, highest abstraction |
+| L2. Wiki | `wiki --search "keyword"` | Technical domain docs, service associations | LLM-generated, detailed text |
+| L3. Domain Graph | `domain --service S --search "keyword"` / `--flows` | Flow structure, relationships, step detail | LLM-generated, structured |
+| L4. Source-Level KG | `ask --query "keyword" --depth full` / `trace --source` | Class relationships, summaries, neighbors | LLM-analyzed code symbols |
+| L5a. Structure (symbols) | `structure --service S --q "keyword"` | AST class/method/file names | **Always complete (deterministic)** |
+| L5b. Source Search | `source --service S --search "keyword"` | Full source content (config, comments, literals) | **Always complete, includes config/YAML** |
+| L6. File | `source --service S --file PATH` / `structure --service S --file PATH --source` | Ground-truth source lines | **Ground truth** |
 
 ---
 
@@ -254,56 +260,23 @@ When a command returns empty or unexpected results, follow the fallback chain:
 
 ## Query Escalation Protocol (Concept Not Found)
 
-When a user asks about a concept that has **no direct domain/feature match** (e.g., wiki didn't generate a separate domain for it, or it's merged into a broader domain), agents MUST escalate through the following 6 data layers. Each layer is progressively more complete but less semantically rich:
-
-| Level | Command | Searches | Completeness |
-|-------|---------|----------|--------------|
-| L1: Business | `business --search "keyword" [--platform P]` | Feature names, domain names, flow names, step descriptions | LLM-generated, highest abstraction |
-| L2: Wiki | `wiki --search "keyword"` | Wiki page titles, domain docs, descriptions | LLM-generated, more detailed text |
-| L3: Domain flows | `domain --service S --flows` | Domain graph: flow structure, relationships | LLM-generated, structured flows |
-| L3b: Domain search | `domain --service S --search "keyword"` | Flow/node names matching keyword in domain graph | LLM-generated, keyword-targeted |
-| L4: KG | `ask --query "keyword,English" --depth full` | KG nodes (classes, functions) + summaries + sourceFallback | LLM-analyzed code symbols |
-| L5a: Structure (symbols) | `structure --service S --q "keyword"` | AST-parsed: class/method/file names | **Always complete (deterministic)** |
-| L5b: Source Search | `source --service S --search "keyword"` | Full source content search (AST-chunked MiniSearch) | **Always complete, includes config/YAML** |
-| L6: File | `source --service S --file PATH` | Actual source code lines | **Ground truth** |
+When a user asks about a concept that has **no direct domain/feature match** (e.g., wiki didn't generate a separate domain for it, or it's merged into a broader domain), agents MUST escalate through the layers of the [Layered Drill-Down Model](#layered-drill-down-model) above — L1 (Business) → L6 (File) — stopping at the first layer that returns useful results. The lower layers (L5a/L5b/L6) are deterministic and always complete, so a concept that genuinely exists in source will always surface there.
 
 ### Agent Decision Logic
 
 ```
-User asks about concept X (example: "PK对战在Android上怎么实现的"):
+Concept X — example "PK对战在Android上怎么实现的". Stop at the first layer with results:
 
-Step 1 (Business): business --search "PK" --platform android
-  → Has results? → Follow wikiRef. Done.
+L1  business --search "PK" --platform android                    → follow wikiRef
+L2  wiki --search "PK"                                            → read wiki domain detail
+L3  domain --service android-app --flows                         → matching flow? → --flow "PK对战" --steps
+L3b domain --service android-app --search "PK"                    → flow/node match? → --flow / --steps
+L4  ask --query "PK对战,PK,PKBattle" --depth full                 → matchedNodes / structureFallback / sourceFallback
+L5a structure --service android-app --q "PK"                      → pick file → structure --file PATH --source
+L5b source --service android-app --search "PK" [--path "*.yml"]   → read matched chunk (bodies/config/comments)
+L6  structure --service android-app --files                      → grep path "pk" → explore file-by-file
 
-Step 2 (Wiki): wiki --search "PK"
-  → Has results? → Read wiki domain detail. Done.
-
-Step 3 (Domain flows): domain --service android-app --flows
-  → Find flow matching "PK"? → domain --service android-app --flow "PK对战" --steps
-  → Has steps? → Present flow detail. Done.
-
-Step 3b (Domain search): domain --service android-app --search "PK"
-  → Has flow/node matches? → Follow up with --flow / --steps. Done.
-
-Step 4 (KG): ask --query "PK对战,PK,PKBattle" --depth full
-  → Has matchedNodes? → Read source verification. Done.
-  → Has structureFallback? → Pick relevant symbol → structure --file PATH --source. Done.
-  → Has sourceFallback? → Read matched source chunks from content grep. Done.
-
-Step 5a (Structure symbols): structure --service android-app --q "PK"
-  → Has results? → Pick relevant files →
-    structure --service android-app --file "com/app/pk/PKManager.java" --source
-  → Present source code to user. Done.
-
-Step 5b (Source search): source --service android-app --search "PK" [--path "*.yml"]
-  → Searches FULL source content (function bodies, config files, comments)
-  → Has results? → Read matched chunk. Done.
-
-Step 6 (File): structure --service android-app --files | search path "pk"
-  → Found directories? → Explore file-by-file. Done.
-
-Final: Report "Concept not found in any indexed layer of this service."
-  → Suggest: try different service, try broader keywords.
+None matched → report "Concept not found in any indexed layer of this service" (suggest another service / broader keywords).
 ```
 
 ### Keyword Extraction Rules
@@ -361,8 +334,8 @@ The CLI uses `http://172.18.228.71:3001` as the default API server.
 | Operation | ~Tokens | Recommendation |
 |-----------|---------|----------------|
 | `ask --depth quick` | 200–500 | Always safe |
-| `ask --depth standard` | 1000–3000 | Default for business questions |
-| `ask --depth full` | 3000–8000 | Use for verified answers |
+| `ask --depth standard` | 1000–3000 | Internal exploration only |
+| `ask --depth full` | 3000–8000 | **Required for user-facing answers** |
 | `trace --source --business` | 1500–4000 | Primary exploration |
 | `services --list` | 200 | Always safe |
 | `business --search Q` | 300 | Prefer over `--list` |
@@ -431,7 +404,7 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "Guided tour of service S" / "S的引导式探索？" | `kg --service S --tour` | Guided exploration steps |
 | "Package/module structure" / "S的模块结构？" | `kg --service S --layers` | Layer summary |
 
-**Keyword expansion rule:** When the user's question is in Chinese/non-English, ALWAYS expand keywords to include English variants (comma-separated). Example: "亲密度" → `--query "亲密度,intimacy,IntimacyService"`. Multi-keyword parallel search eliminates retry loops.
+**Keyword expansion:** Always expand non-English queries to comma-separated variants (original + English + CamelCase) — see [Keyword Extraction Rules](#keyword-extraction-rules) above for the full pattern. Multi-keyword parallel search eliminates retry loops. Example: "亲密度" → `--query "亲密度,intimacy,IntimacyService"`.
 
 ---
 
