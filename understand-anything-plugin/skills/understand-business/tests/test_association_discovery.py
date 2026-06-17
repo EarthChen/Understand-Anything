@@ -139,7 +139,7 @@ class TestDiscoverAssociations:
 
         with patch("association_discovery._call_llm") as mock_llm:
             mock_llm.return_value = mock_llm_response
-            results = discover_associations(consolidated_features, server_domains)
+            results, _llm_calls, _reused = discover_associations(consolidated_features, server_domains)
 
         assert len(results) == 2
         assert results[0]["featureName"] == "即时通讯"
@@ -167,7 +167,7 @@ class TestDiscoverAssociations:
 
         with patch("association_discovery._call_llm") as mock_llm:
             mock_llm.side_effect = responses
-            results = discover_associations(consolidated_features, server_domains)
+            results, _llm_calls, _reused = discover_associations(consolidated_features, server_domains)
 
         assert len(results) == 2
         assert results[0]["primaryServer"] is not None
@@ -184,7 +184,7 @@ class TestDiscoverAssociations:
 
         with patch("association_discovery._call_llm") as mock_llm:
             mock_llm.return_value = mock_response
-            results = discover_associations(consolidated_features, server_domains)
+            results, _llm_calls, _reused = discover_associations(consolidated_features, server_domains)
 
         r = results[0]
         assert "featureName" in r
@@ -203,7 +203,7 @@ class TestDiscoverAssociations:
 
         with patch("association_discovery._call_llm") as mock_llm:
             mock_llm.return_value = mock_response
-            results = discover_associations(consolidated_features, server_domains)
+            results, _llm_calls, _reused = discover_associations(consolidated_features, server_domains)
 
         assert results[0]["primaryServer"] is None
         assert len(results[0]["supportingServers"]) == 1
