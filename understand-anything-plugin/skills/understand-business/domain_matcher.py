@@ -18,6 +18,8 @@ import json
 import sys
 from pathlib import Path
 
+from facets import canonical_facet, SERVER_FACET_TYPES
+
 
 def _normalize_name(name):
     return name.lower().replace('-', '_').replace(' ', '_')
@@ -447,9 +449,9 @@ def match_domains(project_root_str: str, system_config: dict | None = None) -> d
     client_facet = None
     for facet in system_config.get('facets', []):
         facet_type = facet.get('type', '')
-        if facet_type in ('backend', 'server'):
+        if canonical_facet(facet_type) in SERVER_FACET_TYPES:
             server_facet = facet
-        elif facet_type == 'mobile':
+        elif canonical_facet(facet_type) == 'mobile':
             client_facet = facet
 
     if not server_facet or not client_facet:
