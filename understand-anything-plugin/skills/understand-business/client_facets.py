@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 from domain_matcher import _consolidate_mobile_domains
+from facets import canonical_facet
 
 # Conservative frontend-infrastructure keywords. Most infra is already excluded
 # upstream by frontend-flow.md; this is a backstop for anything that slips through.
@@ -153,19 +154,17 @@ def consolidate_frontend(project_root: str, facet: dict) -> dict:
     }
 
 
-# NOTE: keep this in sync with scenario_detector.CLIENT_FACET_TYPES. Any type
-# recognized there but NOT registered here (currently 'desktop') is treated as
+# Strategies are keyed by CANONICAL facet type (see facets.canonical_facet).
+# 'web' resolves to 'frontend'; 'desktop' has no strategy and is therefore
 # unsupported — load_client_features returns None and association_discovery
-# surfaces it via `unsupportedFacets`, contributing zero features. 'web' is
-# registered as an alias for the frontend strategy: a web facet IS a frontend facet.
+# surfaces it via `unsupportedFacets`.
 CLIENT_STRATEGIES = {
     'mobile': consolidate_mobile,
     'frontend': consolidate_frontend,
-    'web': consolidate_frontend,
 }
 
 
 def load_client_features(project_root: str, facet: dict) -> dict | None:
     """Return {consolidated, standalone, infrastructure}, or None if unsupported."""
-    strategy = CLIENT_STRATEGIES.get(facet.get('type'))
+    strategy = CLIENT_STRATEGIES.get(canonical_facet(facet.get('type', '')))
     return strategy(project_root, facet) if strategy else None
