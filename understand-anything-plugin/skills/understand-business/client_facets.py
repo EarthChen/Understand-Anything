@@ -24,11 +24,27 @@ _FRONTEND_INFRA_KEYWORDS = (
 )
 
 _TOKEN_SPLIT = re.compile(r'[\s\-_]+')
+# camelCase / Pascal-case + letter↔digit boundary splitter. Applied per chunk
+# (after the whitespace/hyphen/underscore split) so that CamelCase infra
+# component names — which dominate frontend code — also split into their words:
+# 'ThemeProvider' → ('theme', 'provider'), 'AppLayout' → ('app', 'layout').
+_CAMEL_SPLIT = re.compile(r'[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+')
 
 
 def _tokenize(text: str) -> tuple:
-    """Lowercase + split on whitespace/hyphen/underscore into a token tuple."""
-    return tuple(t for t in _TOKEN_SPLIT.split(text.lower()) if t)
+    """Split into lowercase tokens on whitespace/hyphen/underscore AND camelCase.
+
+    Splitting must happen before lowercasing so camelCase boundaries survive.
+    Keywords are tokenized with this same function, so both sides split
+    identically — e.g. 'i18n' → ('i', '18', 'n') on both the keyword and the
+    name, keeping the 'i18n' keyword match intact.
+    """
+    return tuple(
+        part.lower()
+        for chunk in _TOKEN_SPLIT.split(text)
+        if chunk
+        for part in _CAMEL_SPLIT.findall(chunk)
+    )
 
 
 def consolidate_mobile(project_root: str, facet: dict) -> dict:

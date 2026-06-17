@@ -78,19 +78,23 @@ class TestConsolidateFrontend:
         assert impls == [{"platform": "web", "repo": "web-app"}]
 
     def test_infra_named_feature_lands_in_infrastructure(self, tmp_path):
-        # NOTE: updated for token-sequence matching. "Theme" (a standalone token)
-        # is infra, but "ThemeProvider" is a single token "themeprovider" that no
-        # longer matches "theme" or "provider" as a contiguous token run — and
-        # "provider" was removed as a keyword anyway (it collides with business
-        # feature names). So "ThemeProvider" stays a consolidated feature.
+        # Token-sequence matching now also splits camelCase/Pascal-case, so a
+        # CamelCase infra component like "ThemeProvider" tokenizes to
+        # ('theme', 'provider') and matches the 'theme' keyword → infra. The
+        # standalone token "Theme" is infra too. "provider" remains absent from
+        # the keyword list, so business names like "Provider Onboarding" stay
+        # consolidated.
         _write_frontend_graph(tmp_path, [
             _feat("Order Management", source_repos=["web-app"]),
+            _feat("ThemeProvider", source_repos=["web-app"]),
             _feat("Theme", source_repos=["web-app"]),
         ])
         result = consolidate_frontend(str(tmp_path), {"type": "frontend", "path": "frontend/"})
         consolidated_names = {e["name"] for e in result["consolidated"]}
         infra_names = {e["name"] for e in result["infrastructure"]}
         assert "Order Management" in consolidated_names
+        assert "ThemeProvider" in infra_names
+        assert "ThemeProvider" not in consolidated_names
         assert "Theme" in infra_names
         assert "Theme" not in consolidated_names
 
@@ -145,6 +149,7 @@ class TestFrontendInfraTokenMatching:
         "Provider Onboarding",   # 'provider' removed as keyword
         "Loading Dock Management",  # 'loading' removed as keyword
         "Reorder History",       # 'order' must not match inside 'reorder' (and isn't a keyword)
+        "Themepark Bookings",    # 'theme' must not match inside the single token 'themepark'
     ])
     def test_business_features_are_not_infra(self, name):
         assert _is_frontend_infra(name) is False
@@ -160,6 +165,23 @@ class TestFrontendInfraTokenMatching:
     ])
     def test_infra_names_are_infra(self, name):
         assert _is_frontend_infra(name) is True
+
+    @pytest.mark.parametrize("name", [
+        "ThemeProvider",   # ('theme', 'provider') → matches 'theme'
+        "ErrorBoundary",   # ('error', 'boundary') → matches 'error-boundary'
+        "ModalShell",      # ('modal', 'shell') → matches 'modal-shell'
+        "AppLayout",       # ('app', 'layout') → matches 'layout'
+    ])
+    def test_camelcase_infra_components_are_infra(self, name):
+        # Frontend infra components are predominantly CamelCase. _tokenize must
+        # split Pascal/camelCase so the keyword tokens still match.
+        assert _is_frontend_infra(name) is True
+
+    def test_i18n_keyword_still_matches_after_camelcase_split(self):
+        # The 'i18n' keyword must keep matching the 'i18n' token even though the
+        # camelCase/digit splitting breaks it into ('i', '18', 'n') — both the
+        # keyword and the name tokenize identically, so the contiguous run holds.
+        assert _is_frontend_infra("i18n") is True
 
     def test_multiword_keyword_matches_as_contiguous_run(self):
         # 'error-boundary' tokenizes to ('error', 'boundary') and must match
