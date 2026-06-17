@@ -12,14 +12,14 @@ def _score_node_relevance(node: dict[str, Any], query: str) -> float:
     node_id = node.get("id", "").lower()
     score = 0.0
 
-    # 名称匹配
-    if q == name:
+    # 名称匹配 (empty query must not match)
+    if q and q == name:
         score += 15.0
-    elif q in name:
+    elif q and q in name:
         score += 5.0 + (len(q) / max(len(name), 1))
 
     # ID 匹配
-    if q in node_id:
+    if q and q in node_id:
         score += 2.0
 
     # 类型加权
