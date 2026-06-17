@@ -38,10 +38,13 @@ def _build_feature_document(feature_data, association: dict) -> dict:
     for fd in feature_data_list:
         facet_type = fd.get('facetType', 'mobile')
         platforms_dict = {}
+        units = {}
         for impl in fd.get('implementations', []):
-            platforms_dict[impl.get('platform', '')] = {
-                k: v for k, v in impl.items() if k != 'platform'
-            }
+            platform = impl.get('platform', '')
+            platforms_dict[platform] = {k: v for k, v in impl.items() if k != 'platform'}
+            unit_key = impl.get('repo', '') if facet_type == 'frontend' else platform
+            if unit_key:
+                units[unit_key] = {k: v for k, v in impl.items() if k not in ('platform', 'repo')}
         if not platforms_dict:
             for p in fd.get('platforms', []):
                 platforms_dict[p] = {}
@@ -49,6 +52,7 @@ def _build_feature_document(feature_data, association: dict) -> dict:
             'facetType': facet_type,
             'implType': fd.get('implType', 'unknown'),
             'platforms': platforms_dict,
+            'units': units,
             'deliveryPlatforms': fd.get('deliveryPlatforms', []),
             'summary': fd.get('mergedSummary', ''),
         })
@@ -88,42 +92,67 @@ def _build_feature_document(feature_data, association: dict) -> dict:
     }
 
 
-def _merge_server_associations(associations: list) -> dict:
-    """Build reverse index: server domain → list of features that depend on it."""
-    index = {}
+def _merge_server_associations(associations: list, facet_map: dict | None = None) -> dict:
+    """Build reverse index: server domain → the client features that depend on it.
+
+    Each domain entry carries:
+      - features[]: legacy feature-name list (retained for backward compat)
+      - refCount, service: retained for backward compat
+      - touchpoints[]: {feature, facet, role}, role ∈ {primary, supporting} — the
+        server-anchored join. Indexing primary ∪ supporting under each domain
+        already co-locates features that touch the same backend domain.
+
+    facet_map maps featureName → facetType; unknown names resolve to "unknown".
+    """
+    facet_map = facet_map or {}
+    index: dict = {}
+
+    def _ensure(domain: str, service: str) -> dict:
+        if domain not in index:
+            index[domain] = {'features': [], 'refCount': 0, 'service': service, 'touchpoints': []}
+        return index[domain]
 
     for assoc in associations:
         if assoc.get('error'):
             continue
         feature_name = assoc.get('featureName', '')
+        facet = facet_map.get(feature_name, 'unknown')
 
         primary = assoc.get('primaryServer')
         if primary and isinstance(primary, dict):
             domain = primary.get('domain', '')
             if domain:
-                if domain not in index:
-                    index[domain] = {'features': [], 'refCount': 0, 'service': primary.get('service', '')}
-                index[domain]['features'].append(feature_name)
-                index[domain]['refCount'] += 1
+                entry = _ensure(domain, primary.get('service', ''))
+                entry['features'].append(feature_name)
+                entry['refCount'] += 1
+                entry['touchpoints'].append(
+                    {'feature': feature_name, 'facet': facet, 'role': 'primary'}
+                )
 
         for s in (assoc.get('supportingServers') or []):
+            if not isinstance(s, dict):
+                continue
             domain = s.get('domain', '')
             if domain:
-                if domain not in index:
-                    index[domain] = {'features': [], 'refCount': 0, 'service': s.get('service', '')}
-                if feature_name not in index[domain]['features']:
-                    index[domain]['features'].append(feature_name)
-                    index[domain]['refCount'] += 1
+                entry = _ensure(domain, s.get('service', ''))
+                if feature_name not in entry['features']:
+                    entry['features'].append(feature_name)
+                    entry['refCount'] += 1
+                entry['touchpoints'].append(
+                    {'feature': feature_name, 'facet': facet, 'role': 'supporting'}
+                )
 
     return index
 
 
 def assemble_features(associations: list, consolidation: dict) -> dict:
     """Assemble feature-centric documents from associations and consolidation data."""
-    # Build name→[feature_data] lookup; list supports multiple facets per feature name
+    # Build name→[feature_data] lookup; list supports multiple facets per feature name.
     feature_lookup: dict = {}
+    facet_map: dict = {}
     for f in consolidation.get('consolidated', []):
         feature_lookup.setdefault(f['name'], []).append(f)
+        facet_map.setdefault(f['name'], f.get('facetType', 'unknown'))
     for f in consolidation.get('standalone', []):
         feature_lookup.setdefault(f['name'], []).append({
             'name': f['name'],
@@ -134,6 +163,7 @@ def assemble_features(associations: list, consolidation: dict) -> dict:
             'mergedSummary': '',
             'facetType': f.get('facetType', 'mobile'),
         })
+        facet_map.setdefault(f['name'], f.get('facetType', 'mobile'))
 
     # Build feature documents
     features = []
@@ -154,7 +184,7 @@ def assemble_features(associations: list, consolidation: dict) -> dict:
         if doc['serverLayer']['primaryDomain'] is not None:
             with_association += 1
 
-    server_index = _merge_server_associations(associations)
+    server_index = _merge_server_associations(associations, facet_map)
 
     return {
         'features': features,
