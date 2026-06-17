@@ -263,7 +263,12 @@ def _consolidate_mobile_domains(project_root: str, facet_path: str, sub_paths: l
     Flutter modules are not independent apps — they're embedded in native apps via bridges.
     """
     root = Path(project_root)
-    facet_dir = root / facet_path
+    facet_dir = (root / facet_path).resolve()
+    # Traversal guard (mirrors the sibling loaders): a facet path that escapes
+    # the project root yields the same empty/fallback structure this function
+    # returns when its inputs are missing.
+    if not facet_dir.is_relative_to(root.resolve()):
+        return {'consolidated': [], 'standalone': [], 'infrastructure': []}
 
     # Load merge metadata
     cg_path = facet_dir / '.understand-anything' / 'client-graph.json'

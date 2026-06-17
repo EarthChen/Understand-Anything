@@ -7,22 +7,41 @@ point so the rest of the business pipeline never branches on facet type.
 Adding a new client facet type = register one strategy here, zero pipeline edits.
 """
 import json
+import re
 from pathlib import Path
 
 from domain_matcher import _consolidate_mobile_domains
 
 # Conservative frontend-infrastructure keywords. Most infra is already excluded
 # upstream by frontend-flow.md; this is a backstop for anything that slips through.
+# 'provider' and 'loading' were intentionally removed: they collide with real
+# business feature names ('Provider Onboarding', 'Loading Dock Management'), and
+# this backstop deliberately favors keeping features over dropping them (the
+# primary infra filter is upstream).
 _FRONTEND_INFRA_KEYWORDS = (
     'layout', 'theme', 'i18n', 'locale', 'error-boundary',
-    'loading', 'toast', 'modal-shell', 'provider',
+    'toast', 'modal-shell',
 )
+
+_TOKEN_SPLIT = re.compile(r'[\s\-_]+')
+
+
+def _tokenize(text: str) -> tuple:
+    """Lowercase + split on whitespace/hyphen/underscore into a token tuple."""
+    return tuple(t for t in _TOKEN_SPLIT.split(text.lower()) if t)
 
 
 def consolidate_mobile(project_root: str, facet: dict) -> dict:
-    """Mobile consolidation — delegates to the existing domain_matcher logic."""
+    """Mobile consolidation — delegates to the existing domain_matcher logic.
+
+    A missing or empty 'path' returns the empty consolidation (graceful; mirrors
+    consolidate_frontend's missing-path behavior) rather than scanning the root.
+    """
+    path = facet.get('path', '')
+    if not path:
+        return {'consolidated': [], 'standalone': [], 'infrastructure': []}
     return _consolidate_mobile_domains(
-        project_root, facet['path'], facet.get('subPaths', [])
+        project_root, path, facet.get('subPaths', [])
     )
 
 
@@ -45,8 +64,22 @@ def _summarize(feat: dict) -> str:
 
 
 def _is_frontend_infra(name: str) -> bool:
-    lowered = name.lower()
-    return any(kw in lowered for kw in _FRONTEND_INFRA_KEYWORDS)
+    """True if any infra keyword appears as a CONTIGUOUS token run within `name`.
+
+    Token-sequence (not substring) matching: 'error-boundary' matches "Error
+    Boundary Wrapper" and 'i18n' matches the token 'i18n', while 'order' would
+    never match inside the single token 'reorder'.
+    """
+    tokens = _tokenize(name)
+    for kw in _FRONTEND_INFRA_KEYWORDS:
+        kw_tokens = _tokenize(kw)
+        n = len(kw_tokens)
+        if n == 0:
+            continue
+        for i in range(len(tokens) - n + 1):
+            if tokens[i:i + n] == kw_tokens:
+                return True
+    return False
 
 
 def consolidate_frontend(project_root: str, facet: dict) -> dict:
@@ -104,9 +137,15 @@ def consolidate_frontend(project_root: str, facet: dict) -> dict:
     }
 
 
+# NOTE: keep this in sync with scenario_detector.CLIENT_FACET_TYPES. Any type
+# recognized there but NOT registered here (currently 'desktop') is treated as
+# unsupported — load_client_features returns None and association_discovery
+# surfaces it via `unsupportedFacets`, contributing zero features. 'web' is
+# registered as an alias for the frontend strategy: a web facet IS a frontend facet.
 CLIENT_STRATEGIES = {
     'mobile': consolidate_mobile,
     'frontend': consolidate_frontend,
+    'web': consolidate_frontend,
 }
 
 
