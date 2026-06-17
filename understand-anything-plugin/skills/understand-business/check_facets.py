@@ -2,7 +2,8 @@
 """Phase 0: Check facet availability from system.json.
 
 Reads system.json, checks for each facet whether its aggregation graph
-(system-graph.json for backend, client-graph.json for mobile) and wiki exist.
+(system-graph.json for server, client-graph.json for mobile, frontend-graph.json
+for frontend) and wiki exist.
 
 Usage:
     python3 check_facets.py <project-root>

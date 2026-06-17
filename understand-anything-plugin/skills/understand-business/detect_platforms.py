@@ -20,6 +20,7 @@ SCHEMA_PATH = Path(__file__).parent / "schemas" / "system.schema.json"
 
 from facets import (
     canonical_facet,
+    FACET_REGISTRY,
     CLIENT_PLATFORMS as _CLIENT_PLATFORMS,
     SERVER_PLATFORMS as _SERVER_PLATFORMS,
 )
@@ -467,7 +468,6 @@ def _basic_validate(data: dict, schema: dict) -> list[str]:
         return errors
 
     facet_required = {"type", "name", "path"}
-    from facets import FACET_REGISTRY
     facet_types = set(FACET_REGISTRY.keys())
     service_required = {"name", "path", "platform"}
     platform_enum = set(schema["definitions"]["service"]["properties"]["platform"]["enum"])
