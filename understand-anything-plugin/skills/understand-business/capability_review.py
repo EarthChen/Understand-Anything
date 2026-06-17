@@ -123,7 +123,7 @@ def run_capability_review(project_root_str: str) -> dict:
 
     for domain_name, entry in server_index.items():
         touchpoints = entry.get('touchpoints', [])
-        facets = {t.get('facet') for t in touchpoints}
+        facets = {t.get('facet') for t in touchpoints if t.get('facet')}
         new_hash = _capability_hash(domain_name, touchpoints)
 
         # Cache: reuse the prior capability if the grouping is unchanged.
@@ -144,6 +144,9 @@ def run_capability_review(project_root_str: str) -> dict:
             except Exception:  # any LLM failure → degrade this domain to a mechanical label
                 entry['capability'] = _mechanical_capability(domain_name)
                 mechanical += 1
+                # Do NOT cache the hash: a degrade is transient, so a later run with a
+                # working LLM (and unchanged grouping) must re-attempt the review.
+                continue
             else:
                 parsed = parse_review_response(response, domain_name)
                 entry['capability'] = {
@@ -154,11 +157,16 @@ def run_capability_review(project_root_str: str) -> dict:
                 for fl in parsed.get('flagged', []):
                     if not isinstance(fl, dict):
                         continue
+                    fl_feature = fl.get('feature')
+                    if not fl_feature:  # a flag with no feature matches nothing
+                        continue
                     for tp in touchpoints:
-                        if tp.get('feature') == fl.get('feature'):
+                        if tp.get('feature') == fl_feature:
                             tp['flagged'] = {'reason': fl.get('reason', '')}
                 reviewed += 1
         else:
+            # Misses the gate (<2 touchpoints or <2 facets): a deterministic mechanical
+            # label whose grouping can't change without invalidating the hash → cache it.
             entry['capability'] = _mechanical_capability(domain_name)
             mechanical += 1
 
