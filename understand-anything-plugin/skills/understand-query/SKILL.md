@@ -1,12 +1,22 @@
 ---
 name: understand-query
-description: Query the Understand-Anything knowledge base via CLI. Layered drill-down from services to source code, backed by the shared API server.
+description: Use when answering questions about an already-analyzed codebase — business logic, where a feature is implemented, call/impact graphs, or source — via the `ua_query.py` CLI backed by the Understand-Anything API server. Answers are source-verified: code is the only ground truth.
 argument-hint: ["<subcommand> [--server URL] [--format json|md] [--verbose] [subcommand-flags...]"]
 ---
 
 # /understand-query
 
 Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the shared Understand-Anything API server. Use progressively deeper layers — from business landscape and service discovery down to source-verified code — to answer questions without loading entire graphs into context.
+
+## Operating Principles (precedence)
+
+Apply in this order — **#1 is a hard constraint; #2–#3 optimize within it (never around it):**
+
+1. **Code is the only source of truth — never traded away.** `wiki`/`domain`/`business` are LLM summaries: use them to *locate*, never to *conclude*. Every claim you present must be backed by source you actually read (see [Source Verification Rule](#source-verification-rule-mandatory)).
+2. **Fewest tool calls.** Take the cheapest path that *fully* answers — for most how/where/what questions that is one `ask --depth full`. Don't open with throwaway exploratory calls you'll have to re-verify anyway.
+3. **Fewest tokens.** Read *narrowly* (targeted methods, not whole files) and *in bulk* (batch located reads into one call) — see [Agent Efficiency Rules](#agent-efficiency-rules).
+
+**Stopping rule:** stop the moment source corroborates the answer. Locating the concept in a higher layer is *not* "done" — descend to source, confirm, cite, then stop.
 
 ## Source Verification Rule (MANDATORY)
 
@@ -190,8 +200,10 @@ python ua_query.py trace --service SERVICE --query "keyword" --source --grouped
 | Depth | Steps | Use When |
 |-------|-------|----------|
 | `quick` | Business search only | Quick domain overview |
-| `standard` | + KG trace + wiki domain | Understanding a feature |
+| `standard` | + KG trace + wiki domain | Internal exploration only — narrow down before a `full` verify; **never a user-facing answer** |
 | `full` | + domain flows + source verification + **cross-service RPC follow** | **Answering factual questions (RECOMMENDED)** |
+
+> **Verification scope (read this):** `ask --depth full` reads source only for the nodes it returns (`--limit`, default 5) — it verifies *those*, not every claim you might make. Anything beyond the returned `sourceReads` still needs its own `source --file` / `trace --source` read before you present it as fact.
 
 **Cross-service RPC follow (depth=full):** When the traced service has outbound `consumes_rpc` edges, `ask` automatically identifies the provider service and runs a follow-up trace there. The output includes a `crossServiceTrace` section with the target service's implementation details. This solves the "found the reporter, not the implementer" problem.
 
@@ -224,7 +236,7 @@ python ua_query.py ask --query "PK对战,PKBattle" --platform android --depth fu
 
 ## Layered Drill-Down Model
 
-Each layer is progressively more complete but less semantically rich. Escalate top→bottom until you get results. This is the single canonical layer reference (the Query Escalation Protocol below reuses it).
+Each layer is progressively more complete but less semantically rich. Use the upper layers (L1–L4) to **locate** a concept; you have not **answered** until you descend to L5/L6 source and confirm there. Escalate top→bottom until you locate it, then drill to source to verify. This is the single canonical layer reference (the Query Escalation Protocol below reuses it).
 
 | Layer | Command | Answers / Searches | Reliability |
 |-------|---------|--------------------|-------------|
@@ -286,12 +298,12 @@ When a command returns empty or unexpected results, follow the fallback chain:
 
 ## Query Escalation Protocol (Concept Not Found)
 
-When a user asks about a concept that has **no direct domain/feature match** (e.g., wiki didn't generate a separate domain for it, or it's merged into a broader domain), agents MUST escalate through the layers of the [Layered Drill-Down Model](#layered-drill-down-model) above — L1 (Business) → L6 (File) — stopping at the first layer that returns useful results. The lower layers (L5a/L5b/L6) are deterministic and always complete, so a concept that genuinely exists in source will always surface there.
+When a user asks about a concept that has **no direct domain/feature match** (e.g., wiki didn't generate a separate domain for it, or it's merged into a broader domain), agents MUST escalate through the layers of the [Layered Drill-Down Model](#layered-drill-down-model) above — L1 (Business) → L6 (File) — stopping at the first layer that **locates** the concept. **Locating is not answering:** once located, drill down to L5b/L6 source and verify before presenting any factual claim (see [Source Verification Rule](#source-verification-rule-mandatory)). The lower layers (L5a/L5b/L6) are deterministic and always complete, so a concept that genuinely exists in source will always surface there.
 
 ### Agent Decision Logic
 
 ```
-Concept X — example "PK对战在Android上怎么实现的". Stop at the first layer with results:
+Concept X — example "PK对战在Android上怎么实现的". Stop at the first layer that LOCATES it, then verify against source before answering:
 
 L1  business --search "PK" --platform android                    → follow wikiRef
 L2  wiki --search "PK"                                            → read wiki domain detail
@@ -338,7 +350,7 @@ None matched → report "Concept not found in any indexed layer of this service"
 For system-wide queries like "所有用到Redis的地方" or "哪些服务有Kafka消费者":
 
 1. Discover all services: `services --has kg`
-2. Search each: `source --service svc-a --search "Redis" --limit 20` (repeat per service)
+2. Search each in ONE shell call, chained with `&&`: `source --service svc-a --search "Redis" --limit 20 && source --service svc-b --search "Redis" --limit 20` (batch the services into one call, not one call each).
 3. Aggregate results across services.
 
 **Note:** `ask --depth full` only targets ONE service. For infrastructure concerns that span all services, you MUST manually iterate.
@@ -387,8 +399,8 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | **Business & Discovery** |||
 | "What is X?" / "X是什么功能？" | `ask --query "X,EnglishName" --depth full` | Auto-discovers service + full trace; check `structureFallback` / `sourceFallback` if no KG hits |
 | "Complete flow of X?" / "X的完整流程？" | `ask --query "X,FlowEnglish" --depth full` | Includes domain flow steps |
-| "Business rules for X?" / "X的业务规则？" | `business --domain X --type rules` | Business rule query |
-| "How do users interact with X?" / "X的用户交互？" | `business --domain X --type interactions` | User interaction steps |
+| "Business rules for X?" / "X的业务规则？" | `business --domain X --type rules` → then `trace --source` | Business rule query — **wiki-level; verify each rule against source before presenting** |
+| "How do users interact with X?" / "X的用户交互？" | `business --domain X --type interactions` → then `trace --source` | User interaction steps — **wiki-level; confirm against source before presenting** |
 | "Business landscape overview" / "业务全景？" | `business --panorama` | All facets and services |
 | "What features exist?" / "有哪些业务功能？" | `business --features` | Feature-centric view with server associations (client-server projects) |
 | "What services exist?" / "有哪些服务？" | `services --list` | Service discovery + data layer readiness |
@@ -418,14 +430,14 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "What breaks if I change X?" / "改X会影响什么？" | `impact --service S --symbol X --depth 3 --direction inbound` | Transitive impact analysis |
 | "Who calls X?" / "谁调用了X？" | `callers --service S --symbol X --depth 2` | Inbound call graph |
 | "What does X call?" / "X调用了谁？" | `callees --service S --symbol X --depth 2` | Outbound call graph |
-| "Which tests for changed files?" / "改了要跑哪些测试？" | `affected --service S --files src/X.java --depth 2` | Affected test discovery |
+| "Which tests for changed files?" / "改了要跑哪些测试？" | `affected --service S --files src/X.java,src/Y.java --depth 2` | Affected test discovery — **batch all changed files in one call** |
 | "Most critical classes?" / "最关键的类？" | `hotspots --service S --type class --limit 20` | Fan-in/fan-out hotspot scoring |
 | "Blast radius of X?" / "X的影响半径？" | `trace --service S --query X` → check `blastRadius` → `impact --service S --symbol X --depth 3` | Quick triage + transitive |
 | **Cross-Service & Wiki** |||
 | "How do X and Y interact?" / "X和Y怎么交互？" | `trace` in svc-a + `trace` in svc-b | Dual-service comparison |
 | "Architecture overview" / "系统架构？" | `wiki --architecture` | System architecture wiki |
 | "Endpoints for service S" / "S有哪些接口？" | `wiki --service S --type endpoint` | API endpoint documentation |
-| "Domain flow steps" / "X流程的步骤？" | `domain --service S --flow F --steps` | Ordered flow steps |
+| "Domain flow steps" / "X流程的步骤？" | `domain --service S --flow F --steps` → then `trace --source` | Ordered flow steps — **domain-level; confirm against source before presenting** |
 | "Related domains for X" / "X的相关领域？" | `wiki --service S --domain X --related` | Cross-service related domains |
 | **Data & Freshness** |||
 | "Is data stale?" / "数据是否过期？" | `meta --stale` | Stale layer detection |
