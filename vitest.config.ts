@@ -28,6 +28,15 @@ export default defineConfig({
     setupFiles: [
       'understand-anything-plugin/packages/dashboard/vitest-setup.ts',
     ],
+    server: {
+      deps: {
+        // Route zustand through Vite so its `react` import hits the alias
+        // below — otherwise React 19 (CJS-only) is evaluated a second time
+        // inside the externalized zustand ESM build, giving component tests
+        // a null hook dispatcher ("Cannot read properties of null").
+        inline: ['zustand'],
+      },
+    },
     alias: {
       // Force single React instance — pnpm workspace creates two copies
       // (repo-level and plugin-level) which causes "Invalid hook call" errors.
