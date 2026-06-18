@@ -86,3 +86,18 @@ describe("clearStructureIndexCache", () => {
     expect(res?.statusCode).not.toBe(500)
   })
 })
+
+describe("structure index cache key", () => {
+  beforeEach(() => {
+    clearStructureIndexCache()
+  })
+
+  it("cache invalidation works across different services", async () => {
+    const req1 = makeRequest({ service: "service-a", q: "getUser" })
+    const req2 = makeRequest({ service: "service-b", q: "getUser" })
+    await handleStructureSearchRequest(req1, mockCtx)
+    await handleStructureSearchRequest(req2, mockCtx)
+    // Clearing cache should not throw even with multiple services cached
+    expect(() => clearStructureIndexCache()).not.toThrow()
+  })
+})

@@ -70,11 +70,12 @@ function loadStructuralAnalysis(serviceName: string): StructuralAnalysis | null 
 
   try {
     const mtime = fs.statSync(filePath).mtimeMs
-    const cached = cache.get(serviceName)
+    const cacheKey = `${serviceName}::${filePath}`
+    const cached = cache.get(cacheKey)
     if (cached && cached.mtime === mtime) return cached.data
 
     const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as StructuralAnalysis
-    cache.set(serviceName, { data, mtime })
+    cache.set(cacheKey, { data, mtime })
     return data
   } catch {
     return null
@@ -182,13 +183,14 @@ function handleSearch(
 
   const filePath = resolveServiceDataPath(service, "intermediate/extraction/structural-analysis.json")
   const mtime = filePath ? fs.statSync(filePath).mtimeMs : 0
-  const cachedIndex = indexCache.get(service)
+  const cacheKey = filePath ? `${service}::${filePath}` : service
+  const cachedIndex = indexCache.get(cacheKey)
   let index: StructureIndex
   if (cachedIndex && cachedIndex.mtime === mtime) {
     index = cachedIndex.index
   } else {
     index = new StructureIndex(service, data)
-    indexCache.set(service, { index, mtime })
+    indexCache.set(cacheKey, { index, mtime })
   }
   const result = index.search({
     q, annotation, paramType, returnType, iface, propertyType,
