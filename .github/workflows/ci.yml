@@ -23,6 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ── Node / pnpm ──────────────────────────────────────────────
       - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
@@ -51,3 +52,14 @@ jobs:
 
       - name: Test skill
         run: pnpm test
+
+      # ── Python ───────────────────────────────────────────────────
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python test dependencies
+        run: pip install pytest
+
+      - name: Test Python
+        run: python -m pytest tests/ understand-anything-plugin/skills/ -v
