@@ -8,6 +8,7 @@ interface WikiEntry {
   content?: string
   type: string
   service?: string
+  domain?: string
 }
 
 interface WikiData {
@@ -88,6 +89,7 @@ export class WikiIndex {
         content: entry.content ?? "",
         type: entry.type ?? "",
         service: entry.service ?? serviceName ?? "",
+        domain: entry.domain,
       }))
   }
 
