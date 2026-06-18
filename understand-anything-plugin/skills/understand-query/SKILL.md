@@ -89,16 +89,28 @@ python ua_query.py trace --service SERVICE --query "keyword" --source --grouped
 
 ## Agent Efficiency Rules
 
-1. **Prefer `ask` for business questions**: One command replaces 5+ individual calls.
-2. **Batch CLI calls**: Combine multiple CLI commands into ONE Shell call using `&&`.
-3. **Expand keywords before trace**: Always provide 2-4 comma-separated variants (original + English + synonym).
-4. **Use `--format md`** when the output will be read by an agent (not parsed as JSON).
-5. **Use `--source`** for any answer that will be presented as factual to the user.
-6. **RRF is default for trace** — `trace` uses `fusion=rrf` automatically.
-7. **Use server-side filters**: Pass `--type`/`--tag` to `kg --search` and `--type` to `trace` instead of post-filtering results client-side. Reduces payload and improves accuracy.
-8. **Use `--q` for structure fuzzy search**: `structure --q "getUser"` is faster and more accurate than iterating `--annotation`/`--param-type` separately.
-9. **Paginate large results**: Use `--offset N` with `--limit` for large result sets instead of fetching everything.
-10. **Batch known reads into ONE call**: Once you've located the specific files or symbols you need (from a search/toc/trace), read them **together**, not one call each — `source --file "A.java:1-60,B.java,C.java"` (per-file line ranges; a bad path is isolated as a per-file error, the rest still return) and `structure --symbol "A,B,C" --source`. N tool calls → 1. Requests are sent as POST, so long keyword/file lists have no URL-length limit — batch freely.
+**Goal: answer in the fewest tool calls.** Reach for the call-reducing patterns first, then pick the right command and flags.
+
+**Minimize tool calls**
+
+1. **Prefer `ask` for business questions** — one command replaces 5+ individual calls (auto-discover → trace → wiki → domain → source-verify).
+2. **Batch known reads into ONE call** — once you've located the specific files/symbols (from a search/toc/trace), read them together, not one call each: `source --file "A.java:1-60,B.java,C.java"` (per-file line ranges; a bad path is isolated as a per-file `error`, the rest still return → `{files:[…]}`) and `structure --symbol "A,B,C" --source` (→ `{symbols:[…]}`). N calls → 1.
+3. **Chain mixed commands with `&&`** — when you genuinely need *different* commands, combine them into ONE shell call. Prefer a native batch flag (rule 2) when the calls differ only by file/symbol; `&&` is the fallback for heterogeneous commands.
+4. **Expand keywords before trace** — pass 2-4 comma-separated variants in a single `--query "中文,English,CamelCase"`; multi-keyword parallel search eliminates retry loops.
+
+> Requests are sent as POST, so long keyword/file lists and large batches have **no URL-length limit** — batch freely.
+
+**Pick the right command + flags**
+
+5. **Use `--q` for structure fuzzy search** — `structure --q "getUser"` beats iterating `--annotation`/`--param-type` separately.
+6. **Use server-side filters** — pass `--type`/`--tag` to `kg --search` and `--type` to `trace` instead of post-filtering client-side; smaller payload, better accuracy.
+7. **Paginate large result sets** — `--offset N` with `--limit` instead of fetching everything.
+
+**Output quality**
+
+8. **Use `--format md`** when an agent will read the output (not parse JSON).
+9. **Use `--source`** (or `ask --depth full`) for anything presented to the user as factual.
+10. **RRF is trace's default fusion** — `trace` applies `fusion=rrf` automatically, no flag needed.
 
 ---
 
