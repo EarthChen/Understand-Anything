@@ -7,7 +7,7 @@ import sys
 # Re-export from sub-modules so tests can import from ua_query directly
 from _utils import (
     DEFAULT_SERVER, DEFAULT_TIMEOUT, _IMPL_SUFFIXES, _CONFIG_SUFFIXES,
-    ServerUnavailableError, fetch_json, build_url,
+    ServerUnavailableError, fetch_json,
     format_output, _format_markdown, _short_type_name,
 )
 from _helpers import (

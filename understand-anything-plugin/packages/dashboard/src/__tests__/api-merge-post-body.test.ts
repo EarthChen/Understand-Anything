@@ -20,4 +20,10 @@ describe("mergePostBody", () => {
     expect(sp.get("a")).toBeNull()
     expect(sp.get("q")).toBe("keep")
   })
+  it("array body is a no-op — searchParams unchanged", () => {
+    const sp = new URLSearchParams("q=keep")
+    mergePostBody(sp, ["foo", "bar"])
+    expect(sp.get("q")).toBe("keep")
+    expect(sp.get("0")).toBeNull()
+  })
 })

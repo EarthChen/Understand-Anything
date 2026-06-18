@@ -84,6 +84,7 @@ export function readJsonFile<T>(filePath: string): T | null {
  */
 export function mergePostBody(searchParams: URLSearchParams, body: unknown): void {
   if (!body || typeof body !== "object") return
+  if (Array.isArray(body)) return
   for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
     if (value !== null && value !== undefined) {
       searchParams.set(key, String(value))

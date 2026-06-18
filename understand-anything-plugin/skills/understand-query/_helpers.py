@@ -24,6 +24,7 @@ def _parse_file_specs(raw: str) -> list[tuple[str, int | None, int | None]]:
             specs.append((part, None, None))
     return specs
 
+
 def _score_node_relevance(node: dict[str, Any], query: str) -> float:
     """Score a node's relevance to the query using language-agnostic structural signals."""
     q = query.lower()
@@ -492,7 +493,7 @@ def _structure_symbol_one(args: argparse.Namespace, symbol: str) -> Any:
     results = data.get("results", [])
     matches = [
         {"name": r.get("name", ""), "kind": r.get("kind", ""),
-         "filePath": r.get("filePath", ""), "lineRange": r.get("lineRange", []),
+         "filePath": r.get("filePath", ""), "lineRange": r.get("lineRange"),
          "match": r.get("match", {})}
         for r in results
     ]

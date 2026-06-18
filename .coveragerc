@@ -3,7 +3,6 @@ source =
     understand-anything-plugin/skills/understand-query
 omit =
     */__pycache__/*
-    */test_*.py
 
 [report]
 fail_under = 100
