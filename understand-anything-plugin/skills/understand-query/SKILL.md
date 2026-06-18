@@ -64,14 +64,24 @@ This skill is read by two roles. **Decide which you are from an observable signa
 
 | You received the task from… | You are the… | Do this |
 |---|---|---|
-| The **human user**, directly | **Orchestrator** | Dispatch **one** worker sub-agent (queries are read-only; the user only wants the final result). |
-| **Another agent** (you were dispatched) | **Worker** | Run `ua_query.py` **directly**. Do **NOT** invoke the understand-query skill again, and do **NOT** dispatch another sub-agent. |
+| The **human user**, directly | **Orchestrator** | Dispatch **exactly one** worker with the user's **whole question**. Wait for its single final answer. Present it. |
+| **Another agent** (you were dispatched) | **Worker** | Run the **entire** investigation yourself with `ua_query.py` (all layers, escalation, source verification, batched reads). Return **one** final, source-cited answer. Do **NOT** invoke the understand-query skill again, and do **NOT** dispatch another sub-agent. |
 
-**The rule that stops the recursion (orchestrator MUST follow):** the worker's dispatch prompt must be self-contained — give it the question (or the exact `ua_query.py` command to run) **plus this explicit instruction:**
+### One question → one worker → one answer (orchestrator MUST follow)
 
-> "You are the understand-query **worker**. Run `ua_query.py` directly and return the result. Do NOT call the understand-query skill. Do NOT dispatch any sub-agent."
+The worker owns the **whole workflow**. Everything below in this skill — the Golden Rule, the Layered Drill-Down, the Query Escalation Protocol, the decision trees, the batched reads — runs **inside the single worker**, not in the orchestrator.
 
-Without that instruction the worker re-reads this skill, sees "dispatch a worker," and spawns another worker — forever. The stop-condition is keyed on *what your dispatch prompt tells you*, **not** on the unobservable "am I already a sub-agent?" — a freshly dispatched agent cannot tell that on its own.
+**The orchestrator does NOT** run `ua_query.py` itself, walk the layers, or dispatch a separate worker per command / per layer / per file. It dispatches once and synthesizes once.
+
+❌ **Wrong (this is the bug — it wastes calls and floods the main context):** dispatch worker → "query business" → result back to orchestrator → dispatch worker → "query source" → result back → dispatch worker → "verify" → … *(N dispatches, one per step)*
+
+✅ **Right:** dispatch **one** worker with the user's full question → the worker does business + wiki + domain + source-verify + batched reads **by itself** → returns **one** final source-cited answer → orchestrator presents it.
+
+**The dispatch prompt must be self-contained** — the user's whole question **plus this instruction:**
+
+> "You are the understand-query **worker**. Answer the question end-to-end by running `ua_query.py` directly: follow the layered drill-down, verify every claim against source, batch your reads. Return ONE final, source-cited answer. Do NOT call the understand-query skill. Do NOT dispatch any sub-agent."
+
+Without that instruction the worker re-reads this skill, sees "dispatch a worker," and spawns another — the recursion this prevents. The stop-condition is keyed on *what your dispatch prompt tells you*, **not** on the unobservable "am I already a sub-agent?" — a freshly dispatched agent cannot tell that on its own.
 
 ### Dispatch Instructions (Orchestrator only, cross-platform)
 
