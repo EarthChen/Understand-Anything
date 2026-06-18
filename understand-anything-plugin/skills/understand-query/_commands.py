@@ -1150,7 +1150,7 @@ def cmd_structure(args: argparse.Namespace) -> Any:
         raise SystemExit("structure requires --service")
     if getattr(args, "grep", None):
         print("[DEPRECATED] Use 'source --service S --search ...' instead of 'structure --grep'", file=sys.stderr)
-        params: dict[str, str] = {"q": args.grep, "service": args.service, "limit": str(args.limit)}
+        params: dict[str, str] = {"q": args.grep, "service": args.service, "limit": str(args.limit if args.limit is not None else 50)}
         if args.path:
             params["path"] = args.path
         return _helpers.fetch_json(build_url(args.server, "/api/source/search", params))
@@ -1180,7 +1180,7 @@ def cmd_structure(args: argparse.Namespace) -> Any:
             except RuntimeError:
                 pass
         return result
-    search_params: dict[str, str] = {"service": args.service, "limit": str(args.limit)}
+    search_params: dict[str, str] = {"service": args.service, "limit": str(args.limit if args.limit is not None else 50)}
     if args.annotation:
         search_params["annotation"] = args.annotation
     if args.param_type:

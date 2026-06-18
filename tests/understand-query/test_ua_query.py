@@ -87,6 +87,25 @@ class TestUrlEncoding:
 class TestStructureSubcommand:
     """Tests for the 'structure' subcommand."""
 
+    def test_structure_limit_defaults_to_none(self):
+        # --limit defaults to None (not 50) so each structure subpath can apply the
+        # server's per-endpoint default. The symbol-source endpoint caps limit at 20,
+        # so sending the old 50 default produced HTTP 400.
+        args = ua_query.parse_args(
+            ["structure", "--service", "svc", "--symbol", "X", "--source"]
+        )
+        assert args.limit is None
+
+    @patch("_helpers.fetch_json")
+    def test_structure_symbol_source_omits_limit_when_unset(self, mock_fetch):
+        mock_fetch.return_value = {"results": []}
+        ua_query.main(
+            ["structure", "--service", "my-svc", "--symbol", "X", "--source"]
+        )
+        url = mock_fetch.call_args[0][0]
+        assert "/api/structure/symbol-source" in url
+        assert "limit=" not in url
+
     @patch("_helpers.fetch_json")
     def test_structure_files(self, mock_fetch):
         mock_fetch.return_value = {"files": ["a.java", "b.java"], "total": 2}

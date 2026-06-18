@@ -457,20 +457,26 @@ def _extract_symbol(content: str, symbol: str) -> str | None:
 
 def _cmd_structure_symbol(args: argparse.Namespace) -> Any:
     symbol = args.symbol
-    limit = max(args.limit, 1)
     include_source = getattr(args, "source", False)
 
     if include_source:
+        # symbol-source returns full source per match and caps limit at 20 server-side.
+        # Forward --limit only when explicitly set, so an unset limit hits the server's
+        # smaller per-endpoint default (5) rather than the search default (50), which
+        # the endpoint rejects with HTTP 400 "limit must be between 1 and 20".
         params: dict[str, str] = {
             "service": args.service,
             "symbol": symbol,
-            "limit": str(limit),
         }
+        if args.limit is not None:
+            params["limit"] = str(max(args.limit, 1))
         if args.path:
             params["pathPattern"] = args.path
         data = fetch_json(build_url(args.server, "/api/structure/symbol-source", params))
         return {"symbol": symbol, "matches": data.get("results", [])}
 
+    # Non-source symbol search hits /api/structure/search (cap 500); fall back to 50.
+    limit = max(args.limit if args.limit is not None else 50, 1)
     params: dict[str, str] = {
         "service": args.service,
         "symbol": symbol,

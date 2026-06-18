@@ -71,6 +71,8 @@ python ua_query.py structure --service S --symbol GiftHallDao --source --limit 3
 
 With `--source`, uses the server-side `/api/structure/symbol-source` endpoint to return both structural metadata and the actual source code for each matched symbol. This is the most efficient way to locate and read a specific method or class when you know its name.
 
+> **Note on `--limit` with `--symbol --source`:** the symbol-source endpoint returns full source per match, so it caps `--limit` at **20** (server default **5** when omitted). Leave `--limit` unset to use that default, or pass a value **≤ 20**. Passing a larger value returns `HTTP 400: limit must be between 1 and 20`. The metadata-only search path (`--q`, `--annotation`, plain `--symbol`) keeps the default of 50 (max 500).
+
 ---
 
 ### File lookup

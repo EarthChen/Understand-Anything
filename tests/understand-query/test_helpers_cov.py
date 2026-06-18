@@ -988,6 +988,48 @@ class TestCmdStructureSymbol:
         assert "/api/structure/symbol-source" in url
         assert "pathPattern" not in url
 
+    @patch("_helpers.fetch_json")
+    def test_source_mode_omits_limit_when_unset(self, mock_fetch):
+        # When --limit is not passed (None), the symbol-source request must NOT send
+        # a limit param so the server applies its per-endpoint default (5). Sending
+        # the old CLI default (50) made the endpoint reject it: it caps limit at 20
+        # and returns HTTP 400 "limit must be between 1 and 20".
+        mock_fetch.return_value = {"results": []}
+        args = argparse.Namespace(
+            server=SERVER, service="svc", symbol="GuildProfitSettlement",
+            limit=None, path=None, source=True,
+        )
+        _helpers._cmd_structure_symbol(args)
+        url = mock_fetch.call_args[0][0]
+        assert "/api/structure/symbol-source" in url
+        assert "limit=" not in url
+
+    @patch("_helpers.fetch_json")
+    def test_source_mode_forwards_explicit_limit(self, mock_fetch):
+        # An explicit --limit is still honored on the symbol-source path.
+        mock_fetch.return_value = {"results": []}
+        args = argparse.Namespace(
+            server=SERVER, service="svc", symbol="X",
+            limit=10, path=None, source=True,
+        )
+        _helpers._cmd_structure_symbol(args)
+        url = mock_fetch.call_args[0][0]
+        assert "limit=10" in url
+
+    @patch("_helpers.fetch_json")
+    def test_non_source_mode_unset_limit_defaults_to_50(self, mock_fetch):
+        # The non-source symbol search hits /api/structure/search (cap 500); an unset
+        # --limit falls back to the historical default of 50.
+        mock_fetch.return_value = {"results": []}
+        args = argparse.Namespace(
+            server=SERVER, service="svc", symbol="X",
+            limit=None, path=None, source=False,
+        )
+        _helpers._cmd_structure_symbol(args)
+        url = mock_fetch.call_args[0][0]
+        assert "/api/structure/search" in url
+        assert "limit=50" in url
+
 
 # ---------------------------------------------------------------------------
 # _kg_file_toc
