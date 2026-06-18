@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { ClientGraph } from "@understand-anything/core";
-import { serviceOverviewToMarkdown, domainPageToMarkdown, clientGraphToMarkdown } from "../wikiToMarkdown";
+import type { ClientGraph, BusinessFeaturesDocument } from "@understand-anything/core";
+import { serviceOverviewToMarkdown, domainPageToMarkdown, clientGraphToMarkdown, businessFeaturesToMarkdown } from "../wikiToMarkdown";
 
 describe("serviceOverviewToMarkdown", () => {
   it("renders a complete service overview", () => {
@@ -165,17 +165,17 @@ describe("clientGraphToMarkdown", () => {
 });
 
 describe("businessFeaturesToMarkdown", () => {
-  const { businessFeaturesToMarkdown } = require("../wikiToMarkdown");
-
   it("renders feature overview table with server associations", () => {
-    const data = {
+    const data: BusinessFeaturesDocument = {
       features: [
         {
           id: "feature:即时通讯",
           name: "即时通讯",
           clientLayer: {
             implType: "cross-platform",
+            facetType: "mobile",
             platforms: { Amar: {}, ddoversea: {} },
+            units: {},
             deliveryPlatforms: ["Amar", "ddoversea"],
             summary: "IM功能",
           },
