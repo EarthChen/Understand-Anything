@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 """HTTP CLI for querying Understand-Anything API Server (stdlib only)."""
-import argparse
 import json
-import os
-import re
-import sys
 from typing import Any
 import urllib.request
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import quote as url_quote, urlencode
 
 DEFAULT_SERVER = "http://172.18.228.71:3001"
@@ -15,6 +11,18 @@ DEFAULT_TIMEOUT = 5
 
 _IMPL_SUFFIXES = ("ServiceImpl", "WebServiceImpl", "WebService", "Service", "Controller", "Handler", "Manager", "Facade")
 _CONFIG_SUFFIXES = ("Properties", "Config", "Configuration", "Constants", "Enum", "DTO", "BO", "VO", "Request", "Response", "Param")
+
+# Single source of truth for filename-extension → Markdown code-fence language.
+_LANG_BY_EXT = {
+    "kt": "kotlin", "java": "java", "py": "python", "ts": "typescript",
+    "js": "javascript", "dart": "dart", "xml": "xml", "yml": "yaml",
+    "yaml": "yaml", "json": "json", "gradle": "groovy", "sql": "sql",
+}
+
+
+def _lang_for_ext(ext: str) -> str:
+    """Map a file extension to its Markdown code-fence language (fallback: the ext itself)."""
+    return _LANG_BY_EXT.get(ext, ext)
 
 
 class ServerUnavailableError(RuntimeError):
@@ -48,19 +56,6 @@ def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT) -> Any:
             f"Start it with: cd understand-anything-plugin/packages/dashboard && pnpm run serve\n"
             f"Detail: {e}"
         ) from e
-    except URLError as e:
-        raise ServerUnavailableError(
-            f"API Server unavailable at {url.split('?')[0]}. "
-            f"Start it with: cd understand-anything-plugin/packages/dashboard && pnpm run serve\n"
-            f"Detail: {e}"
-        ) from e
-
-
-def _detect_server(configured: str) -> str:
-    """Verify configured server is reachable. If env var is set, use it directly."""
-    if os.environ.get("UNDERSTAND_SERVER"):
-        return configured
-    return configured
 
 
 def build_url(server: str, path: str, params: dict[str, str] | None = None) -> str:
@@ -259,7 +254,7 @@ def _format_markdown(data: Any) -> str:
                 lines.append(f"### `{fp}` (lines {lr})")
                 lines.append(f"Symbols: {sym_names}")
                 ext = fp.rsplit(".", 1)[-1] if "." in fp else "java"
-                lang = {"kt": "kotlin", "java": "java", "py": "python", "ts": "typescript", "js": "javascript", "dart": "dart"}.get(ext, ext)
+                lang = _lang_for_ext(ext)
                 content = entry.get("source", "")[:4000]
                 lines.append(f"```{lang}\n{content}\n```")
                 lines.append("")
@@ -268,7 +263,7 @@ def _format_markdown(data: Any) -> str:
         src = data.get("source")
         if isinstance(src, dict) and src.get("content"):
             src_ext = src.get("file", "").rsplit(".", 1)[-1] if "." in src.get("file", "") else "java"
-            src_lang = {"kt": "kotlin", "java": "java", "py": "python", "ts": "typescript", "js": "javascript", "dart": "dart", "xml": "xml", "yml": "yaml", "yaml": "yaml", "json": "json", "gradle": "groovy", "sql": "sql"}.get(src_ext, src_ext)
+            src_lang = _lang_for_ext(src_ext)
             lines.append(f"## Source: {src.get('file', '?')} (lines {src.get('lineRange', '?')})")
             lines.append(f"```{src_lang}\n{src['content'][:4000]}\n```")
             lines.append("")
@@ -280,7 +275,7 @@ def _format_markdown(data: Any) -> str:
             for v in sv:
                 lr = v.get("lineRange", "")
                 ext = v.get("file", "").rsplit(".", 1)[-1] if "." in v.get("file", "") else "java"
-                lang = {"kt": "kotlin", "java": "java", "py": "python", "ts": "typescript", "js": "javascript", "dart": "dart"}.get(ext, ext)
+                lang = _lang_for_ext(ext)
                 lines.append(f"\n### {v.get('node', '?')} ({v.get('type', '?')}) — `{v.get('file', '?')}:{lr}`")
                 lines.append(f"```{lang}\n{v.get('content', '')}\n```")
             lines.append("")
@@ -324,14 +319,14 @@ def _format_markdown(data: Any) -> str:
             t_src = target.get("source")
             if isinstance(t_src, dict) and t_src.get("content"):
                 ext = t_src.get("file", "").rsplit(".", 1)[-1] if "." in t_src.get("file", "") else "java"
-                lang = {"kt": "kotlin", "java": "java", "py": "python", "ts": "typescript", "js": "javascript", "dart": "dart"}.get(ext, ext)
+                lang = _lang_for_ext(ext)
                 lines.append(f"### Target Source: `{t_src.get('file', '?')}`")
                 lines.append(f"```{lang}\n{t_src.get('content', '')[:4000]}\n```")
                 lines.append("")
             t_reads = target.get("sourceReads", [])
             for v in t_reads[:3]:
                 ext = v.get("file", "").rsplit(".", 1)[-1] if "." in v.get("file", "") else "java"
-                lang = {"kt": "kotlin", "java": "java", "py": "python", "ts": "typescript", "js": "javascript", "dart": "dart"}.get(ext, ext)
+                lang = _lang_for_ext(ext)
                 lines.append(f"### {v.get('node', '?')} — `{v.get('file', '?')}`")
                 lines.append(f"```{lang}\n{v.get('content', '')[:3000]}\n```")
                 lines.append("")
@@ -394,7 +389,7 @@ def _format_markdown(data: Any) -> str:
                 lines.append(f"<details><summary>Snippet: {fp}</summary>")
                 lines.append("")
                 ext = fp.rsplit(".", 1)[-1] if "." in fp else "java"
-                lang = {"kt": "kotlin", "java": "java", "py": "python", "ts": "typescript", "js": "javascript", "dart": "dart"}.get(ext, ext)
+                lang = _lang_for_ext(ext)
                 lines.append(f"```{lang}")
                 lines.append(snippet[:4000])
                 lines.append("```")
@@ -412,7 +407,7 @@ def _format_markdown(data: Any) -> str:
             source = m.get("source")
             if source:
                 ext = m.get("filePath", "").rsplit(".", 1)[-1] if "." in m.get("filePath", "") else "java"
-                lang = {"kt": "kotlin", "java": "java", "py": "python", "ts": "typescript", "js": "javascript", "dart": "dart"}.get(ext, ext)
+                lang = _lang_for_ext(ext)
                 lines.append(f"```{lang}\n{source}\n```")
             lines.append("")
         return "\n".join(lines)
@@ -797,7 +792,7 @@ def _format_markdown(data: Any) -> str:
     # KG file source read
     if isinstance(data, dict) and "content" in data and "file" in data:
         ext = data.get("file", "").rsplit(".", 1)[-1] if "." in data.get("file", "") else "java"
-        lang = {"kt": "kotlin", "java": "java", "py": "python", "ts": "typescript", "js": "javascript", "dart": "dart"}.get(ext, ext)
+        lang = _lang_for_ext(ext)
         lines = [f"# Source: {data.get('file', '?')}", f"Lines: {data.get('lineCount', '?')}", ""]
         lines.append(f"```{lang}\n{data.get('content', '')[:6000]}\n```")
         return "\n".join(lines)
