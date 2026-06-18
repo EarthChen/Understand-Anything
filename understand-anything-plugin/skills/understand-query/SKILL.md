@@ -1,6 +1,6 @@
 ---
 name: understand-query
-description: Query the Understand-Anything knowledge base via CLI. Layered drill-down from services to source code, backed by the shared API server.
+description: Use when answering questions about an already-analyzed codebase — business logic, where a feature is implemented, call/impact graphs, or source — via the `ua_query.py` CLI backed by the Understand-Anything API server. Answers are source-verified: code is the only ground truth.
 argument-hint: ["<subcommand> [--server URL] [--format json|md] [--verbose] [subcommand-flags...]"]
 ---
 
@@ -8,9 +8,21 @@ argument-hint: ["<subcommand> [--server URL] [--format json|md] [--verbose] [sub
 
 Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the shared Understand-Anything API server. Use progressively deeper layers — from business landscape and service discovery down to source-verified code — to answer questions without loading entire graphs into context.
 
+## Operating Principles (precedence)
+
+Apply in this order — **#1 is a hard constraint; #2–#3 optimize within it (never around it):**
+
+1. **Code is the only source of truth — never traded away.** `wiki`/`domain`/`business` are LLM summaries: use them to *locate*, never to *conclude*. Every claim you present must be backed by source you actually read (see [Source Verification Rule](#source-verification-rule-mandatory)).
+2. **Fewest tool calls.** Take the cheapest path that *fully* answers — for most how/where/what questions that is one `ask --depth full`. Don't open with throwaway exploratory calls you'll have to re-verify anyway.
+3. **Fewest tokens.** Read *narrowly* (targeted methods, not whole files) and *in bulk* (batch located reads into one call) — see [Agent Efficiency Rules](#agent-efficiency-rules).
+
+**Stopping rule:** stop the moment source corroborates the answer. Locating the concept in a higher layer is *not* "done" — descend to source, confirm, cite, then stop.
+
 ## Source Verification Rule (MANDATORY)
 
-**For any question about business logic, flows, or implementation details, the agent MUST verify answers against actual source code.** Wiki and domain graph data may be stale — source code is the ground truth.
+**No answer may rest on `wiki` or `domain` data alone — every factual claim presented to the user MUST be corroborated by source code.** Wiki, domain, and business layers are LLM-generated summaries: they may be stale, incomplete, or simply wrong. Source code is the only ground truth. If you cannot point to the source (file + symbol or line range) that backs a claim, you have **not** verified it — read the code before you answer. A polished summary built only from `wiki`/`domain`/`business` output is an unverified guess, no matter how confident it reads.
+
+**Violating the letter of this rule is violating its spirit:** "the wiki was detailed enough" and "the domain flow already explained it" are not exceptions — they are exactly the failure this rule exists to prevent.
 
 ### Verification Protocol
 
@@ -22,6 +34,16 @@ Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the
 2. **Cross-check wiki claims**: If wiki says "Method X does Y", read the actual source to confirm.
 3. **Flag discrepancies**: If source code contradicts wiki/domain data, report the discrepancy explicitly.
 4. **Never trust wiki alone** for: parameter validation logic, error codes, conditional branches, or concurrency controls.
+5. **Cite the proof**: Ground every claim in the source you actually read — name the file and the symbol/line range it came from. An answer with no source citation is unverified and must not be presented as fact.
+
+### Red Flags — STOP, you are about to answer without code
+
+- You are about to summarize a flow, rule, or behavior using only `wiki` / `domain` / `business` output.
+- "The wiki already explains this clearly." / "The domain flow is detailed enough."
+- You are presenting `ask --depth standard` or `--depth quick` output to the user as fact.
+- There is no `--source` (or `ask --depth full`) call in this turn, yet you are stating how the code behaves.
+
+**All of these mean: run `--source` / `ask --depth full`, read the code, and cite it before answering.**
 
 ### CRITICAL: Agents Must Pass `--depth full` for User-Facing Answers
 
@@ -89,28 +111,29 @@ python ua_query.py trace --service SERVICE --query "keyword" --source --grouped
 
 ## Agent Efficiency Rules
 
-**Goal: answer in the fewest tool calls.** Reach for the call-reducing patterns first, then pick the right command and flags.
+**Goal: answer in the fewest tool calls AND the fewest tokens.** Efficiency comes first — read *narrowly* (target the methods you need, not whole files) and read *in bulk* (batch the located reads into one call). Then pick the right command and flags.
 
 **Minimize tool calls**
 
 1. **Prefer `ask` for business questions** — one command replaces 5+ individual calls (auto-discover → trace → wiki → domain → source-verify).
-2. **Batch known reads into ONE call** — once you've located the specific files/symbols (from a search/toc/trace), read them together, not one call each: `source --file "A.java:1-60,B.java,C.java"` (per-file line ranges; a bad path is isolated as a per-file `error`, the rest still return → `{files:[…]}`) and `structure --symbol "A,B,C" --source` (→ `{symbols:[…]}`). N calls → 1.
-3. **Chain mixed commands with `&&`** — when you genuinely need *different* commands, combine them into ONE shell call. Prefer a native batch flag (rule 2) when the calls differ only by file/symbol; `&&` is the fallback for heterogeneous commands.
-4. **Expand keywords before trace** — pass 2-4 comma-separated variants in a single `--query "中文,English,CamelCase"`; multi-keyword parallel search eliminates retry loops.
+2. **Read targeted methods in segments — never dump a whole file.** A `--file` read with no line range pulls the *entire* file into context; that is the expensive default to avoid. Instead, read in segments scoped to the method(s) you actually need: (a) get the cheap method index first — `kg --file F --toc` (no source) or `structure --symbol "name"` (signatures only) — to find the spans, (b) read only those spans by line range, e.g. `source --file "F.java:120-180"` or `structure --symbol "method" --source`. Reach for a full-file read only when the file is small or you genuinely need all of it.
+3. **Batch the targeted reads into ONE call** — once you've located the specific files/symbols/ranges (from a search/toc/trace), read them together, not one call each: `source --file "A.java:120-180,B.java:20-80,C.java"` (per-file line ranges; a bad path is isolated as a per-file `error`, the rest still return → `{files:[…]}`) and `structure --symbol "A,B,C" --source` (→ `{symbols:[…]}`). N targeted reads → 1 call.
+4. **Chain mixed commands with `&&`** — when you genuinely need *different* commands, combine them into ONE shell call. Prefer a native batch flag (rule 3) when the calls differ only by file/symbol; `&&` is the fallback for heterogeneous commands.
+5. **Expand keywords before trace** — pass 2-4 comma-separated variants in a single `--query "中文,English,CamelCase"`; multi-keyword parallel search eliminates retry loops.
 
 > Requests are sent as POST, so long keyword/file lists and large batches have **no URL-length limit** — batch freely.
 
 **Pick the right command + flags**
 
-5. **Use `--q` for structure fuzzy search** — `structure --q "getUser"` beats iterating `--annotation`/`--param-type` separately.
-6. **Use server-side filters** — pass `--type`/`--tag` to `kg --search` and `--type` to `trace` instead of post-filtering client-side; smaller payload, better accuracy.
-7. **Paginate large result sets** — `--offset N` with `--limit` instead of fetching everything.
+6. **Use `--q` for structure fuzzy search** — `structure --q "getUser"` beats iterating `--annotation`/`--param-type` separately.
+7. **Use server-side filters** — pass `--type`/`--tag` to `kg --search` and `--type` to `trace` instead of post-filtering client-side; smaller payload, better accuracy.
+8. **Paginate large result sets** — `--offset N` with `--limit` instead of fetching everything.
 
 **Output quality**
 
-8. **Use `--format md`** when an agent will read the output (not parse JSON).
-9. **Use `--source`** (or `ask --depth full`) for anything presented to the user as factual.
-10. **RRF is trace's default fusion** — `trace` applies `fusion=rrf` automatically, no flag needed.
+9. **Use `--format md`** when an agent will read the output (not parse JSON).
+10. **Use `--source`** (or `ask --depth full`) for anything presented to the user as factual.
+11. **RRF is trace's default fusion** — `trace` applies `fusion=rrf` automatically, no flag needed.
 
 ---
 
@@ -177,8 +200,10 @@ python ua_query.py trace --service SERVICE --query "keyword" --source --grouped
 | Depth | Steps | Use When |
 |-------|-------|----------|
 | `quick` | Business search only | Quick domain overview |
-| `standard` | + KG trace + wiki domain | Understanding a feature |
+| `standard` | + KG trace + wiki domain | Internal exploration only — narrow down before a `full` verify; **never a user-facing answer** |
 | `full` | + domain flows + source verification + **cross-service RPC follow** | **Answering factual questions (RECOMMENDED)** |
+
+> **Verification scope (read this):** `ask --depth full` reads source only for the nodes it returns (`--limit`, default 5) — it verifies *those*, not every claim you might make. Anything beyond the returned `sourceReads` still needs its own `source --file` / `trace --source` read before you present it as fact.
 
 **Cross-service RPC follow (depth=full):** When the traced service has outbound `consumes_rpc` edges, `ask` automatically identifies the provider service and runs a follow-up trace there. The output includes a `crossServiceTrace` section with the target service's implementation details. This solves the "found the reporter, not the implementer" problem.
 
@@ -211,7 +236,7 @@ python ua_query.py ask --query "PK对战,PKBattle" --platform android --depth fu
 
 ## Layered Drill-Down Model
 
-Each layer is progressively more complete but less semantically rich. Escalate top→bottom until you get results. This is the single canonical layer reference (the Query Escalation Protocol below reuses it).
+Each layer is progressively more complete but less semantically rich. Use the upper layers (L1–L4) to **locate** a concept; you have not **answered** until you descend to L5/L6 source and confirm there. Escalate top→bottom until you locate it, then drill to source to verify. This is the single canonical layer reference (the Query Escalation Protocol below reuses it).
 
 | Layer | Command | Answers / Searches | Reliability |
 |-------|---------|--------------------|-------------|
@@ -273,12 +298,12 @@ When a command returns empty or unexpected results, follow the fallback chain:
 
 ## Query Escalation Protocol (Concept Not Found)
 
-When a user asks about a concept that has **no direct domain/feature match** (e.g., wiki didn't generate a separate domain for it, or it's merged into a broader domain), agents MUST escalate through the layers of the [Layered Drill-Down Model](#layered-drill-down-model) above — L1 (Business) → L6 (File) — stopping at the first layer that returns useful results. The lower layers (L5a/L5b/L6) are deterministic and always complete, so a concept that genuinely exists in source will always surface there.
+When a user asks about a concept that has **no direct domain/feature match** (e.g., wiki didn't generate a separate domain for it, or it's merged into a broader domain), agents MUST escalate through the layers of the [Layered Drill-Down Model](#layered-drill-down-model) above — L1 (Business) → L6 (File) — stopping at the first layer that **locates** the concept. **Locating is not answering:** once located, drill down to L5b/L6 source and verify before presenting any factual claim (see [Source Verification Rule](#source-verification-rule-mandatory)). The lower layers (L5a/L5b/L6) are deterministic and always complete, so a concept that genuinely exists in source will always surface there.
 
 ### Agent Decision Logic
 
 ```
-Concept X — example "PK对战在Android上怎么实现的". Stop at the first layer with results:
+Concept X — example "PK对战在Android上怎么实现的". Stop at the first layer that LOCATES it, then verify against source before answering:
 
 L1  business --search "PK" --platform android                    → follow wikiRef
 L2  wiki --search "PK"                                            → read wiki domain detail
@@ -325,7 +350,7 @@ None matched → report "Concept not found in any indexed layer of this service"
 For system-wide queries like "所有用到Redis的地方" or "哪些服务有Kafka消费者":
 
 1. Discover all services: `services --has kg`
-2. Search each: `source --service svc-a --search "Redis" --limit 20` (repeat per service)
+2. Search each in ONE shell call, chained with `&&`: `source --service svc-a --search "Redis" --limit 20 && source --service svc-b --search "Redis" --limit 20` (batch the services into one call, not one call each).
 3. Aggregate results across services.
 
 **Note:** `ask --depth full` only targets ONE service. For infrastructure concerns that span all services, you MUST manually iterate.
@@ -374,8 +399,8 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | **Business & Discovery** |||
 | "What is X?" / "X是什么功能？" | `ask --query "X,EnglishName" --depth full` | Auto-discovers service + full trace; check `structureFallback` / `sourceFallback` if no KG hits |
 | "Complete flow of X?" / "X的完整流程？" | `ask --query "X,FlowEnglish" --depth full` | Includes domain flow steps |
-| "Business rules for X?" / "X的业务规则？" | `business --domain X --type rules` | Business rule query |
-| "How do users interact with X?" / "X的用户交互？" | `business --domain X --type interactions` | User interaction steps |
+| "Business rules for X?" / "X的业务规则？" | `business --domain X --type rules` → then `trace --source` | Business rule query — **wiki-level; verify each rule against source before presenting** |
+| "How do users interact with X?" / "X的用户交互？" | `business --domain X --type interactions` → then `trace --source` | User interaction steps — **wiki-level; confirm against source before presenting** |
 | "Business landscape overview" / "业务全景？" | `business --panorama` | All facets and services |
 | "What features exist?" / "有哪些业务功能？" | `business --features` | Feature-centric view with server associations (client-server projects) |
 | "What services exist?" / "有哪些服务？" | `services --list` | Service discovery + data layer readiness |
@@ -384,9 +409,9 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "Concept not in KG?" / "KG搜不到X？" | `ask --query "X" --depth full` | Returns `structureFallback`, `sourceFallback`, or `traceHint` automatically |
 | "Show me code for X" / "X方法的源码" | `structure --service S --symbol X --source` | Precise symbol + source |
 | "Show me code for X, Y, Z" / "X、Y、Z的源码" | `structure --service S --symbol "X,Y,Z" --source` | **Batch — many symbols in ONE call** → `{symbols:[…]}` (prefer over one call each) |
-| "Read file F" / "读取文件F" | `kg --service S --file F` | Full file content |
-| "Read lines 100-200 of F" / "读F的100-200行" | `kg --service S --file F --start 100 --end 200` | Line range read |
-| "Methods in file F" / "文件F有哪些方法？" | `kg --service S --file F --toc` | Method index (cheap, no source) |
+| "Read file F" / "读取文件F" | `kg --service S --file F` | Full file content — **for large files prefer `--toc` then a line range** (see Efficiency rule 2) |
+| "Read lines 100-200 of F" / "读F的100-200行" | `kg --service S --file F --start 100 --end 200` | Line range read (preferred over full-file reads) |
+| "Methods in file F" / "文件F有哪些方法？" | `kg --service S --file F --toc` | Method index (cheap, no source) — **run this first, then read targeted ranges** |
 | "File overview for F" / "文件F概览？" | `kg --service S --file F --summary` | Symbols, imports, callers, blast radius |
 | "Methods with validate in name?" / "带validate的方法？" | `structure --service S --q "validate"` | Fuzzy name search |
 | "Search source for timeout" / "源码中搜索timeout" | `source --service S --search "timeout"` | Full-text content search (replaces `structure --grep`) |
@@ -405,14 +430,14 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "What breaks if I change X?" / "改X会影响什么？" | `impact --service S --symbol X --depth 3 --direction inbound` | Transitive impact analysis |
 | "Who calls X?" / "谁调用了X？" | `callers --service S --symbol X --depth 2` | Inbound call graph |
 | "What does X call?" / "X调用了谁？" | `callees --service S --symbol X --depth 2` | Outbound call graph |
-| "Which tests for changed files?" / "改了要跑哪些测试？" | `affected --service S --files src/X.java --depth 2` | Affected test discovery |
+| "Which tests for changed files?" / "改了要跑哪些测试？" | `affected --service S --files src/X.java,src/Y.java --depth 2` | Affected test discovery — **batch all changed files in one call** |
 | "Most critical classes?" / "最关键的类？" | `hotspots --service S --type class --limit 20` | Fan-in/fan-out hotspot scoring |
 | "Blast radius of X?" / "X的影响半径？" | `trace --service S --query X` → check `blastRadius` → `impact --service S --symbol X --depth 3` | Quick triage + transitive |
 | **Cross-Service & Wiki** |||
 | "How do X and Y interact?" / "X和Y怎么交互？" | `trace` in svc-a + `trace` in svc-b | Dual-service comparison |
 | "Architecture overview" / "系统架构？" | `wiki --architecture` | System architecture wiki |
 | "Endpoints for service S" / "S有哪些接口？" | `wiki --service S --type endpoint` | API endpoint documentation |
-| "Domain flow steps" / "X流程的步骤？" | `domain --service S --flow F --steps` | Ordered flow steps |
+| "Domain flow steps" / "X流程的步骤？" | `domain --service S --flow F --steps` → then `trace --source` | Ordered flow steps — **domain-level; confirm against source before presenting** |
 | "Related domains for X" / "X的相关领域？" | `wiki --service S --domain X --related` | Cross-service related domains |
 | **Data & Freshness** |||
 | "Is data stale?" / "数据是否过期？" | `meta --stale` | Stale layer detection |
