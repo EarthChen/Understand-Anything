@@ -58,11 +58,22 @@ Apply in this order — **#1 is a hard constraint; #2–#3 optimize within it (n
 
 ---
 
-## Execution Mode: Sub-Agent (Default)
+## Execution Mode: Orchestrator vs Worker
 
-**This skill MUST be delegated to a sub-agent by default.** All understand-query operations are read-only exploration and lookup tasks — the caller only cares about the final result, not the intermediate process.
+This skill is read by two roles. **Decide which you are from an observable signal — *who handed you this task* — and act accordingly. Getting this wrong causes infinite sub-agent nesting.**
 
-### Dispatch Instructions (Cross-Platform)
+| You received the task from… | You are the… | Do this |
+|---|---|---|
+| The **human user**, directly | **Orchestrator** | Dispatch **one** worker sub-agent (queries are read-only; the user only wants the final result). |
+| **Another agent** (you were dispatched) | **Worker** | Run `ua_query.py` **directly**. Do **NOT** invoke the understand-query skill again, and do **NOT** dispatch another sub-agent. |
+
+**The rule that stops the recursion (orchestrator MUST follow):** the worker's dispatch prompt must be self-contained — give it the question (or the exact `ua_query.py` command to run) **plus this explicit instruction:**
+
+> "You are the understand-query **worker**. Run `ua_query.py` directly and return the result. Do NOT call the understand-query skill. Do NOT dispatch any sub-agent."
+
+Without that instruction the worker re-reads this skill, sees "dispatch a worker," and spawns another worker — forever. The stop-condition is keyed on *what your dispatch prompt tells you*, **not** on the unobservable "am I already a sub-agent?" — a freshly dispatched agent cannot tell that on its own.
+
+### Dispatch Instructions (Orchestrator only, cross-platform)
 
 | Platform | Mechanism | Type |
 |----------|-----------|------|
@@ -70,10 +81,8 @@ Apply in this order — **#1 is a hard constraint; #2–#3 optimize within it (n
 | **Claude Code** | `Agent` tool (sub-agent dispatch) | General-purpose agent with shell access |
 | **Codex** | Platform-native sub-agent / task dispatch | Agent with shell access |
 
-### When NOT to Use Sub-Agent
-
-Skip sub-agent dispatch only when:
-- The parent agent is **already inside a sub-agent** (avoid nesting).
+### Run inline (no dispatch) when:
+- You are the **worker** (see table above) — always run inline.
 - The query is a **single trivial command** (e.g., `services --list`) whose result is needed inline.
 
 ---
@@ -107,6 +116,24 @@ python ua_query.py trace --service svc-b --query "keyword" --source
 python ua_query.py trace --service SERVICE --query "keyword" --source --grouped
 ```
 
+### After `ask`/`trace` returns matched nodes — NEVER read those files one at a time
+
+This is the single most common efficiency mistake. The moment a result hands you several files/symbols:
+
+1. **Reuse what you already have.** `ask --depth full` and `trace --source` already include the matched nodes' source (`sourceReads`). Read that first — do **not** re-fetch it with a `source --file`.
+2. **Still need more files/symbols than the result included? Fetch them ALL in ONE call** — never a loop of single-file reads:
+
+```bash
+# all matches' source, grouped by file, in one call
+python ua_query.py trace --service S --query "A,B,C" --source --grouped
+# many files / line ranges in one call
+python ua_query.py source --service S --file "A.java:20-80,B.java,C.java:1-40"
+# many symbols in one call
+python ua_query.py structure --service S --symbol "A,B,C" --source
+```
+
+> One `source --file` with 5 comma-separated paths is **one** tool call; five separate `source --file` calls are **five** — same result, 5× the cost. If you are about to issue a second single-file read in a row, stop and batch instead.
+
 ---
 
 ## Agent Efficiency Rules
@@ -117,7 +144,7 @@ python ua_query.py trace --service SERVICE --query "keyword" --source --grouped
 
 1. **Prefer `ask` for business questions** — one command replaces 5+ individual calls (auto-discover → trace → wiki → domain → source-verify).
 2. **Read targeted methods in segments — never dump a whole file.** A `--file` read with no line range pulls the *entire* file into context; that is the expensive default to avoid. Instead, read in segments scoped to the method(s) you actually need: (a) get the cheap method index first — `kg --file F --toc` (no source) or `structure --symbol "name"` (signatures only) — to find the spans, (b) read only those spans by line range, e.g. `source --file "F.java:120-180"` or `structure --symbol "method" --source`. Reach for a full-file read only when the file is small or you genuinely need all of it.
-3. **Batch the targeted reads into ONE call** — once you've located the specific files/symbols/ranges (from a search/toc/trace), read them together, not one call each: `source --file "A.java:120-180,B.java:20-80,C.java"` (per-file line ranges; a bad path is isolated as a per-file `error`, the rest still return → `{files:[…]}`) and `structure --symbol "A,B,C" --source` (→ `{symbols:[…]}`). N targeted reads → 1 call.
+3. **Batch the targeted reads into ONE call — the moment a search/`ask`/`trace` hands you ≥2 files or symbols, your next call reads ALL of them at once.** Once you've located the specific files/symbols/ranges, read them together, not one call each: `source --file "A.java:120-180,B.java:20-80,C.java"` (per-file line ranges; a bad path is isolated as a per-file `error`, the rest still return → `{files:[…]}`) and `structure --symbol "A,B,C" --source` (→ `{symbols:[…]}`). N targeted reads → 1 call. A second single-file read in a row is the signal you should have batched.
 4. **Chain mixed commands with `&&`** — when you genuinely need *different* commands, combine them into ONE shell call. Prefer a native batch flag (rule 3) when the calls differ only by file/symbol; `&&` is the fallback for heterogeneous commands.
 5. **Expand keywords before trace** — pass 2-4 comma-separated variants in a single `--query "中文,English,CamelCase"`; multi-keyword parallel search eliminates retry loops.
 
