@@ -687,7 +687,58 @@ git commit -m "feat(understand-query): batch multi-symbol structure --symbol que
 
 ---
 
-### Task 5: Docs, end-to-end verification, version bump, release
+### Task 5: Make the dashboard typecheck-clean + add a CI typecheck gate (TDD)
+
+**Why:** `pnpm --filter @understand-anything/dashboard build` (`tsc -b`) has been broken on `main` with 32 pre-existing type errors, because CI (`.github/workflows/ci.yml`) builds/tests only `core` and `skill` — it never type-checks the dashboard. This task fixes all 32 errors (a failing vitest test FIRST for the ones that are real runtime bugs) and adds a CI gate so this drift is caught on every future PR/push.
+
+**Files:**
+- Modify (handlers/component): `understand-anything-plugin/packages/dashboard/src/api/handlers/{search,kg-index,structure-index,wiki-index,business,business-index,source}.ts`, `src/components/NodeInfo.tsx`
+- Modify (test fixtures): `src/api/handlers/__tests__/{search-core,structure-dataflow,structure-search}.test.ts`
+- Modify: `understand-anything-plugin/packages/dashboard/package.json` (add `"typecheck": "tsc -b"`)
+- Modify: `.github/workflows/ci.yml` (add a dashboard typecheck step)
+- Add: vitest behavior tests for the Category-A real bugs
+
+**The 32 errors, categorized (run `pnpm --filter @understand-anything/dashboard exec tsc -b` to see all):**
+
+**Category A — REAL runtime bugs → write a failing vitest test FIRST (RED), then fix (GREEN):**
+- `NodeInfo.tsx:38` — reads `relationships.provides_api`; the relationship type/data key is `provides_rpc`. Wrong key ⇒ `undefined` at runtime. Test the relationship-extraction with a node carrying a `provides_rpc` edge; assert it surfaces.
+- `search.ts:179` — `.domain` read on a union member (`WikiSearchResult | {…}`) that lacks `domain`. Add the correct discriminant/guard; test the search path that hits it.
+- `search.ts:201` — value typed `{rankMap, resolve}` is missing `results` required by `RankedResults`. Reconcile the shape; test the ranked-results consumer.
+- `search.ts:282` — `{nodes:[], edges:[]}` passed where a full `KnowledgeGraph` is required (missing `version, project, layers, tour`). Construct a valid empty graph; test the empty-graph branch.
+- `search.ts:345` — `GraphNode` arg missing `complexity`.
+- `kg-index.ts:124-125`, `structure-index.ts:199-200`, `wiki-index.ts:138-139` — TS2352 unsafe cast `Doc → Record<string,unknown>` + **TS2783 `id` specified twice in a spread (silently overwritten)**. Determine which `id` should win (the overwrite is likely a bug), fix the spread, and route the cast through `unknown` or give the Doc types an index signature. Test that the built index entry carries the correct `id`.
+
+**Category B — test-fixture drift → update fixtures so existing tests typecheck AND still pass (existing tests are the coverage):**
+- `search-core.test.ts` — add `complexity` to `GraphNode` fixtures (match the type's field), add `weight` to `GraphEdge` fixtures, replace `"uses"` with a valid `EdgeType` (check the `EdgeType` union for the intended member).
+- `structure-dataflow.test.ts:45`, `structure-search.test.ts:3` — `Cannot find module '../types'`: fix the import to the actual types module (find where the type lives).
+- `structure-dataflow.test.ts:1` — remove unused `beforeEach` import.
+
+**Category C — unused declarations (TS6133) → remove if dead, wire up if accidentally orphaned (investigate each before deleting):**
+- `business-index.ts:75 platformMap`, `business.ts:226 searchBusinessFeatures`, `source.ts:57 resolveProjectRoot`, `structure-index.ts:106 service`.
+
+**Steps:**
+
+- [ ] **Step 1: Establish RED.** Run `pnpm --filter @understand-anything/dashboard exec tsc -b 2>&1 | grep -c "error TS"` → expect 32. This failing typecheck is the overarching RED.
+- [ ] **Step 2: Category A — TDD each real bug.** For each: add a vitest test that fails for the wrong behavior (RED: `pnpm --filter @understand-anything/dashboard test -- <file>`), then fix the production code (GREEN). Investigate the actual types (`src/api/handlers/types.ts` / core types) to fix correctly, not just to silence tsc.
+- [ ] **Step 3: Category B + C.** Fix fixtures (keep existing tests passing) and remove/wire unused declarations.
+- [ ] **Step 4: GREEN typecheck.** `pnpm --filter @understand-anything/dashboard exec tsc -b` → 0 errors.
+- [ ] **Step 5: Add the gate.** Add `"typecheck": "tsc -b"` to the dashboard `package.json` scripts. In `.github/workflows/ci.yml`, after the "Build skill" step, add:
+  ```yaml
+      - name: Typecheck dashboard
+        run: pnpm --filter @understand-anything/dashboard typecheck
+  ```
+- [ ] **Step 6: Run dashboard tests.** `pnpm --filter @understand-anything/dashboard test`. The API/handler tests and your new behavior tests must pass. If pre-existing **UI** test failures remain (unrelated React/component tests), report their exact count and the failing files — do NOT fix them in this task (out of scope; flagged for the controller).
+- [ ] **Step 7: Commit.**
+  ```bash
+  git add understand-anything-plugin/packages/dashboard .github/workflows/ci.yml
+  git commit -m "fix(dashboard): resolve 32 tsc type errors + gate dashboard typecheck in CI"
+  ```
+
+**Completion gate:** `pnpm --filter @understand-anything/dashboard exec tsc -b` exits 0; Category-A behavior tests pass; CI has a dashboard typecheck step.
+
+---
+
+### Task 6: Docs, end-to-end verification, version bump, release
 
 **Files:**
 - Modify: `understand-anything-plugin/skills/understand-query/SKILL.md`, `docs/source-code.md`, `docs/structure-commands.md`
