@@ -142,7 +142,7 @@ export function unifiedSearch(
   const kgResult = scope !== "wiki" ? state.kgIndex.search(kgOpts) : { results: [] as Array<{ id: string; name: string; type: string; layer: string; summary: string; score: number; service?: string; filePath?: string; lineRange?: [number, number]; tags?: string }>, total: 0, facets: {} as Record<string, Record<string, number>> }
   const wikiResult = scope !== "kg" && scope !== "domain" && scope !== "business"
     ? state.wikiIndex.search(wikiOpts)
-    : { results: [] as Array<{ id: string; name: string; type: string; summary: string; score: number; service?: string }>, total: 0, facets: {} as Record<string, Record<string, number>> }
+    : { results: [] as Array<{ id: string; name: string; type: string; summary: string; score: number; service?: string; domain?: string }>, total: 0, facets: {} as Record<string, Record<string, number>> }
 
   // Merge results
   const scoreById = new Map<string, UnifiedSearchResult>()
@@ -274,12 +274,32 @@ function mtimesEqual(a: Record<string, number>, b: Record<string, number>): bool
   return true
 }
 
+/** A valid, empty KnowledgeGraph. KgIndex only reads `nodes`/`edges`, but the
+ *  full shape is required to satisfy the KnowledgeGraph contract. */
+function emptyKnowledgeGraph(): KnowledgeGraph {
+  return {
+    version: "0",
+    project: {
+      name: "",
+      languages: [],
+      frameworks: [],
+      description: "",
+      analyzedAt: "",
+      gitCommitHash: "",
+    },
+    nodes: [],
+    edges: [],
+    layers: [],
+    tour: [],
+  }
+}
+
 function buildSearchIndex(projectRoot: string, serviceFilter: string | null): SearchIndexState {
   const edges: KgEdgeEntry[] = []
   const mtimes = collectIndexMtimes(projectRoot, serviceFilter)
 
   // Collect all KG items for KgIndex
-  const kgGraph: KnowledgeGraph = { nodes: [], edges: [] }
+  const kgGraph: KnowledgeGraph = emptyKnowledgeGraph()
   const wikiEntries: Array<{ id: string; name: string; summary: string; content?: string; type: string; service?: string }> = []
 
   const parentWikiPath = resolveProjectDataPath(projectRoot, "wiki/index.json")
@@ -348,6 +368,7 @@ function buildSearchIndex(projectRoot: string, serviceFilter: string | null): Se
         type: "domain",
         summary: domain.summary,
         tags: ["business"],
+        complexity: "simple",
       })
     }
   }

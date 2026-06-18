@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { handleStructureSearchRequest } from "../structure"
-import type { ApiRequest, ApiContext } from "../types"
+import type { ApiRequest, ApiContext } from "../../types"
 
 function makeRequest(params: Record<string, string>): ApiRequest {
   const searchParams = new URLSearchParams(params)

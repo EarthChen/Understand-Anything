@@ -5,21 +5,33 @@ import type { KnowledgeGraph } from "@understand-anything/core"
 import { KgIndex } from "../kg-index"
 import { WikiIndex } from "../wiki-index"
 
-function buildState(overrides: Partial<SearchIndexState> = {}): SearchIndexState {
-  const kg: KnowledgeGraph = {
-    nodes: [
-      { id: "kg::UserService", name: "UserService", type: "class", summary: "User CRUD", tags: ["user", "service"], filePath: "src/UserService.java", lineRange: [1, 50] },
-      { id: "kg::AuthController", name: "AuthController", type: "endpoint", summary: "Auth endpoints", tags: ["auth"], filePath: "src/AuthController.java", lineRange: [1, 30] },
-      { id: "kg::OrderService", name: "OrderService", type: "class", summary: "Order management", tags: ["order"], filePath: "src/OrderService.java", lineRange: [1, 40] },
-      { id: "biz::users", name: "User Domain", type: "domain", summary: "User business domain", tags: ["business"] },
-      { id: "domain::auth-flow", name: "Auth Flow", type: "flow", summary: "Authentication flow", tags: ["domain"] },
-    ],
-    edges: [
-      { source: "kg::AuthController", target: "kg::UserService", type: "uses", direction: "forward" },
-    ],
+/** Wrap nodes/edges into a complete, valid KnowledgeGraph for KgIndex fixtures. */
+function makeKg(nodes: KnowledgeGraph["nodes"], edges: KnowledgeGraph["edges"]): KnowledgeGraph {
+  return {
+    version: "0",
+    project: { name: "test", languages: [], frameworks: [], description: "", analyzedAt: "", gitCommitHash: "" },
+    nodes,
+    edges,
+    layers: [],
+    tour: [],
   }
+}
+
+function buildState(overrides: Partial<SearchIndexState> = {}): SearchIndexState {
+  const kg: KnowledgeGraph = makeKg(
+    [
+      { id: "kg::UserService", name: "UserService", type: "class", summary: "User CRUD", tags: ["user", "service"], filePath: "src/UserService.java", lineRange: [1, 50], complexity: "moderate" },
+      { id: "kg::AuthController", name: "AuthController", type: "endpoint", summary: "Auth endpoints", tags: ["auth"], filePath: "src/AuthController.java", lineRange: [1, 30], complexity: "simple" },
+      { id: "kg::OrderService", name: "OrderService", type: "class", summary: "Order management", tags: ["order"], filePath: "src/OrderService.java", lineRange: [1, 40], complexity: "complex" },
+      { id: "biz::users", name: "User Domain", type: "domain", summary: "User business domain", tags: ["business"], complexity: "simple" },
+      { id: "domain::auth-flow", name: "Auth Flow", type: "flow", summary: "Authentication flow", tags: ["domain"], complexity: "simple" },
+    ],
+    [
+      { source: "kg::AuthController", target: "kg::UserService", type: "calls", direction: "forward", weight: 1 },
+    ],
+  )
   const wikiEntries = [
-    { id: "wiki::auth", name: "Authentication", summary: "How auth works", content: "JWT tokens", type: "concept", service: "test-svc" },
+    { id: "wiki::auth", name: "Authentication", summary: "How auth works", content: "JWT tokens", type: "concept", service: "test-svc", domain: "security" },
     { id: "wiki::database", name: "Database", summary: "DB architecture", content: "PostgreSQL", type: "concept", service: "test-svc" },
   ]
   const edges = [
@@ -159,6 +171,15 @@ describe("unifiedSearch", () => {
     expect(results.every((r) => r.layer === "wiki")).toBe(true)
   })
 
+  it("surfaces the wiki entry's domain on unified results", () => {
+    // Guards search.ts reading `r.domain` off a wiki result — the wiki::auth
+    // entry carries domain "security", which must flow through to the result.
+    const state = buildState()
+    const { results } = unifiedSearch(state, "auth", 20, "wiki")
+    const authResult = results.find((r) => r.id === "wiki::auth")
+    expect(authResult?.domain).toBe("security")
+  })
+
   it("kg results include filePath and lineRange", () => {
     const state = buildState()
     const { results } = unifiedSearch(state, "UserService", 20, "kg")
@@ -177,17 +198,17 @@ describe("kgGraphExpansion", () => {
   })
 
   it("returns 2-hop neighbors with lower rank", () => {
-    const kg: KnowledgeGraph = {
-      nodes: [
-        { id: "a", name: "A", type: "class", summary: "", tags: [] },
-        { id: "b", name: "B", type: "class", summary: "", tags: [] },
-        { id: "c", name: "C", type: "class", summary: "", tags: [] },
+    const kg: KnowledgeGraph = makeKg(
+      [
+        { id: "a", name: "A", type: "class", summary: "", tags: [], complexity: "simple" },
+        { id: "b", name: "B", type: "class", summary: "", tags: [], complexity: "simple" },
+        { id: "c", name: "C", type: "class", summary: "", tags: [], complexity: "simple" },
       ],
-      edges: [
-        { source: "a", target: "b", type: "uses", direction: "forward" },
-        { source: "b", target: "c", type: "uses", direction: "forward" },
+      [
+        { source: "a", target: "b", type: "calls", direction: "forward", weight: 1 },
+        { source: "b", target: "c", type: "calls", direction: "forward", weight: 1 },
       ],
-    }
+    )
     const adj = new Map<string, Set<string>>()
     adj.set("a", new Set(["b"]))
     adj.set("b", new Set(["a", "c"]))
@@ -216,17 +237,17 @@ describe("kgGraphExpansion", () => {
   })
 
   it("respects maxNeighbors limit", () => {
-    const kg: KnowledgeGraph = {
-      nodes: [
-        { id: "center", name: "Center", type: "class", summary: "", tags: [] },
+    const kg: KnowledgeGraph = makeKg(
+      [
+        { id: "center", name: "Center", type: "class", summary: "", tags: [], complexity: "simple" as const },
         ...Array.from({ length: 100 }, (_, i) => ({
-          id: `n${i}`, name: `N${i}`, type: "class", summary: "", tags: [],
+          id: `n${i}`, name: `N${i}`, type: "class" as const, summary: "", tags: [], complexity: "simple" as const,
         })),
       ],
-      edges: Array.from({ length: 100 }, (_, i) => ({
-        source: "center", target: `n${i}`, type: "uses", direction: "forward" as const,
+      Array.from({ length: 100 }, (_, i) => ({
+        source: "center", target: `n${i}`, type: "calls" as const, direction: "forward" as const, weight: 1,
       })),
-    }
+    )
     const adj = new Map<string, Set<string>>()
     const neighbors = new Set(Array.from({ length: 100 }, (_, i) => `n${i}`))
     adj.set("center", neighbors)

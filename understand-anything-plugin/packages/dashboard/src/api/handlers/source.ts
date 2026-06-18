@@ -54,11 +54,6 @@ function loadStructuralAnalysis(serviceName: string): StructuralAnalysis | null 
   }
 }
 
-function resolveProjectRoot(baseRoot: string, service: string | null): string | null {
-  if (!service) return baseRoot
-  return resolveServiceRoot(baseRoot, service)
-}
-
 function handleSourceSearch(searchParams: URLSearchParams): ApiResponse {
   const q = searchParams.get("q") ?? ""
   if (!q.trim()) {

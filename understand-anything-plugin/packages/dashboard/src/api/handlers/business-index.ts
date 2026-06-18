@@ -72,14 +72,12 @@ function extractInteractionFlows(doc: unknown): NormalizedFlow[] {
 
 export class BusinessIndex {
   private miniSearch: MiniSearch
-  private platformMap: Map<string, string[]>
 
   constructor(
     private data: BusinessFeaturesDocument,
     private blDir: string,
     private projectRoot: string,
   ) {
-    this.platformMap = new Map()
     const docs = this.buildDocs()
     this.miniSearch = new MiniSearch(MINI_SEARCH_OPTIONS)
     if (docs.length > 0) {

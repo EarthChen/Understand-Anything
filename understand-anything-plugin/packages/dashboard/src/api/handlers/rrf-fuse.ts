@@ -3,8 +3,12 @@ import type { UnifiedSearchResult } from "./search"
 const RRF_K = 60
 
 export interface RankedResults {
-  /** Items in rank order — index 0 = rank 1. */
-  results: UnifiedSearchResult[]
+  /**
+   * Items in rank order — index 0 = rank 1. Optional: when a `rankMap` is
+   * supplied the ranks come from there and `results` is ignored, so callers
+   * driving fusion purely off a rankMap need not provide it.
+   */
+  results?: UnifiedSearchResult[]
   /**
    * Optional fallback: resolve an ID not present in `results` into a
    * UnifiedSearchResult (used by callers that have a separate lookup table,
@@ -39,8 +43,9 @@ export function rrfFuse(
         }
       }
     } else {
-      for (let i = 0; i < list.results.length; i++) {
-        const r = list.results[i]
+      const results = list.results ?? []
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i]
         const rank = i + 1
         rrfScores.set(r.id, (rrfScores.get(r.id) ?? 0) + 1 / (RRF_K + rank))
         if (!resultById.has(r.id)) {

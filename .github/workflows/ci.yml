@@ -43,6 +43,9 @@ jobs:
       - name: Build skill
         run: pnpm --filter @understand-anything/skill build
 
+      - name: Typecheck dashboard
+        run: pnpm --filter @understand-anything/dashboard typecheck
+
       - name: Test core
         run: pnpm --filter @understand-anything/core test
 

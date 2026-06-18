@@ -207,6 +207,15 @@ describe("KgIndex", () => {
       const results = index.search({ type: "class" })
       expect(results.results.every((r) => r.score === 0)).toBe(true)
     })
+    it("preserves each doc's own id in filter-only mode", () => {
+      // Guards the no-query map step `{ ...doc, score: 0 }`: a previous
+      // `{ id: doc.id, score: 0, ...doc }` spread specified `id` twice, which
+      // TS flagged as a silent overwrite. The id must be the doc's own id.
+      const index = new KgIndex(mockKg, "test-service")
+      const results = index.search({ type: "class" })
+      const ids = results.results.map((r) => r.id).sort()
+      expect(ids).toEqual(["node::DatabasePool", "node::UserService"])
+    })
   })
 
   describe("missing optional fields", () => {

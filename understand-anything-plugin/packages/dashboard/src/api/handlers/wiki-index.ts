@@ -135,8 +135,8 @@ export class WikiIndex {
       })
     } else {
       miniResults = this.docs
-        .filter((doc) => filter(doc as Record<string, unknown>))
-        .map((doc) => ({ id: doc.id, score: 0, ...doc }))
+        .filter((doc) => filter(doc as unknown as Record<string, unknown>))
+        .map((doc) => ({ ...doc, score: 0 }))
     }
 
     const total = miniResults.length
