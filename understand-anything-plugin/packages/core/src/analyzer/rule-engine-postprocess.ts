@@ -14,6 +14,19 @@
 
 import { readFileSync, writeFileSync } from "fs";
 import { runRuleEngine } from "./rule-engine.js";
+import type { GraphEdge } from "../types.js";
+
+// Shape of class-like nodes as stored in a serialized knowledge graph
+interface SerializedClassNode {
+  type: string;
+  name: string;
+  filePath?: string;
+  annotations?: Array<{ name: string; arguments?: Record<string, string> }>;
+  typedProperties?: Array<{ name: string; type?: string; annotations?: Array<{ name: string; arguments?: Record<string, string> }> }>;
+  methods?: string[];
+  properties?: string[];
+  interfaces?: string[];
+}
 
 const args = process.argv.slice(2);
 const positionalArgs = args.filter(a => !a.startsWith("--"));
@@ -75,9 +88,9 @@ if (!graph.edges || !Array.isArray(graph.edges)) {
 }
 
 // Extract annotations from existing nodes
-const extractionResults = graph.nodes
-  .filter((n: any) => (n.type === "class" || n.type === "interface") && (n.annotations?.length > 0 || n.typedProperties?.length > 0))
-  .map((n: any) => ({
+const extractionResults = (graph.nodes as SerializedClassNode[])
+  .filter((n) => (n.type === "class" || n.type === "interface") && ((n.annotations?.length ?? 0) > 0 || (n.typedProperties?.length ?? 0) > 0))
+  .map((n) => ({
     path: n.filePath || "",
     classes: [{
       name: n.name,
@@ -98,7 +111,7 @@ const result = runRuleEngine(extractionResults, { frameworks: [], packageJson: {
 
 // Merge new edges (no duplicates)
 const existingKeys = new Set(
-  graph.edges.map((e: any) => `${e.source}|${e.target}|${e.type}`)
+  (graph.edges as GraphEdge[]).map((e) => `${e.source}|${e.target}|${e.type}`)
 );
 const newEdges = result.edges.filter(
   (e) => !existingKeys.has(`${e.source}|${e.target}|${e.type}`)

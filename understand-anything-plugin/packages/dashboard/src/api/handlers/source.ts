@@ -74,7 +74,7 @@ function handleSourceSearch(searchParams: URLSearchParams): ApiResponse {
     return { statusCode: 400, body: { error: "limit must be between 1 and 50" } }
   }
 
-  let graphFile = findGraphFile("knowledge-graph.json")
+  const graphFile = findGraphFile("knowledge-graph.json")
   let baseRoot: string
   if (graphFile) {
     baseRoot = projectRootFromGraphFile(graphFile)

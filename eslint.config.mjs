@@ -6,6 +6,7 @@ export default tseslint.config(
   {
     ignores: [
       '**/node_modules/**',
+      '**/.claude/**',
       '**/dist/**',
       '**/build/**',
       '**/public/**',
@@ -51,6 +52,21 @@ export default tseslint.config(
     files: ['**/*.test.ts', '**/*.test.tsx', '**/*.test.mjs', '**/__tests__/**/*.{ts,tsx,mjs}'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
+  {
+    files: ['**/skills/**/workflow.js'],
+    languageOptions: {
+      globals: {
+        agent: 'readonly',
+        parallel: 'readonly',
+        pipeline: 'readonly',
+        log: 'readonly',
+        phase: 'readonly',
+        args: 'readonly',
+        budget: 'readonly',
+        workflow: 'readonly',
+      },
     },
   },
 );

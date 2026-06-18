@@ -1,14 +1,5 @@
 import type {
-  WikiMeta,
-  WikiIndex,
-  WikiIndexEntry,
   WikiDomainPage,
-  WikiServiceOverview,
-  WikiFlow,
-  WikiFlowStep,
-  WikiOverview,
-  WikiArchitecture,
-  WikiCrossDomain,
 } from "./types.js";
 
 export interface ValidationIssue {

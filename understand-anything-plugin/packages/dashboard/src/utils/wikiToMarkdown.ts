@@ -62,7 +62,7 @@ function flowStepToMarkdown(step: WikiFlowStep): string {
 }
 
 function sanitizeMermaidLabel(text: string): string {
-  return text.replace(/["\[\](){}|<>#&]/g, " ").trim();
+  return text.replace(/["[\](){}|<>#&]/g, " ").trim();
 }
 
 function sanitizeSequenceLabel(text: string): string {
