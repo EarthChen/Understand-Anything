@@ -265,7 +265,11 @@ function SystemOverviewInner() {
 
   const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
     setSelectedNodeId(node.id);
-  }, []);
+    // Navigate to service on single click
+    if (node.type === "service") {
+      setActiveService(serviceKeyFromNodeId(node.id));
+    }
+  }, [setActiveService]);
 
   const onNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
