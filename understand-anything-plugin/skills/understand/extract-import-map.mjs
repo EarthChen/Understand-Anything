@@ -1261,6 +1261,52 @@ function extractRustModSources(content) {
 }
 
 // ---------------------------------------------------------------------------
+// Dart resolver
+//
+// Dart has two import forms:
+//   - `import 'package:foo/bar.dart';` — package imports, resolved under lib/
+//   - `import '../relative/path.dart';` — relative imports from importer dir
+//
+// Also handles `export` directives (tree-sitter captures them as imports).
+// `dart:core` and other SDK imports are external — dropped.
+// ---------------------------------------------------------------------------
+
+export function resolveDartImport(rawImport, file, ctx) {
+  if (!rawImport || typeof rawImport !== 'string') return [];
+  const src = rawImport.trim();
+  if (!src) return [];
+
+  const importerDir = dirOf(toPosix(file.path));
+
+  // Dart SDK imports: `dart:core`, `dart:async`, etc. — external
+  if (src.startsWith('dart:')) return [];
+
+  // Package imports: `package:foo/bar.dart` -> resolve under `lib/`
+  if (src.startsWith('package:')) {
+    const pkgPath = src.slice('package:'.length);
+    if (!pkgPath) return [];
+    const candidate = `lib/${pkgPath}`;
+    if (ctx.fileSet.has(candidate)) return [candidate];
+    // Try without .dart extension if it was missing
+    if (!pkgPath.endsWith('.dart')) {
+      const withExt = `${candidate}.dart`;
+      if (ctx.fileSet.has(withExt)) return [withExt];
+    }
+    return [];
+  }
+
+  // Relative imports: `./foo.dart`, `../bar.dart`
+  const resolved = resolveRelative(importerDir, src);
+  if (resolved && ctx.fileSet.has(resolved)) return [resolved];
+  // If no extension given, try appending .dart
+  if (!src.endsWith('.dart')) {
+    const withExt = resolveRelative(importerDir, src + '.dart');
+    if (withExt && ctx.fileSet.has(withExt)) return [withExt];
+  }
+  return [];
+}
+
+// ---------------------------------------------------------------------------
 // C / C++ resolver
 //
 // Tree-sitter's cpp extractor exposes both quoted and angle-bracket includes
@@ -1347,8 +1393,11 @@ function resolveImport(imp, file, ctx) {
   if (lang === 'rust') {
     return resolveRustImport(src, file, ctx);
   }
-  if (lang === 'c' || lang === 'cpp') {
+  if (lang === 'c' || lang === 'cpp' || lang === 'objc') {
     return resolveCppImport(src, file, ctx);
+  }
+  if (lang === 'dart') {
+    return resolveDartImport(src, file, ctx);
   }
   // Ruby is handled via a dedicated pathway because its tree-sitter
   // extractor flattens require vs require_relative into a single field,

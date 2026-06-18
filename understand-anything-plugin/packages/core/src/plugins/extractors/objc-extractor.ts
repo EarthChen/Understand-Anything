@@ -191,6 +191,7 @@ export class ObjcExtractor implements LanguageExtractor {
 
       switch (node.type) {
         case "preproc_include":
+        case "preproc_import":
           this.extractImport(node, imports);
           break;
 

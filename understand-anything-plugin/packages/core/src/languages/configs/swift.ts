@@ -7,7 +7,7 @@ export const swiftConfig = {
   treeSitter: {
     wasmPackage: "tree-sitter-swift",
     wasmFile: "tree-sitter-swift.wasm",
-    localWasm: "grammars/tree-sitter-swift.wasm",
+    localWasm: "core/grammars/tree-sitter-swift.wasm",
   },
   concepts: [
     "optionals",

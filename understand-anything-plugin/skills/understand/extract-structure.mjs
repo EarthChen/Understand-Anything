@@ -236,6 +236,7 @@ export function buildResult(file, totalLines, nonEmptyLines, analysis, callGraph
         methods: cls.methods || [],
         properties: cls.properties || [],
       };
+      if (cls.kind) entry.kind = cls.kind;
       if (cls.annotations?.length) entry.annotations = cls.annotations;
       if (cls.superclass) entry.superclass = cls.superclass;
       if (cls.interfaces?.length) entry.interfaces = cls.interfaces;

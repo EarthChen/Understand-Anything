@@ -4,6 +4,11 @@ export const dartConfig = {
   id: "dart",
   displayName: "Dart",
   extensions: [".dart"],
+  treeSitter: {
+    wasmPackage: "tree-sitter-dart",
+    wasmFile: "tree-sitter-dart.wasm",
+    localWasm: "core/grammars/tree-sitter-dart.wasm",
+  },
   concepts: [
     "null safety",
     "mixins",
