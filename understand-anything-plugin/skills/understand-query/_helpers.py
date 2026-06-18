@@ -409,8 +409,13 @@ def _fetch_wiki_domain(server: str, service: str, query: str) -> dict | None:
         return None
 
 
-def _fetch_domain_flows(server: str, service: str, query: str) -> list[dict] | None:
-    """Fetch domain graph flows matching the query."""
+def _fetch_domain_flows(server: str, service: str, query: str, return_all: bool = False) -> list[dict] | None:
+    """Fetch domain graph flows matching the query.
+
+    When return_all=True, returns all flows with name+summary (capped at 20).
+    Keyword-matched flows include detailed steps; others have empty steps.
+    This ensures the caller sees the full landscape without excessive token cost.
+    """
     try:
         params: dict[str, str] = {"service": service, "file": "domain-graph.json"}
         data = fetch_json(server, "/api/graph", params)
@@ -419,6 +424,31 @@ def _fetch_domain_flows(server: str, service: str, query: str) -> list[dict] | N
             return None
         q_lower = query.lower()
         keywords = [k.strip().lower() for k in query.split(",") if k.strip()]
+        edges = data.get("edges", [])
+        nodes = data.get("nodes", [])
+
+        def _get_steps(flow):
+            step_edges = sorted(
+                [e for e in edges if e.get("source") == flow["id"] and e.get("type") == "flow_step"],
+                key=lambda e: e.get("weight", 0),
+            )
+            step_ids = [e["target"] for e in step_edges]
+            return [n for n in nodes if n["id"] in step_ids]
+
+        if return_all:
+            # Return all flows: keyword-matched get steps, others get name+summary only
+            flow_details = []
+            for flow in flows[:20]:
+                name = flow.get("name", "").lower()
+                summary = flow.get("summary", "").lower()
+                is_match = any(kw in name or kw in summary for kw in keywords)
+                flow_details.append({
+                    "flow": flow,
+                    "steps": _get_steps(flow) if is_match else [],
+                })
+            return flow_details
+
+        # Original behavior: keyword-filtered flows only
         relevant = []
         for f in flows:
             name = f.get("name", "").lower()
@@ -428,16 +458,8 @@ def _fetch_domain_flows(server: str, service: str, query: str) -> list[dict] | N
         if not relevant:
             relevant = flows[:10]
         flow_details = []
-        edges = data.get("edges", [])
-        nodes = data.get("nodes", [])
         for flow in relevant[:5]:
-            step_edges = sorted(
-                [e for e in edges if e.get("source") == flow["id"] and e.get("type") == "flow_step"],
-                key=lambda e: e.get("weight", 0),
-            )
-            step_ids = [e["target"] for e in step_edges]
-            steps = [n for n in nodes if n["id"] in step_ids]
-            flow_details.append({"flow": flow, "steps": steps})
+            flow_details.append({"flow": flow, "steps": _get_steps(flow)})
         return flow_details
     except RuntimeError:
         return None

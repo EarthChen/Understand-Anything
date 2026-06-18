@@ -36,7 +36,16 @@ This skill is the **orchestrator**. When the human user asks a codebase question
 | **Cursor** | `Task` tool targeting the `understand-query-worker` agent |
 | **Codex / others** | Platform-native sub-agent dispatch of the `understand-query-worker` agent |
 
-The agent is registered for all three platforms (each plugin manifest points `agents` at `understand-anything-plugin/agents/`). The dispatch prompt needs only the user's question — the worker's discipline lives in its own definition, so **no protocol summary is required**. The worker never dispatches further and never re-invokes this skill, so the old "am I a sub-agent?" recursion problem no longer applies.
+The agent is registered for all three platforms (each plugin manifest points `agents` at `understand-anything-plugin/agents/`). The dispatch prompt needs the user's question **and** the skill's base directory (`skill_dir`, which is the directory containing this SKILL.md file). The worker uses `skill_dir` to locate `ua_query.py` without searching. The worker's discipline lives in its own definition, so **no protocol summary is required**. The worker never dispatches further and never re-invokes this skill, so the old "am I a sub-agent?" recursion problem no longer applies.
+
+**Dispatch prompt template:**
+
+```
+Question: {user_question}
+skill_dir: {skill_base_dir}
+```
+
+Where `{skill_base_dir}` is the directory containing this SKILL.md file (the `Base directory for this skill` shown at the top of the skill invocation).
 
 ### Run inline (no dispatch) when
 
@@ -120,6 +129,15 @@ The agent is registered for all three platforms (each plugin manifest points `ag
 3. `traceHint` — troubleshooting hint from trace layer (when KG empty or wrong service)
 
 > **Deprecated:** `structure --grep` still works but prefer `source --search`. With `--format md`, `structureFallback` and `sourceFallback` are rendered as markdown.
+
+**When `ask` returns `structureFallback`:** the results contain symbol names with file paths and line ranges, but NO source code (no `sourceReads`). To fetch source for these methods efficiently, use `structure --symbol` with comma-separated names and `--source`:
+
+```bash
+# Batch-fetch source for multiple methods in ONE call
+python ua_query.py structure --service S --symbol "methodA,methodB,methodC" --source
+```
+
+Do NOT fall back to `source --file` full-file reads when you have method names.
 
 **Universal Cross-Service Symbol Resolution:** ALL commands (`trace`, `callers`, `callees`, `impact`) now automatically search other indexed services when a symbol is not found in the specified service. When cross-service resolution occurs, the output includes a `crossServiceOrigin` field indicating the original service, the actual service where the symbol was found, and a user-friendly hint. The commands transparently query the correct service — no manual `--service` switching needed.
 

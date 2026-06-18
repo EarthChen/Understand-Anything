@@ -499,6 +499,21 @@ def cmd_trace(args: argparse.Namespace) -> Any:
                 result["businessContext"] = biz_results[:5]
             except RuntimeError:
                 result["businessContext"] = None
+        # Query wiki and domain flows even on KG miss (independent of matched nodes)
+        if getattr(args, "wiki", False):
+            try:
+                wiki_data = _fetch_wiki_domain(args.server, service, args.query)
+                if wiki_data:
+                    result["wikiDomain"] = wiki_data
+            except RuntimeError:
+                pass
+        if getattr(args, "domain_flows", False):
+            try:
+                flow_data = _fetch_domain_flows(args.server, service, args.query)
+                if flow_data:
+                    result["domainFlows"] = flow_data
+            except RuntimeError:
+                pass
         return result
 
     # Step 2: Get neighbors for top match (most relevant node)
@@ -927,6 +942,15 @@ def cmd_ask(args: argparse.Namespace) -> Any:
         result["crossServiceTrace"] = trace_result["crossServiceTrace"]
     if trace_result.get("crossServiceRpcHint"):
         result["crossServiceRpcHint"] = trace_result["crossServiceRpcHint"]
+
+    # Step 3a: Supplement domain flows if trace skipped them (e.g. KG miss early return)
+    if depth == "full" and not result.get("domainFlows"):
+        try:
+            flow_data = _fetch_domain_flows(args.server, service, query, return_all=True)
+            if flow_data:
+                result["domainFlows"] = flow_data
+        except RuntimeError:
+            pass
 
     # Step 3b: Structure search fallback when no KG matches (depth=full only)
     if depth == "full" and not result.get("matchedNodes"):

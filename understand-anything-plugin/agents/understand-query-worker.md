@@ -27,8 +27,20 @@ Apply in this order — **#1 is a hard constraint; #2–#3 optimize within it, n
 1. **Code is truth — never traded away.** Every claim you present MUST be backed by source you actually read.
 2. **Fewest tool calls.** Take the cheapest path that *fully* answers. For most how/where/what questions that is a single `ask --depth full`. Don't open with throwaway exploratory calls you'll have to re-verify anyway.
 3. **Fewest tokens.** Read *narrowly* (targeted methods, not whole files) and *in bulk* (batch located reads into one call).
+4. **Drill-down only, never back up.** `ask --depth full` includes business/wiki/domain layers. After it returns, do NOT query them again. If source reveals more methods, use `structure --symbol --source` to drill deeper — never go back to summary layers.
 
 **Stopping rule:** stop the moment source corroborates the answer. Locating the concept in a higher layer is *not* "done" — descend to source, confirm, cite, then stop.
+
+## Script Location (use skill_dir — never search)
+
+The orchestrator passes `skill_dir` in the dispatch prompt. Use it directly:
+
+```bash
+SCRIPT="${skill_dir}/ua_query.py"
+# All subsequent calls: python $SCRIPT --format md <subcommand> ...
+```
+
+Set `SCRIPT` once at the start and proceed directly to the first query. Do NOT run an existence check — if the script is missing, the first `python $SCRIPT` invocation will fail with a clear error, which is sufficient. Do NOT run `find` / `which` / `ls` to locate it.
 
 ## Source Verification (MANDATORY)
 
@@ -54,7 +66,7 @@ For ANY "how does X work?" / "where is X implemented?" question:
 **Default — one command:**
 
 ```bash
-python ua_query.py --format md ask --query "中文关键词,EnglishName,Synonym" --depth full
+python $SCRIPT --format md ask --query "中文关键词,EnglishName,Synonym" --depth full
 ```
 
 `ask --depth full` auto-discovers the service, searches the KG, retrieves neighbors, pulls wiki/domain context, reads source, follows cross-service RPC, and verifies — in one call. Check `structureFallback` / `sourceFallback` in the output if it returns no KG hits.
@@ -62,35 +74,83 @@ python ua_query.py --format md ask --query "中文关键词,EnglishName,Synonym"
 **Manual trace (you already know the service, or `ask` mis-routed):**
 
 ```bash
-python ua_query.py trace --service SERVICE --query "中文,English,CamelCase" --source --business --wiki --domain-flows
+python $SCRIPT trace --service SERVICE --query "中文,English,CamelCase" --source --business --wiki --domain-flows
 ```
 
 **Multi-service question?** Run `trace` once per service, chained in ONE shell call:
 
 ```bash
-python ua_query.py trace --service svc-a --query "kw" --source --business && \
-python ua_query.py trace --service svc-b --query "kw" --source
+python $SCRIPT trace --service svc-a --query "kw" --source --business && \
+python $SCRIPT trace --service svc-b --query "kw" --source
 ```
 
-### After `ask`/`trace` returns matched nodes — NEVER read those files one at a time
+### After `ask`/`trace` returns — extract line ranges and batch
 
-This is the single most common efficiency mistake. The moment a result hands you several files/symbols:
+`ask --depth full` and `trace --source` return `matchedNodes` (method names + line numbers) and `sourceReads` (already-fetched source). Follow these steps **in order**:
 
-1. **Reuse what you already have.** `ask --depth full` and `trace --source` already include the matched nodes' source (`sourceReads`). Read that first — do **not** re-fetch it with `source --file`.
-2. **Need more files/symbols than the result included? Fetch them ALL in ONE call:**
+**Step 1: Audit what you already have.** Review `sourceReads` — these files are already fetched, do NOT re-read them with `source --file`.
+
+**Step 2: Extract uncovered methods.** From `matchedNodes`, list the methods whose source is NOT in `sourceReads`. Collect their `{file, startLine, endLine}`.
+
+**Step 3: Batch into ONE call.** Combine all uncovered ranges into a single `source --file` call:
 
 ```bash
-python ua_query.py trace --service S --query "A,B,C" --source --grouped       # all matches, grouped by file
-python ua_query.py source --service S --file "A.java:20-80,B.java,C.java:1-40" # many files/ranges, one call
-python ua_query.py structure --service S --symbol "A,B,C" --source            # many symbols, one call
+python $SCRIPT source --service S --file "F.java:530-600,F.java:700-900,F.java:1090-1200,F.java:1420-1600"
 ```
 
-> One `source --file` with 5 comma-separated paths is **one** call; five separate calls are **five** — same result, 5× the cost. A second single-file read in a row is the signal you should have batched.
+**Step 4: If iterative exploration reveals more needed reads** (you read one method and discover it calls another method you need), batch the NEW needs into ONE additional call — never go back to single-file reads.
+
+```bash
+# CORRECT — one call, multiple ranges
+python $SCRIPT source --service S --file "F.java:370-500,F.java:700-900,F.java:1090-1200,F.java:1420-1600"
+
+# WRONG — same result, 4× the cost
+python $SCRIPT source --service S --file "F.java:370-500"
+python $SCRIPT source --service S --file "F.java:700-900"
+python $SCRIPT source --service S --file "F.java:1090-1200"
+python $SCRIPT source --service S --file "F.java:1420-1600"
+```
+
+**Checkpoint:** Before every `source --file` call, ask: "Can I combine this with other reads?" If yes, do it. A second single-file `source --file` call on the same file in a row is a violation — stop and batch.
+
+### When `ask` returns `structureFallback` (no KG matches)
+
+When KG trace finds no matches, `ask --depth full` returns `structureFallback` instead of `matchedNodes`. The `structureFallback.results` contain **symbol names with `filePath` and `lineRange`** — you have method names but NO source code yet (no `sourceReads` in this path).
+
+**Do NOT use `source --file` to read entire files.** Instead:
+
+**Step 1: Pick the most relevant symbols** from `structureFallback.results` (5–10 symbols that directly relate to the question).
+
+**Step 2: Batch-fetch their source in ONE call** using `structure --symbol --source`:
+
+```bash
+python $SCRIPT structure --service S --symbol "methodA,methodB,methodC,methodD,methodE" --source
+```
+
+This returns source code for ALL listed methods in a single Bash tool call. Each symbol is resolved server-side with its actual implementation.
+
+**Step 3: If you need more methods later** (discovered during analysis), batch them into ONE additional `structure --symbol` call — never fall back to sequential `source --file` reads.
+
+```bash
+# CORRECT — one call, multiple symbols with source
+python $SCRIPT structure --service S --symbol "fillCommissionLevelInfo,payGuildCommissionDetail,refreshGuildProfitOfWeek" --source
+
+# WRONG — 3 calls to get 3 methods
+python $SCRIPT source --service S --file "SettlementMoaServiceImpl.java:2020-2070"
+python $SCRIPT source --service S --file "SettlementMoaServiceImpl.java:1220-1290"
+python $SCRIPT source --service S --file "SettlementMoaServiceImpl.java:2700-2850"
+```
+
+**Hard rule:** If you have method names (from `structureFallback`, `trace`, `domain flows`, or any other source), always use `structure --symbol "A,B,C" --source`. Only use `source --file` with line ranges when you do NOT know the method name.
 
 ## Efficiency & Batching Rules
 
 1. **Prefer `ask` for business questions** — one command replaces 5+ individual calls.
-2. **Read targeted methods, never whole files.** Get the cheap index first (`kg --file F --toc`, or `structure --symbol "name"` for signatures), then read only the spans you need by line range (`source --file "F.java:120-180"`). A `--file` with no line range pulls the whole file — that is the expensive default to avoid.
+2. **Read targeted methods, never whole files.** Two strategies depending on what you have:
+   - **Have method names** (from `structureFallback`, `trace`, `domain flows`, `callers`, etc.): use `structure --symbol "A,B,C,D,E" --source` — ONE Bash call returns source for all methods.
+   - **Only have file path** (no method names): get the cheap index first (`kg --file F --toc`), then batch line ranges into `source --file "F.java:120-180,F.java:300-400"`.
+   - **NEVER** read a file without a line range (pulls entire file).
+   - **NEVER** make sequential `source --file` calls on the same file — batch them.
 3. **Batch located reads into ONE call** the moment a search/`ask`/`trace` hands you ≥2 files or symbols.
 4. **Chain heterogeneous commands with `&&`** into one shell call.
 5. **Expand keywords before searching** — 2-4 comma-separated variants `"中文,English,CamelCase,abbr"` kill retry loops.
