@@ -10,7 +10,9 @@ Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the
 
 ## Source Verification Rule (MANDATORY)
 
-**For any question about business logic, flows, or implementation details, the agent MUST verify answers against actual source code.** Wiki and domain graph data may be stale — source code is the ground truth.
+**No answer may rest on `wiki` or `domain` data alone — every factual claim presented to the user MUST be corroborated by source code.** Wiki, domain, and business layers are LLM-generated summaries: they may be stale, incomplete, or simply wrong. Source code is the only ground truth. If you cannot point to the source (file + symbol or line range) that backs a claim, you have **not** verified it — read the code before you answer. A polished summary built only from `wiki`/`domain`/`business` output is an unverified guess, no matter how confident it reads.
+
+**Violating the letter of this rule is violating its spirit:** "the wiki was detailed enough" and "the domain flow already explained it" are not exceptions — they are exactly the failure this rule exists to prevent.
 
 ### Verification Protocol
 
@@ -22,6 +24,16 @@ Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the
 2. **Cross-check wiki claims**: If wiki says "Method X does Y", read the actual source to confirm.
 3. **Flag discrepancies**: If source code contradicts wiki/domain data, report the discrepancy explicitly.
 4. **Never trust wiki alone** for: parameter validation logic, error codes, conditional branches, or concurrency controls.
+5. **Cite the proof**: Ground every claim in the source you actually read — name the file and the symbol/line range it came from. An answer with no source citation is unverified and must not be presented as fact.
+
+### Red Flags — STOP, you are about to answer without code
+
+- You are about to summarize a flow, rule, or behavior using only `wiki` / `domain` / `business` output.
+- "The wiki already explains this clearly." / "The domain flow is detailed enough."
+- You are presenting `ask --depth standard` or `--depth quick` output to the user as fact.
+- There is no `--source` (or `ask --depth full`) call in this turn, yet you are stating how the code behaves.
+
+**All of these mean: run `--source` / `ask --depth full`, read the code, and cite it before answering.**
 
 ### CRITICAL: Agents Must Pass `--depth full` for User-Facing Answers
 
@@ -89,28 +101,29 @@ python ua_query.py trace --service SERVICE --query "keyword" --source --grouped
 
 ## Agent Efficiency Rules
 
-**Goal: answer in the fewest tool calls.** Reach for the call-reducing patterns first, then pick the right command and flags.
+**Goal: answer in the fewest tool calls AND the fewest tokens.** Efficiency comes first — read *narrowly* (target the methods you need, not whole files) and read *in bulk* (batch the located reads into one call). Then pick the right command and flags.
 
 **Minimize tool calls**
 
 1. **Prefer `ask` for business questions** — one command replaces 5+ individual calls (auto-discover → trace → wiki → domain → source-verify).
-2. **Batch known reads into ONE call** — once you've located the specific files/symbols (from a search/toc/trace), read them together, not one call each: `source --file "A.java:1-60,B.java,C.java"` (per-file line ranges; a bad path is isolated as a per-file `error`, the rest still return → `{files:[…]}`) and `structure --symbol "A,B,C" --source` (→ `{symbols:[…]}`). N calls → 1.
-3. **Chain mixed commands with `&&`** — when you genuinely need *different* commands, combine them into ONE shell call. Prefer a native batch flag (rule 2) when the calls differ only by file/symbol; `&&` is the fallback for heterogeneous commands.
-4. **Expand keywords before trace** — pass 2-4 comma-separated variants in a single `--query "中文,English,CamelCase"`; multi-keyword parallel search eliminates retry loops.
+2. **Read targeted methods in segments — never dump a whole file.** A `--file` read with no line range pulls the *entire* file into context; that is the expensive default to avoid. Instead, read in segments scoped to the method(s) you actually need: (a) get the cheap method index first — `kg --file F --toc` (no source) or `structure --symbol "name"` (signatures only) — to find the spans, (b) read only those spans by line range, e.g. `source --file "F.java:120-180"` or `structure --symbol "method" --source`. Reach for a full-file read only when the file is small or you genuinely need all of it.
+3. **Batch the targeted reads into ONE call** — once you've located the specific files/symbols/ranges (from a search/toc/trace), read them together, not one call each: `source --file "A.java:120-180,B.java:20-80,C.java"` (per-file line ranges; a bad path is isolated as a per-file `error`, the rest still return → `{files:[…]}`) and `structure --symbol "A,B,C" --source` (→ `{symbols:[…]}`). N targeted reads → 1 call.
+4. **Chain mixed commands with `&&`** — when you genuinely need *different* commands, combine them into ONE shell call. Prefer a native batch flag (rule 3) when the calls differ only by file/symbol; `&&` is the fallback for heterogeneous commands.
+5. **Expand keywords before trace** — pass 2-4 comma-separated variants in a single `--query "中文,English,CamelCase"`; multi-keyword parallel search eliminates retry loops.
 
 > Requests are sent as POST, so long keyword/file lists and large batches have **no URL-length limit** — batch freely.
 
 **Pick the right command + flags**
 
-5. **Use `--q` for structure fuzzy search** — `structure --q "getUser"` beats iterating `--annotation`/`--param-type` separately.
-6. **Use server-side filters** — pass `--type`/`--tag` to `kg --search` and `--type` to `trace` instead of post-filtering client-side; smaller payload, better accuracy.
-7. **Paginate large result sets** — `--offset N` with `--limit` instead of fetching everything.
+6. **Use `--q` for structure fuzzy search** — `structure --q "getUser"` beats iterating `--annotation`/`--param-type` separately.
+7. **Use server-side filters** — pass `--type`/`--tag` to `kg --search` and `--type` to `trace` instead of post-filtering client-side; smaller payload, better accuracy.
+8. **Paginate large result sets** — `--offset N` with `--limit` instead of fetching everything.
 
 **Output quality**
 
-8. **Use `--format md`** when an agent will read the output (not parse JSON).
-9. **Use `--source`** (or `ask --depth full`) for anything presented to the user as factual.
-10. **RRF is trace's default fusion** — `trace` applies `fusion=rrf` automatically, no flag needed.
+9. **Use `--format md`** when an agent will read the output (not parse JSON).
+10. **Use `--source`** (or `ask --depth full`) for anything presented to the user as factual.
+11. **RRF is trace's default fusion** — `trace` applies `fusion=rrf` automatically, no flag needed.
 
 ---
 
@@ -384,9 +397,9 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "Concept not in KG?" / "KG搜不到X？" | `ask --query "X" --depth full` | Returns `structureFallback`, `sourceFallback`, or `traceHint` automatically |
 | "Show me code for X" / "X方法的源码" | `structure --service S --symbol X --source` | Precise symbol + source |
 | "Show me code for X, Y, Z" / "X、Y、Z的源码" | `structure --service S --symbol "X,Y,Z" --source` | **Batch — many symbols in ONE call** → `{symbols:[…]}` (prefer over one call each) |
-| "Read file F" / "读取文件F" | `kg --service S --file F` | Full file content |
-| "Read lines 100-200 of F" / "读F的100-200行" | `kg --service S --file F --start 100 --end 200` | Line range read |
-| "Methods in file F" / "文件F有哪些方法？" | `kg --service S --file F --toc` | Method index (cheap, no source) |
+| "Read file F" / "读取文件F" | `kg --service S --file F` | Full file content — **for large files prefer `--toc` then a line range** (see Efficiency rule 2) |
+| "Read lines 100-200 of F" / "读F的100-200行" | `kg --service S --file F --start 100 --end 200` | Line range read (preferred over full-file reads) |
+| "Methods in file F" / "文件F有哪些方法？" | `kg --service S --file F --toc` | Method index (cheap, no source) — **run this first, then read targeted ranges** |
 | "File overview for F" / "文件F概览？" | `kg --service S --file F --summary` | Symbols, imports, callers, blast radius |
 | "Methods with validate in name?" / "带validate的方法？" | `structure --service S --q "validate"` | Fuzzy name search |
 | "Search source for timeout" / "源码中搜索timeout" | `source --service S --search "timeout"` | Full-text content search (replaces `structure --grep`) |

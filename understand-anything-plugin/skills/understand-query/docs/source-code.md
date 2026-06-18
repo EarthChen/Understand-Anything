@@ -217,18 +217,20 @@ python ua_query.py structure --service S --chain VipUserEntity --direction up
 python ua_query.py structure --service S --implementors IUserService
 ```
 
-### Recipe 5: "Read a large file efficiently" (2 calls)
+### Recipe 5: "Read a file efficiently — targeted methods, not the whole file" (2 calls)
 
-**Naive approach (N calls):** reading chunks blindly  
-**Optimized:**
+**Naive approach:** read the entire file (or read chunks blindly) — pulls everything into context, most of it irrelevant.  
+**Optimized — index first, then read only the spans you need:**
 
 ```bash
 # Call 1: Get method index (no source code, very cheap)
 python ua_query.py kg --service S --file ServiceImpl.java --toc
 
-# Call 2: Batch-read relevant methods in one range
+# Call 2: Read ONLY the relevant method range(s) from the index
 python ua_query.py kg --service S --file ServiceImpl.java --start 120 --end 350
 ```
+
+**Principle:** never read a whole file when you only need a method. The `--toc` index gives you the line ranges; read those segments (and batch several files/ranges into one `source --file "A:1-60,B:20-80"` call). Full-file reads are for small files or when you genuinely need everything.
 
 ### Recipe 6: "Cross-service dependency tracing" (3 calls)
 
