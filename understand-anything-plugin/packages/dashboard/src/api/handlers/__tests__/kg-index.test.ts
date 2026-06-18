@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest"
-import { KgIndex } from "../kg-index"
+import { describe, it, expect, beforeEach } from "vitest"
+import { KgIndex, clearKgIndexCache } from "../kg-index"
 import type { KnowledgeGraph } from "@understand-anything/core"
 
 const mockKg: KnowledgeGraph = {
@@ -255,6 +255,40 @@ describe("KgIndex", () => {
       expect(results.facets!.layer).toBeDefined()
       expect(results.facets!.layer["kg"]).toBe(1)
       expect(results.facets!.layer["business"]).toBe(1)
+    })
+  })
+
+  describe("cache", () => {
+    beforeEach(() => {
+      clearKgIndexCache()
+    })
+
+    it("returns cached index for same graph reference", () => {
+      const index1 = new KgIndex(mockKg, "test-service")
+      const index2 = new KgIndex(mockKg, "test-service")
+      expect(index1).toBe(index2)
+    })
+
+    it("returns new index for different graph reference", () => {
+      const graph2 = {
+        nodes: [{ id: "other::1", name: "Other", type: "class", summary: "other" }],
+        edges: [],
+      } as unknown as KnowledgeGraph
+      const index1 = new KgIndex(mockKg, "test-service")
+      const index2 = new KgIndex(graph2, "test-service")
+      expect(index1).not.toBe(index2)
+    })
+
+    it("clearKgIndexCache forces rebuild on next construction", () => {
+      const index1 = new KgIndex(mockKg, "test-service")
+      clearKgIndexCache()
+      const index2 = new KgIndex(mockKg, "test-service")
+      expect(index1).not.toBe(index2)
+    })
+
+    it("clearKgIndexCache is exported and callable", () => {
+      expect(typeof clearKgIndexCache).toBe("function")
+      expect(() => clearKgIndexCache()).not.toThrow()
     })
   })
 })

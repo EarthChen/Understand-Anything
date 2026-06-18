@@ -60,16 +60,30 @@ const SEARCH_BOOST = {
   type: 0.5,
 }
 
+const kgCache = new WeakMap<KnowledgeGraph, { index: KgIndex; gen: number }>()
+let cacheGeneration = 0
+
+export function clearKgIndexCache(): void {
+  cacheGeneration++
+}
+
 export class KgIndex {
   private miniSearch: MiniSearch
   private docs: KgDoc[]
 
   constructor(graph: KnowledgeGraph, serviceName: string) {
+    const cached = kgCache.get(graph)
+    if (cached && cached.gen === cacheGeneration) {
+      return cached.index
+    }
+
     this.docs = this.buildDocs(graph, serviceName)
     this.miniSearch = new MiniSearch(MINI_SEARCH_OPTIONS)
     if (this.docs.length > 0) {
       this.miniSearch.addAll(this.docs)
     }
+
+    kgCache.set(graph, { index: this, gen: cacheGeneration })
   }
 
   private buildDocs(graph: KnowledgeGraph, serviceName: string): KgDoc[] {
