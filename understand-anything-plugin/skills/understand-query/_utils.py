@@ -30,9 +30,20 @@ class ServerUnavailableError(RuntimeError):
 
 
 
-def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT) -> Any:
+def fetch_json(server: str, path: str, params: dict | None = None, timeout: int = DEFAULT_TIMEOUT) -> Any:
+    """POST `params` as a JSON body to `server + path` and return parsed JSON.
+
+    POST (not GET) so large/batch requests have no URL-length ceiling and free-text
+    values never pass through query-string encoding.
+    """
+    url = f"{server.rstrip('/')}{path}"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(params or {}).encode("utf-8"),
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
     try:
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except HTTPError as e:
@@ -50,9 +61,9 @@ def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT) -> Any:
         raise RuntimeError(msg) from e
     except (TimeoutError, OSError) as e:
         if "timed out" in str(e).lower() or isinstance(e, TimeoutError):
-            raise RuntimeError(f"Request timed out ({timeout}s): {url.split('?')[0]}") from e
+            raise RuntimeError(f"Request timed out ({timeout}s): {url}") from e
         raise ServerUnavailableError(
-            f"API Server unavailable at {url.split('?')[0]}. "
+            f"API Server unavailable at {url}. "
             f"Start it with: cd understand-anything-plugin/packages/dashboard && pnpm run serve\n"
             f"Detail: {e}"
         ) from e

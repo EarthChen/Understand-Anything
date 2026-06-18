@@ -231,41 +231,52 @@ class TestCmdKg:
     def test_neighbors(self, fj):
         fj.return_value = {"neighbors": []}
         _commands.cmd_kg(kg_args(neighbors="n1", edge_type="calls", direction="outbound", depth=2))
-        url = fj.call_args[0][0]
-        assert "/api/graph-query/neighbors" in url and "edgeType=calls" in url and "depth=2" in url
+        path_arg = fj.call_args[0][1]
+        params_arg = fj.call_args[0][2]
+        assert path_arg == "/api/graph-query/neighbors"
+        assert params_arg["edgeType"] == "calls"
+        assert params_arg["depth"] == "2"
 
     @patch("_helpers.fetch_json")
     def test_edges_all_params(self, fj):
         fj.return_value = {"edges": []}
         _commands.cmd_kg(kg_args(edges=True, type="calls", source="a", target="b"))
-        url = fj.call_args[0][0]
-        assert "/api/graph-query/edges" in url and "type=calls" in url and "source=a" in url and "target=b" in url
+        path_arg = fj.call_args[0][1]
+        params_arg = fj.call_args[0][2]
+        assert path_arg == "/api/graph-query/edges"
+        assert params_arg["type"] == "calls"
+        assert params_arg["source"] == "a"
+        assert params_arg["target"] == "b"
 
     @patch("_helpers.fetch_json")
     def test_layers(self, fj):
         fj.return_value = {"layers": []}
         _commands.cmd_kg(kg_args(layers=True))
-        assert "/api/graph-query/layers" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/graph-query/layers"
 
     @patch("_helpers.fetch_json")
     def test_tour(self, fj):
         fj.return_value = {"tour": []}
         _commands.cmd_kg(kg_args(tour=True))
-        assert "/api/graph-query/tour" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/graph-query/tour"
 
     @patch("_helpers.fetch_json")
     def test_file_toc(self, fj):
         fj.return_value = {"nodes": [{"name": "foo", "type": "function", "filePath": "src/a.py", "lineRange": [2, 4], "summary": "x"}]}
         out = _commands.cmd_kg(kg_args(file="a.py", toc=True))
-        assert "/api/graph" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/graph"
         assert out["file"] == "a.py" and out["totalSymbols"] == 1
 
     @patch("_helpers.fetch_json")
     def test_file_source(self, fj):
         fj.return_value = {"content": "x"}
         _commands.cmd_kg(kg_args(file="a.py", start=5, end=10))
-        url = fj.call_args[0][0]
-        assert "/api/source" in url and "start=5" in url and "end=10" in url and "mode=graph" in url
+        path_arg = fj.call_args[0][1]
+        params_arg = fj.call_args[0][2]
+        assert path_arg == "/api/source"
+        assert params_arg["start"] == "5"
+        assert params_arg["end"] == "10"
+        assert params_arg["mode"] == "graph"
 
     @patch("_commands._search_api")
     def test_search(self, sa):
@@ -322,8 +333,9 @@ class TestCmdDomain:
     def test_neighbors(self, fj):
         fj.return_value = {}
         _commands.cmd_domain(domain_args(neighbors="n1", edge_type="flow_step"))
-        url = fj.call_args[0][0]
-        assert "graph=domain" in url and "edgeType=flow_step" in url
+        params_arg = fj.call_args[0][2]
+        assert params_arg["graph"] == "domain"
+        assert params_arg["edgeType"] == "flow_step"
 
     @patch("_commands._search_api")
     def test_search(self, sa):
@@ -393,19 +405,19 @@ class TestCmdWiki:
     def test_overview(self, fj):
         fj.return_value = {}
         _commands.cmd_wiki(wiki_args(overview=True))
-        assert "/api/wiki/overview" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/wiki/overview"
 
     @patch("_helpers.fetch_json")
     def test_architecture(self, fj):
         fj.return_value = {}
         _commands.cmd_wiki(wiki_args(architecture=True))
-        assert "/api/wiki/architecture" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/wiki/architecture"
 
     @patch("_helpers.fetch_json")
     def test_cross_domain(self, fj):
         fj.return_value = {}
         _commands.cmd_wiki(wiki_args(cross_domain="a/b"))
-        assert "/api/wiki/domain/a%2Fb" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/wiki/domain/a%2Fb"
 
     @patch("_helpers.fetch_json")
     def test_endpoint_index_no_protocol(self, fj):
@@ -427,7 +439,7 @@ class TestCmdWiki:
     def test_flow(self, fj):
         fj.return_value = {}
         _commands.cmd_wiki(wiki_args(service="svc", flow="checkout"))
-        assert "/api/wiki/service/svc/flow/checkout" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/wiki/service/svc/flow/checkout"
 
     def test_related_requires_domain(self):
         with pytest.raises(SystemExit, match="--related requires --domain"):
@@ -437,7 +449,7 @@ class TestCmdWiki:
     def test_related(self, fj):
         fj.return_value = {}
         _commands.cmd_wiki(wiki_args(service="svc", related=True, domain="order"))
-        assert "/api/wiki/order/related" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/wiki/order/related"
 
     @patch("_commands._search_api")
     def test_search(self, sa):
@@ -449,19 +461,19 @@ class TestCmdWiki:
     def test_domain(self, fj):
         fj.return_value = {}
         _commands.cmd_wiki(wiki_args(service="svc", domain="order"))
-        assert "/api/wiki/service/svc/domain/order" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/wiki/service/svc/domain/order"
 
     @patch("_helpers.fetch_json")
     def test_type_endpoint(self, fj):
         fj.return_value = {}
         _commands.cmd_wiki(wiki_args(service="svc", type="endpoint"))
-        assert "/api/wiki/endpoints/svc" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/wiki/endpoints/svc"
 
     @patch("_helpers.fetch_json")
     def test_default_service(self, fj):
         fj.return_value = {}
         _commands.cmd_wiki(wiki_args(service="svc"))
-        assert "/api/wiki/service/svc" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/wiki/service/svc"
 
 
 # --------------------------------------------------------------------------- #
@@ -472,37 +484,37 @@ class TestCmdBusiness:
     def test_meta(self, fj):
         fj.return_value = {}
         _commands.cmd_business(biz_args(meta=True))
-        assert "/api/business/meta" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/business/meta"
 
     @patch("_helpers.fetch_json")
     def test_panorama(self, fj):
         fj.return_value = {}
         _commands.cmd_business(biz_args(panorama=True))
-        assert "/api/business/panorama" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/business/panorama"
 
     @patch("_helpers.fetch_json")
     def test_features(self, fj):
         fj.return_value = {}
         _commands.cmd_business(biz_args(features=True))
-        assert "/api/business/features" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/business/features"
 
     @patch("_helpers.fetch_json")
     def test_links_no_domain(self, fj):
         fj.return_value = {}
         _commands.cmd_business(biz_args(links=True))
-        assert "/api/business/cross-facet-links" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/business/cross-facet-links"
 
     @patch("_helpers.fetch_json")
     def test_links_with_domain(self, fj):
         fj.return_value = {}
         _commands.cmd_business(biz_args(links=True, domain="order"))
-        assert "domain=order" in fj.call_args[0][0]
+        assert fj.call_args[0][2]["domain"] == "order"
 
     @patch("_helpers.fetch_json")
     def test_list(self, fj):
         fj.return_value = {}
         _commands.cmd_business(biz_args(list=True))
-        assert "/api/business/domains" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/business/domains"
 
     def test_search_domain_mutually_exclusive(self):
         with pytest.raises(SystemExit, match="mutually exclusive"):
@@ -512,22 +524,28 @@ class TestCmdBusiness:
     def test_search_with_platform_and_flow(self, fj):
         fj.return_value = {}
         _commands.cmd_business(biz_args(search="挚友", platform="ios", flow="bind"))
-        url = fj.call_args[0][0]
-        assert "/api/business/search" in url and "platform=ios" in url and "flow=bind" in url
+        path_arg = fj.call_args[0][1]
+        params_arg = fj.call_args[0][2]
+        assert path_arg == "/api/business/search"
+        assert params_arg["platform"] == "ios"
+        assert params_arg["flow"] == "bind"
 
     @patch("_helpers.fetch_json")
     def test_domain_and_platform(self, fj):
         fj.return_value = {}
         _commands.cmd_business(biz_args(domain="order flow", platform="android", flow="bind"))
-        url = fj.call_args[0][0]
-        assert "/api/business/domains/" in url and "platform=android" in url and "flow=bind" in url
+        path_arg = fj.call_args[0][1]
+        params_arg = fj.call_args[0][2]
+        assert path_arg.startswith("/api/business/domains/")
+        assert params_arg["platform"] == "android"
+        assert params_arg["flow"] == "bind"
 
     @patch("_helpers.fetch_json")
     def test_domain_interactions(self, fj):
         fj.return_value = {"interactions": [1, 2], "businessRules": [3]}
         out = _commands.cmd_business(biz_args(domain="domain:Order", type="interactions"))
         assert out == {"interactions": [1, 2]}
-        assert "/api/business/domains/order" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/business/domains/order"
 
     @patch("_helpers.fetch_json")
     def test_domain_rules(self, fj):
@@ -571,14 +589,15 @@ class TestCmdServicesMeta:
     def test_services_plain(self, fj):
         fj.return_value = {"services": []}
         _commands.cmd_services(services_args())
-        assert "/api/services" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/services"
 
     @patch("_helpers.fetch_json")
     def test_services_name_has(self, fj):
         fj.return_value = {"services": []}
         _commands.cmd_services(services_args(name="order", has="kg"))
-        url = fj.call_args[0][0]
-        assert "name=order" in url and "has=kg" in url
+        params_arg = fj.call_args[0][2]
+        assert params_arg["name"] == "order"
+        assert params_arg["has"] == "kg"
 
     @patch("_helpers.fetch_json")
     def test_meta_plain(self, fj):
@@ -908,9 +927,9 @@ class TestCmdTraceNeighborsAndSource:
         sa.return_value = [{"id": "A", "name": "Foo", "type": "class", "filePath": "a.java", "lineRange": [1, 2000]}]
         fj.side_effect = [{"center": {}, "neighbors": []}, {"content": "c", "lineCount": 5}]
         out = _commands.cmd_trace(_commands._make_trace_args(server=SERVER, service="svc", query="Foo", source=True))
-        # the second fetch_json url should carry clamped end
-        src_url = fj.call_args_list[1][0][0]
-        assert "end=" in src_url
+        # the second fetch_json params should carry clamped end
+        src_params = fj.call_args_list[1][0][2]
+        assert src_params["end"] == "496"
 
     @patch("_helpers.fetch_json")
     @patch("_commands._search_api")
@@ -950,8 +969,8 @@ class TestCmdTraceGrouped:
                    # neighbor not in matched -> skipped
                    {"direction": "outbound", "node": {"id": "Z", "name": "Zed", "type": "class"}, "edge": {"type": "calls"}},
                ]}
-        def fj_side(url, *a, **k):
-            if "/api/graph-query/neighbors" in url:
+        def fj_side(server, path, params=None, *a, **k):
+            if path == "/api/graph-query/neighbors":
                 return nbr
             return {"content": "src-a", "lineCount": 18}
         fj.side_effect = fj_side
@@ -972,8 +991,8 @@ class TestCmdTraceGrouped:
         matched = [{"id": "A", "name": "Foo", "type": "class", "filePath": "a.java", "lineRange": [5, 20]}]
         sa.return_value = matched
         nbr = {"center": {}, "neighbors": []}
-        def fj_side(url, *a, **k):
-            if "/api/graph-query/neighbors" in url:
+        def fj_side(server, path, params=None, *a, **k):
+            if path == "/api/graph-query/neighbors":
                 return nbr
             raise RuntimeError("src fail")  # all source reads fail
         fj.side_effect = fj_side
@@ -989,8 +1008,8 @@ class TestCmdTraceGrouped:
         matched = [{"id": "A", "name": "Foo", "type": "class", "filePath": "a.java"}]
         sa.return_value = matched
         nbr = {"center": {}, "neighbors": []}
-        def fj_side(url, *a, **k):
-            if "/api/graph-query/neighbors" in url:
+        def fj_side(server, path, params=None, *a, **k):
+            if path == "/api/graph-query/neighbors":
                 return nbr
             return {"content": "c", "lineCount": 3}
         fj.side_effect = fj_side
@@ -1005,8 +1024,8 @@ class TestCmdTraceGrouped:
         matched = [{"id": "A", "name": "Foo", "type": "class", "filePath": "a.java", "lineRange": [1, 2000]}]
         sa.return_value = matched
         nbr = {"center": {}, "neighbors": []}
-        def fj_side(url, *a, **k):
-            if "/api/graph-query/neighbors" in url:
+        def fj_side(server, path, params=None, *a, **k):
+            if path == "/api/graph-query/neighbors":
                 return nbr
             return {"content": "c", "lineCount": 3}
         fj.side_effect = fj_side
@@ -1157,8 +1176,8 @@ class TestCmdTraceMatchedBlastAndCrossServiceExcept:
             {"id": "B", "name": "Bar", "type": "class", "filePath": "b.java", "lineRange": [1, 5]},
         ]
         sa.return_value = matched
-        def fj_side(url, *a, **k):
-            if "node=B" in url:
+        def fj_side(server, path, params=None, *a, **k):
+            if (params or {}).get("node") == "B":
                 raise RuntimeError("blast B fail")
             return {"center": {}, "neighbors": []}
         fj.side_effect = fj_side
@@ -1345,7 +1364,7 @@ class TestCmdAsk:
         # platform set -> business/search endpoint used
         fj.return_value = {"results": [{"id": "p1"}]}
         out = _commands.cmd_ask(ask_args(service="svc", query="bind", depth="quick", platform="ios"))
-        assert "/api/business/search" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/business/search"
         assert out["businessContext"] == [{"id": "p1"}]
 
     @patch("_commands._search_api")
@@ -1396,7 +1415,7 @@ class TestCmdAsk:
             # structure/search returns results for first keyword
             fj.return_value = {"results": [{"name": "FooClass", "type": "class"}]}
             out = _commands.cmd_ask(ask_args(service="svc", query="FooClass", depth="full", platform="ios"))
-        assert "/api/structure/search" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/structure/search"
         assert out["structureFallback"]["results"]
         assert "FooClass" in out["structureFallback"]["keywords"]
 
@@ -1407,10 +1426,10 @@ class TestCmdAsk:
         sa.return_value = [{"id": "b"}]
         ct.return_value = {"matchedNodes": [], "neighbors": None}
         drpc.return_value = None
-        def fj_side(url, *a, **k):
-            if "/api/structure/search" in url:
+        def fj_side(server, path, params=None, *a, **k):
+            if path == "/api/structure/search":
                 raise RuntimeError("struct down")  # continue
-            if "/api/source/search" in url:
+            if path == "/api/source/search":
                 return {"results": [{"file": "a.java", "snippet": "x"}]}
             return {}
         with patch("_helpers.fetch_json", side_effect=fj_side):
@@ -1425,10 +1444,10 @@ class TestCmdAsk:
         sa.return_value = [{"id": "b"}]
         ct.return_value = {"matchedNodes": [], "neighbors": None}
         drpc.return_value = None
-        def fj_side(url, *a, **k):
-            if "/api/structure/search" in url:
+        def fj_side(server, path, params=None, *a, **k):
+            if path == "/api/structure/search":
                 return {"results": []}  # empty structure
-            if "/api/source/search" in url:
+            if path == "/api/source/search":
                 raise RuntimeError("source grep down")  # caught -> pass
             return {}
         with patch("_helpers.fetch_json", side_effect=fj_side):
@@ -1444,8 +1463,8 @@ class TestCmdAsk:
         sa.return_value = [{"id": "b"}]
         ct.return_value = {"matchedNodes": [], "neighbors": None}
         drpc.return_value = None
-        def fj_side(url, *a, **k):
-            if "/api/source/search" in url:
+        def fj_side(server, path, params=None, *a, **k):
+            if path == "/api/source/search":
                 return {"results": [{"file": "a", "snippet": "s"}]}
             return {}
         with patch("_helpers.fetch_json", side_effect=fj_side):
@@ -1492,8 +1511,10 @@ class TestCmdImpact:
         ]}
         out = _commands.cmd_impact(impact_args(edge_type="calls"))
         assert fsn.called and es.called
-        url = fj.call_args[0][0]
-        assert "/api/graph-query/impact" in url and "edgeType=calls" in url
+        path_arg = fj.call_args[0][1]
+        params_arg = fj.call_args[0][2]
+        assert path_arg == "/api/graph-query/impact"
+        assert params_arg["edgeType"] == "calls"
         assert out["impactRadius"] == 1
         assert out["affectedNodes"][0]["distance"] == 2
         assert out["affectedNodes"][0]["path"] == ["Center", "Dep"]
@@ -1583,15 +1604,16 @@ class TestCmdHotspots:
     def test_hotspots_basic(self, fj):
         fj.return_value = {"total": 5, "hotspots": [{"name": "H"}]}
         out = _commands.cmd_hotspots(hotspots_args())
-        assert "/api/graph-query/hotspots" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/graph-query/hotspots"
         assert out["totalNodes"] == 5 and out["hotspots"] == [{"name": "H"}]
 
     @patch("_helpers.fetch_json")
     def test_hotspots_with_type_and_limit_floor(self, fj):
         fj.return_value = {"total": 0, "hotspots": []}
         _commands.cmd_hotspots(hotspots_args(type="class", limit=0))
-        url = fj.call_args[0][0]
-        assert "type=class" in url and "limit=1" in url  # max(0,1)
+        params_arg = fj.call_args[0][2]
+        assert params_arg["type"] == "class"
+        assert params_arg["limit"] == "1"  # max(0,1)
 
 
 # --------------------------------------------------------------------------- #
@@ -1663,8 +1685,11 @@ class TestCmdStructure:
     def test_grep_deprecated(self, fj, capsys):
         fj.return_value = {"results": []}
         _commands.cmd_structure(structure_args(grep="foo", path="src/"))
-        url = fj.call_args[0][0]
-        assert "/api/source/search" in url and "q=foo" in url and "path=src" in url
+        path_arg = fj.call_args[0][1]
+        params_arg = fj.call_args[0][2]
+        assert path_arg == "/api/source/search"
+        assert params_arg["q"] == "foo"
+        assert params_arg["path"] == "src/"
         assert "DEPRECATED" in capsys.readouterr().err
 
     @patch("_commands._cmd_structure_symbol")
@@ -1677,26 +1702,29 @@ class TestCmdStructure:
     def test_chain(self, fj):
         fj.return_value = {}
         _commands.cmd_structure(structure_args(chain="VipUser", direction="down"))
-        url = fj.call_args[0][0]
-        assert "/api/structure/chain" in url and "class=VipUser" in url and "direction=down" in url
+        path_arg = fj.call_args[0][1]
+        params_arg = fj.call_args[0][2]
+        assert path_arg == "/api/structure/chain"
+        assert params_arg["class"] == "VipUser"
+        assert params_arg["direction"] == "down"
 
     @patch("_helpers.fetch_json")
     def test_implementors(self, fj):
         fj.return_value = {}
         _commands.cmd_structure(structure_args(implementors="Serializable"))
-        assert "/api/structure/implementors" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/structure/implementors"
 
     @patch("_helpers.fetch_json")
     def test_files(self, fj):
         fj.return_value = {}
         _commands.cmd_structure(structure_args(files=True))
-        assert "/api/structure/files" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/structure/files"
 
     @patch("_helpers.fetch_json")
     def test_file_no_source(self, fj):
         fj.return_value = {"filePath": "a.java"}
         out = _commands.cmd_structure(structure_args(file="a.java"))
-        assert "/api/structure/file" in fj.call_args[0][0]
+        assert fj.call_args[0][1] == "/api/structure/file"
         assert out == {"filePath": "a.java"}
 
     @patch("_helpers.fetch_json")
@@ -1706,8 +1734,11 @@ class TestCmdStructure:
             {"content": "code", "lineCount": 12},  # source
         ]
         out = _commands.cmd_structure(structure_args(file="a.java", source=True, start=5, end=20))
-        url = fj.call_args_list[1][0][0]
-        assert "/api/source" in url and "start=5" in url and "end=20" in url
+        src_path = fj.call_args_list[1][0][1]
+        src_params = fj.call_args_list[1][0][2]
+        assert src_path == "/api/source"
+        assert src_params["start"] == "5"
+        assert src_params["end"] == "20"
         assert out["sourceContent"] == "code" and out["lineCount"] == 12
 
     @patch("_helpers.fetch_json")
@@ -1724,11 +1755,16 @@ class TestCmdStructure:
             property_type="PT", path="src/", section_key="sk", section_value="sv",
             q="qq", offset=10,
         ))
-        url = fj.call_args[0][0]
-        for frag in ["annotation=A", "paramType=P", "returnType=R", "interface=I",
-                     "propertyType=PT", "pathPattern=src", "sectionKey=sk",
-                     "sectionValue=sv", "q=qq", "offset=10"]:
-            assert frag in url
+        path_arg = fj.call_args[0][1]
+        params_arg = fj.call_args[0][2]
+        assert path_arg == "/api/structure/search"
+        expected = {
+            "annotation": "A", "paramType": "P", "returnType": "R", "interface": "I",
+            "propertyType": "PT", "pathPattern": "src/", "sectionKey": "sk",
+            "sectionValue": "sv", "q": "qq", "offset": "10",
+        }
+        for key, value in expected.items():
+            assert params_arg[key] == value
 
     def test_search_requires_filter(self):
         with pytest.raises(SystemExit, match="structure search requires"):
@@ -1747,15 +1783,21 @@ class TestCmdSource:
     def test_search(self, fj):
         fj.return_value = {"results": []}
         _commands.cmd_source(source_args(search="foo", path="src/"))
-        url = fj.call_args[0][0]
-        assert "/api/source/search" in url and "q=foo" in url and "path=src" in url
+        path_arg = fj.call_args[0][1]
+        params_arg = fj.call_args[0][2]
+        assert path_arg == "/api/source/search"
+        assert params_arg["q"] == "foo"
+        assert params_arg["path"] == "src/"
 
     @patch("_helpers.fetch_json")
     def test_file(self, fj):
         fj.return_value = {"content": "x"}
         _commands.cmd_source(source_args(file="a.java", start=3, end=9))
-        url = fj.call_args[0][0]
-        assert "/api/source" in url and "start=3" in url and "end=9" in url
+        path_arg = fj.call_args[0][1]
+        params_arg = fj.call_args[0][2]
+        assert path_arg == "/api/source"
+        assert params_arg["start"] == "3"
+        assert params_arg["end"] == "9"
 
     def test_requires_search_or_file(self):
         with pytest.raises(SystemExit, match="source requires --search or --file"):
@@ -1773,16 +1815,16 @@ class TestCmdAskSourceFallbackPlatform:
         ct.return_value = {"matchedNodes": [], "neighbors": None}
         drpc.return_value = None
         captured = {}
-        def fj_side(url, *a, **k):
-            if "/api/business/search" in url:
+        def fj_side(server, path, params=None, *a, **k):
+            if path == "/api/business/search":
                 return {"results": [{"id": "b"}]}
-            if "/api/source/search" in url:
-                captured["url"] = url
+            if path == "/api/source/search":
+                captured["params"] = params
                 return {"results": [{"file": "a.java", "snippet": "s"}]}
             return {}
         with patch("_helpers.fetch_json", side_effect=fj_side):
             out = _commands.cmd_ask(ask_args(service="svc", query="挚友", depth="full", platform="ios"))
-        assert "platform=ios" in captured["url"]
+        assert captured["params"]["platform"] == "ios"
         assert out["sourceFallback"]["results"]
 
 
@@ -1815,8 +1857,8 @@ class TestCmdTraceSourceReadDefensiveContinue:
         node = FlakyFilePath({"id": "A", "name": "Foo", "type": "class", "lineRange": [1, 5]})
         sa.return_value = [node]
 
-        def fj_side(url, *a, **k):
-            if "/api/graph-query/neighbors" in url:
+        def fj_side(server, path, params=None, *a, **k):
+            if path == "/api/graph-query/neighbors":
                 return {"center": {}, "neighbors": []}
             # Single-source read fails -> result["source"] = None -> existing_file None,
             # so the node IS included in verify_targets and the loop body executes.

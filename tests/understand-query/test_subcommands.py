@@ -3,7 +3,6 @@ import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
-from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -27,7 +26,7 @@ class TestKgSubcommand:
         out = json.loads(capsys.readouterr().out)
         assert out["nodes"][0]["name"] == "OrderController"
         mock_fetch.assert_called_once()
-        assert "/api/graph" in mock_fetch.call_args[0][0]
+        assert mock_fetch.call_args[0][1] == "/api/graph"
 
 
 class TestBusinessSubcommand:
@@ -46,10 +45,10 @@ class TestBusinessSubcommand:
         """Comma-separated keywords are sent as one q param; API splits and OR-matches."""
         mock_fetch.return_value = {"results": [{"id": "domain:friend", "name": "ClosedFriend", "match": "挚友"}]}
         ua_query.main(["--server", SERVER, "business", "--search", "挚友,ClosedFriend"])
-        url = mock_fetch.call_args[0][0]
-        assert "/api/business/search" in url
-        qs = parse_qs(urlparse(url).query)
-        assert qs["q"] == ["挚友,ClosedFriend"]
+        path_arg = mock_fetch.call_args[0][1]
+        params_arg = mock_fetch.call_args[0][2]
+        assert path_arg == "/api/business/search"
+        assert params_arg["q"] == "挚友,ClosedFriend"
 
 
 class TestWikiSubcommand:
@@ -60,18 +59,18 @@ class TestWikiSubcommand:
     def test_wiki_type_structure_fetches_service_endpoint(self, mock_fetch):
         mock_fetch.return_value = {"sections": []}
         ua_query.main(["wiki", "--service", "svc", "--type", "structure"])
-        url = mock_fetch.call_args[0][0]
-        assert "/api/wiki/service/" in url
+        path_arg = mock_fetch.call_args[0][1]
+        assert path_arg.startswith("/api/wiki/service/")
 
     def test_wiki_type_flow_fetches_service_endpoint(self, mock_fetch):
         mock_fetch.return_value = {"flows": []}
         ua_query.main(["wiki", "--service", "svc", "--type", "flow"])
-        url = mock_fetch.call_args[0][0]
-        assert "/api/wiki/service/" in url
+        path_arg = mock_fetch.call_args[0][1]
+        assert path_arg.startswith("/api/wiki/service/")
 
     def test_wiki_default_fetches_service_endpoint(self, mock_fetch):
         mock_fetch.return_value = {"content": "ok"}
         ua_query.main(["wiki", "--service", "svc"])
-        url = mock_fetch.call_args[0][0]
-        assert "/api/wiki/service/" in url
+        path_arg = mock_fetch.call_args[0][1]
+        assert path_arg.startswith("/api/wiki/service/")
 

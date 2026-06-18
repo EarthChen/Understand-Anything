@@ -35,15 +35,15 @@ class TestFetchJson:
 
     def test_success(self):
         with patch("urllib.request.urlopen", return_value=self._resp(b'{"ok": true}')):
-            assert _utils.fetch_json("http://localhost/x?token=t", timeout=5) == {"ok": True}
+            assert _utils.fetch_json("http://localhost", "/x", {"token": "t"}, timeout=5) == {"ok": True}
 
     def test_http_error_json_body_no_suggestions(self):
         fp = MagicMock()
         fp.read.return_value = b'{"error":"not found"}'
-        err = HTTPError("http://h/x?q=1", 404, "Not Found", None, fp)
+        err = HTTPError("http://h/x", 404, "Not Found", None, fp)
         with patch("urllib.request.urlopen", side_effect=err):
             with pytest.raises(RuntimeError, match=r"HTTP 404: not found"):
-                _utils.fetch_json("http://h/x")
+                _utils.fetch_json("http://h", "/x", {"q": "1"})
 
     def test_http_error_with_suggestions(self):
         body = (
@@ -57,7 +57,7 @@ class TestFetchJson:
         err = HTTPError("http://h/x", 422, "Unprocessable", None, fp)
         with patch("urllib.request.urlopen", side_effect=err):
             with pytest.raises(RuntimeError) as exc:
-                _utils.fetch_json("http://h/x")
+                _utils.fetch_json("http://h", "/x")
         msg = str(exc.value)
         assert "Did you mean:" in msg
         assert "UserService (class)" in msg  # name path
@@ -70,28 +70,28 @@ class TestFetchJson:
         err = HTTPError("http://h/x", 500, "Err", None, fp)
         with patch("urllib.request.urlopen", side_effect=err):
             with pytest.raises(RuntimeError, match=r"HTTP 500: <html>boom</html>"):
-                _utils.fetch_json("http://h/x")
+                _utils.fetch_json("http://h", "/x")
 
     def test_timeout_error(self):
         with patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
             with pytest.raises(RuntimeError, match=r"Request timed out \(3s\)"):
-                _utils.fetch_json("http://h/x?a=1", timeout=3)
+                _utils.fetch_json("http://h", "/x", {"a": "1"}, timeout=3)
 
     def test_oserror_timed_out_message(self):
         # An OSError (not TimeoutError) whose message contains "timed out".
         with patch("urllib.request.urlopen", side_effect=OSError("the operation timed out")):
             with pytest.raises(RuntimeError, match=r"Request timed out"):
-                _utils.fetch_json("http://h/x", timeout=2)
+                _utils.fetch_json("http://h", "/x", timeout=2)
 
     def test_oserror_unavailable(self):
         with patch("urllib.request.urlopen", side_effect=OSError("connection reset")):
             with pytest.raises(_utils.ServerUnavailableError, match=r"unavailable"):
-                _utils.fetch_json("http://h/x?q=1")
+                _utils.fetch_json("http://h", "/x", {"q": "1"})
 
     def test_urlerror_unavailable(self):
         with patch("urllib.request.urlopen", side_effect=URLError("refused")):
             with pytest.raises(_utils.ServerUnavailableError, match=r"unavailable"):
-                _utils.fetch_json("http://h/x")
+                _utils.fetch_json("http://h", "/x")
 
 
 # --------------------------------------------------------------------------

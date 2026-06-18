@@ -5,7 +5,7 @@ import re
 import sys
 from typing import Any
 from urllib.parse import quote as url_quote
-from _utils import build_url, _short_type_name
+from _utils import _short_type_name
 import _helpers
 from _helpers import (
     _search_api, _find_symbol_node, _cross_service_symbol_search,
@@ -34,10 +34,10 @@ def _make_trace_args(**overrides: Any) -> argparse.Namespace:
 
 def _cmd_kg_file_summary(args: argparse.Namespace) -> Any:
     try:
-        graph_data = _helpers.fetch_json(build_url(args.server, "/api/graph", {
+        graph_data = _helpers.fetch_json(args.server, "/api/graph", {
             "service": args.service,
             "file": "knowledge-graph.json",
-        }))
+        })
     except RuntimeError as e:
         raise RuntimeError(f"Failed to load knowledge graph: {e}") from e
 
@@ -89,10 +89,10 @@ def _cmd_kg_file_summary(args: argparse.Namespace) -> Any:
 
     imports: list[str] = []
     try:
-        struct_data = _helpers.fetch_json(build_url(args.server, "/api/structure/file", {
+        struct_data = _helpers.fetch_json(args.server, "/api/structure/file", {
             "service": args.service,
             "path": args.file,
-        }))
+        })
         for imp in struct_data.get("imports", []):
             raw = imp.get("name", imp) if isinstance(imp, dict) else imp
             short = _short_type_name(str(raw))
@@ -122,7 +122,7 @@ def cmd_kg(args: argparse.Namespace) -> Any:
         params: dict[str, str] = {"service": args.service, "graph": "kg", "node": args.neighbors, "direction": args.direction, "depth": str(args.depth)}
         if args.edge_type:
             params["edgeType"] = args.edge_type
-        return _helpers.fetch_json(build_url(args.server, "/api/graph-query/neighbors", params))
+        return _helpers.fetch_json(args.server, "/api/graph-query/neighbors", params)
     if args.edges:
         params = {"service": args.service, "graph": "kg"}
         if args.type:
@@ -131,15 +131,15 @@ def cmd_kg(args: argparse.Namespace) -> Any:
             params["source"] = args.source
         if args.target:
             params["target"] = args.target
-        return _helpers.fetch_json(build_url(args.server, "/api/graph-query/edges", params))
+        return _helpers.fetch_json(args.server, "/api/graph-query/edges", params)
     if args.layers:
-        return _helpers.fetch_json(build_url(args.server, "/api/graph-query/layers", {"service": args.service}))
+        return _helpers.fetch_json(args.server, "/api/graph-query/layers", {"service": args.service})
     if args.tour:
-        return _helpers.fetch_json(build_url(args.server, "/api/graph-query/tour", {"service": args.service}))
+        return _helpers.fetch_json(args.server, "/api/graph-query/tour", {"service": args.service})
     if args.file:
         if args.toc:
             graph_params: dict[str, str] = {"service": args.service, "file": "knowledge-graph.json"}
-            graph_data = _helpers.fetch_json(build_url(args.server, "/api/graph", graph_params))
+            graph_data = _helpers.fetch_json(args.server, "/api/graph", graph_params)
             symbols = _kg_file_toc(args, graph_data)
             return {"file": args.file, "totalSymbols": len(symbols), "symbols": symbols}
         params: dict[str, str] = {"file": args.file, "service": args.service, "mode": "graph"}
@@ -147,13 +147,13 @@ def cmd_kg(args: argparse.Namespace) -> Any:
             params["start"] = str(args.start)
         if args.end:
             params["end"] = str(args.end)
-        return _helpers.fetch_json(build_url(args.server, "/api/source", params))
+        return _helpers.fetch_json(args.server, "/api/source", params)
     if args.search:
         type_filter = args.type if args.type and args.type != "node" else None
         search_results = _search_api(args.server, args.search, service=args.service, scope="kg", limit=30, type=type_filter, tag=getattr(args, "tag", None), offset=getattr(args, "offset", 0))
         return {"nodes": search_results, "edges": None}
     params = {"service": args.service, "file": "knowledge-graph.json"}
-    data = _helpers.fetch_json(build_url(args.server, "/api/graph", params))
+    data = _helpers.fetch_json(args.server, "/api/graph", params)
     nodes = data.get("nodes", [])
     if args.node:
         exact = [n for n in nodes if n.get("name") == args.node]
@@ -174,11 +174,11 @@ def cmd_domain(args: argparse.Namespace) -> Any:
         params: dict[str, str] = {"service": args.service, "graph": "domain", "node": args.neighbors, "direction": "both"}
         if args.edge_type:
             params["edgeType"] = args.edge_type
-        return _helpers.fetch_json(build_url(args.server, "/api/graph-query/neighbors", params))
+        return _helpers.fetch_json(args.server, "/api/graph-query/neighbors", params)
     if args.search:
         return {"nodes": _search_api(args.server, args.search, service=args.service, scope="domain", limit=30)}
     params = {"service": args.service, "file": "domain-graph.json"}
-    data = _helpers.fetch_json(build_url(args.server, "/api/graph", params))
+    data = _helpers.fetch_json(args.server, "/api/graph", params)
     if args.flows:
         nodes = [n for n in data.get("nodes", []) if n.get("type") == "flow"]
         return {"flows": nodes}
@@ -211,14 +211,14 @@ def cmd_domain(args: argparse.Namespace) -> Any:
 
 def cmd_wiki(args: argparse.Namespace) -> Any:
     if args.overview:
-        return _helpers.fetch_json(build_url(args.server, "/api/wiki/overview", {}))
+        return _helpers.fetch_json(args.server, "/api/wiki/overview", {})
     if args.architecture:
-        return _helpers.fetch_json(build_url(args.server, "/api/wiki/architecture", {}))
+        return _helpers.fetch_json(args.server, "/api/wiki/architecture", {})
     if args.cross_domain:
         cross_domain = url_quote(args.cross_domain or "", safe="")
-        return _helpers.fetch_json(build_url(args.server, f"/api/wiki/domain/{cross_domain}", {}))
+        return _helpers.fetch_json(args.server, f"/api/wiki/domain/{cross_domain}", {})
     if args.endpoint_index:
-        data = _helpers.fetch_json(build_url(args.server, "/api/wiki/endpoints/index", {}))
+        data = _helpers.fetch_json(args.server, "/api/wiki/endpoints/index", {})
         if args.protocol:
             by_proto = data.get("byProtocol", {})
             return {"protocol": args.protocol, "entries": by_proto.get(args.protocol, [])}
@@ -228,36 +228,36 @@ def cmd_wiki(args: argparse.Namespace) -> Any:
     svc = url_quote(args.service or "", safe="")
     if args.flow:
         flow = url_quote(args.flow or "", safe="")
-        return _helpers.fetch_json(build_url(args.server, f"/api/wiki/service/{svc}/flow/{flow}", {}))
+        return _helpers.fetch_json(args.server, f"/api/wiki/service/{svc}/flow/{flow}", {})
     if args.related:
         if not args.domain:
             raise SystemExit("--related requires --domain")
         domain = url_quote(args.domain or "", safe="")
-        return _helpers.fetch_json(build_url(args.server, f"/api/wiki/{domain}/related", {}))
+        return _helpers.fetch_json(args.server, f"/api/wiki/{domain}/related", {})
     if args.search:
         return _search_api(args.server, args.search, scope="wiki", limit=20)
     if args.domain:
         domain = url_quote(args.domain or "", safe="")
-        return _helpers.fetch_json(build_url(args.server, f"/api/wiki/service/{svc}/domain/{domain}", {}))
+        return _helpers.fetch_json(args.server, f"/api/wiki/service/{svc}/domain/{domain}", {})
     if args.type == "endpoint":
-        return _helpers.fetch_json(build_url(args.server, f"/api/wiki/endpoints/{svc}", {}))
-    return _helpers.fetch_json(build_url(args.server, f"/api/wiki/service/{svc}", {}))
+        return _helpers.fetch_json(args.server, f"/api/wiki/endpoints/{svc}", {})
+    return _helpers.fetch_json(args.server, f"/api/wiki/service/{svc}", {})
 
 
 def cmd_business(args: argparse.Namespace) -> Any:
     if args.meta:
-        return _helpers.fetch_json(build_url(args.server, "/api/business/meta", {}))
+        return _helpers.fetch_json(args.server, "/api/business/meta", {})
     if args.panorama:
-        return _helpers.fetch_json(build_url(args.server, "/api/business/panorama", {}))
+        return _helpers.fetch_json(args.server, "/api/business/panorama", {})
     if args.features:
-        return _helpers.fetch_json(build_url(args.server, "/api/business/features", {}))
+        return _helpers.fetch_json(args.server, "/api/business/features", {})
     if args.links:
         params: dict[str, str] = {}
         if args.domain:
             params["domain"] = args.domain
-        return _helpers.fetch_json(build_url(args.server, "/api/business/cross-facet-links", params))
+        return _helpers.fetch_json(args.server, "/api/business/cross-facet-links", params)
     if args.list:
-        return _helpers.fetch_json(build_url(args.server, "/api/business/domains", {}))
+        return _helpers.fetch_json(args.server, "/api/business/domains", {})
     if args.search:
         if args.domain:
             raise SystemExit("--search and --domain are mutually exclusive")
@@ -266,21 +266,21 @@ def cmd_business(args: argparse.Namespace) -> Any:
             params["platform"] = args.platform
         if args.flow:
             params["flow"] = args.flow
-        return _helpers.fetch_json(build_url(args.server, "/api/business/search", params))
+        return _helpers.fetch_json(args.server, "/api/business/search", params)
     if args.domain and args.platform:
         encoded_domain = url_quote(args.domain, safe="")
         params: dict[str, str] = {"platform": args.platform}
         if args.flow:
             params["flow"] = args.flow
-        return _helpers.fetch_json(build_url(
+        return _helpers.fetch_json(
             args.server,
             f"/api/business/domains/{encoded_domain}",
             params,
-        ))
+        )
     if args.domain:
         slug = args.domain.replace("domain:", "").replace(" ", "-").lower()
         slug = url_quote(slug, safe="")
-        data = _helpers.fetch_json(build_url(args.server, f"/api/business/domains/{slug}", {}))
+        data = _helpers.fetch_json(args.server, f"/api/business/domains/{slug}", {})
         if args.type == "interactions":
             return {"interactions": data.get("interactions", [])}
         if args.type == "rules":
@@ -288,9 +288,9 @@ def cmd_business(args: argparse.Namespace) -> Any:
         if args.facet:
             return {"facets": data.get("facets", {}).get(args.facet, {})}
         return data
-    overview = _helpers.fetch_json(build_url(args.server, "/api/business/overview", {}))
+    overview = _helpers.fetch_json(args.server, "/api/business/overview", {})
     try:
-        features_data = _helpers.fetch_json(build_url(args.server, "/api/business/features", {}))
+        features_data = _helpers.fetch_json(args.server, "/api/business/features", {})
         overview["features"] = {
             "featureCount": len(features_data.get("features", [])),
             "stats": features_data.get("stats", {}),
@@ -306,11 +306,11 @@ def cmd_services(args: argparse.Namespace) -> Any:
         params["name"] = args.name
     if args.has:
         params["has"] = args.has
-    return _helpers.fetch_json(build_url(args.server, "/api/services", params))
+    return _helpers.fetch_json(args.server, "/api/services", params)
 
 
 def cmd_meta(args: argparse.Namespace) -> Any:
-    data = _helpers.fetch_json(build_url(args.server, "/api/layers/freshness", {}))
+    data = _helpers.fetch_json(args.server, "/api/layers/freshness", {})
     if args.stale:
         return {"stale": data.get("freshness", {}).get("stale", [])}
     return data
@@ -439,7 +439,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     for node_entry in result["matchedNodes"][1:3]:
         try:
             nbr_params = {"service": service, "graph": "kg", "node": node_entry["id"], "direction": "both", "depth": "1"}
-            nbr = _helpers.fetch_json(build_url(args.server, "/api/graph-query/neighbors", nbr_params))
+            nbr = _helpers.fetch_json(args.server, "/api/graph-query/neighbors", nbr_params)
             inbound = sum(1 for n in nbr.get("neighbors", []) if n.get("direction") == "inbound")
             outbound = sum(1 for n in nbr.get("neighbors", []) if n.get("direction") == "outbound")
             node_entry["blastRadius"] = {"inbound": inbound, "outbound": outbound, "total": inbound + outbound}
@@ -506,7 +506,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
     nbr_data = None
     try:
         nbr_params: dict[str, str] = {"service": service, "graph": "kg", "node": top["id"], "direction": "both", "depth": "1"}
-        nbr_data = _helpers.fetch_json(build_url(args.server, "/api/graph-query/neighbors", nbr_params))
+        nbr_data = _helpers.fetch_json(args.server, "/api/graph-query/neighbors", nbr_params)
         center = nbr_data.get("center") or {}
         result["neighbors"] = {
             "center": {"id": center.get("id", ""), "name": center.get("name", ""), "type": center.get("type", "")},
@@ -567,7 +567,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
                 src_params["end"] = str(end)
                 file_line_range = [start, end]
             try:
-                src_data = _helpers.fetch_json(build_url(args.server, "/api/source", src_params))
+                src_data = _helpers.fetch_json(args.server, "/api/source", src_params)
                 entry: dict[str, Any] = {
                     "symbols": symbols,
                     "source": src_data.get("content", ""),
@@ -624,7 +624,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
                 src_params["end"] = str(end)
             elif args.symbol:
                 pass  # will extract from content
-            src_data = _helpers.fetch_json(build_url(args.server, "/api/source", src_params))
+            src_data = _helpers.fetch_json(args.server, "/api/source", src_params)
             content = src_data.get("content", "")
             line_count = src_data.get("lineCount", 0)
 
@@ -688,7 +688,7 @@ def cmd_trace(args: argparse.Namespace) -> Any:
                 else:
                     vp["start"] = "1"
                     vp["end"] = "150"
-                src = _helpers.fetch_json(build_url(args.server, "/api/source", vp))
+                src = _helpers.fetch_json(args.server, "/api/source", vp)
                 source_reads.append({
                     "node": node.get("name", ""),
                     "type": node.get("type", ""),
@@ -772,7 +772,7 @@ def _detect_and_follow_cross_service_rpc(
     target_interface: str = rpc_interface_names[0]
 
     try:
-        svc_list = _helpers.fetch_json(build_url(server, "/api/services", {}))
+        svc_list = _helpers.fetch_json(server, "/api/services", {})
         for svc in svc_list.get("services", []):
             svc_name = svc.get("name", "")
             if svc_name == current_service:
@@ -885,9 +885,9 @@ def cmd_ask(args: argparse.Namespace) -> Any:
             biz_parts = [p.strip() for p in query.split(",") if p.strip() and len(p.strip()) <= 20]
             biz_q = " ".join(biz_parts[:3]) if biz_parts else query.split(",")[0][:20]
             if platform:
-                biz_resp = _helpers.fetch_json(build_url(
+                biz_resp = _helpers.fetch_json(
                     args.server, "/api/business/search", {"q": biz_q, "platform": platform}
-                ))
+                )
                 biz_results = biz_resp.get("results", [])
             else:
                 biz_results = _search_api(args.server, biz_q, scope="business", limit=5)
@@ -942,9 +942,9 @@ def cmd_ask(args: argparse.Namespace) -> Any:
                     }
                     if platform:
                         struct_params["platform"] = platform
-                    struct_data = _helpers.fetch_json(build_url(
+                    struct_data = _helpers.fetch_json(
                         args.server, "/api/structure/search", struct_params
-                    ))
+                    )
                     structure_results.extend(struct_data.get("results", []))
                 except RuntimeError:
                     continue
@@ -967,7 +967,7 @@ def cmd_ask(args: argparse.Namespace) -> Any:
             if platform:
                 grep_params["platform"] = platform
             try:
-                grep_resp = _helpers.fetch_json(build_url(args.server, "/api/source/search", grep_params))
+                grep_resp = _helpers.fetch_json(args.server, "/api/source/search", grep_params)
                 if grep_resp and grep_resp.get("results"):
                     result["sourceFallback"] = {
                         "hint": f"Found {len(grep_resp['results'])} source matches via content search: '{grep_query}'",
@@ -1003,7 +1003,7 @@ def cmd_impact(args: argparse.Namespace) -> Any:
     }
     if args.edge_type:
         params["edgeType"] = args.edge_type
-    data = _helpers.fetch_json(build_url(args.server, "/api/graph-query/impact", params))
+    data = _helpers.fetch_json(args.server, "/api/graph-query/impact", params)
     affected = [
         {
             "id": n.get("id", ""),
@@ -1089,7 +1089,7 @@ def cmd_hotspots(args: argparse.Namespace) -> Any:
     }
     if args.type:
         params["type"] = args.type
-    data = _helpers.fetch_json(build_url(args.server, "/api/graph-query/hotspots", params))
+    data = _helpers.fetch_json(args.server, "/api/graph-query/hotspots", params)
     return {
         "service": args.service,
         "totalNodes": data.get("total", 0),
@@ -1103,7 +1103,7 @@ def cmd_affected(args: argparse.Namespace) -> Any:
         raise SystemExit("affected requires --files with at least one path")
 
     depth = max(args.depth, 1)
-    graph_data = _helpers.fetch_json(build_url(args.server, "/api/graph", {"service": args.service, "file": "knowledge-graph.json"}))
+    graph_data = _helpers.fetch_json(args.server, "/api/graph", {"service": args.service, "file": "knowledge-graph.json"})
     nodes = graph_data.get("nodes", [])
 
     affected_tests: list[dict[str, Any]] = []
@@ -1153,20 +1153,20 @@ def cmd_structure(args: argparse.Namespace) -> Any:
         params: dict[str, str] = {"q": args.grep, "service": args.service, "limit": str(args.limit if args.limit is not None else 50)}
         if args.path:
             params["path"] = args.path
-        return _helpers.fetch_json(build_url(args.server, "/api/source/search", params))
+        return _helpers.fetch_json(args.server, "/api/source/search", params)
     if args.symbol:
         return _cmd_structure_symbol(args)
     if args.chain:
         params: dict[str, str] = {"service": args.service, "class": args.chain, "direction": args.direction}
-        return _helpers.fetch_json(build_url(args.server, "/api/structure/chain", params))
+        return _helpers.fetch_json(args.server, "/api/structure/chain", params)
     if args.implementors:
         params = {"service": args.service, "interface": args.implementors}
-        return _helpers.fetch_json(build_url(args.server, "/api/structure/implementors", params))
+        return _helpers.fetch_json(args.server, "/api/structure/implementors", params)
     if args.files:
-        return _helpers.fetch_json(build_url(args.server, "/api/structure/files", {"service": args.service}))
+        return _helpers.fetch_json(args.server, "/api/structure/files", {"service": args.service})
     if args.file:
         params = {"service": args.service, "path": args.file}
-        result = _helpers.fetch_json(build_url(args.server, "/api/structure/file", params))
+        result = _helpers.fetch_json(args.server, "/api/structure/file", params)
         if getattr(args, "source", False):
             src_params: dict[str, str] = {"file": args.file, "service": args.service, "mode": "graph"}
             if getattr(args, "start", None):
@@ -1174,7 +1174,7 @@ def cmd_structure(args: argparse.Namespace) -> Any:
             if getattr(args, "end", None):
                 src_params["end"] = str(args.end)
             try:
-                src_data = _helpers.fetch_json(build_url(args.server, "/api/source", src_params))
+                src_data = _helpers.fetch_json(args.server, "/api/source", src_params)
                 result["sourceContent"] = src_data.get("content", src_data.get("source", ""))
                 result["lineCount"] = src_data.get("lineCount", src_data.get("totalLines", 0))
             except RuntimeError:
@@ -1203,7 +1203,7 @@ def cmd_structure(args: argparse.Namespace) -> Any:
         search_params["offset"] = str(args.offset)
     if len(search_params) <= 2:
         raise SystemExit("structure search requires at least one filter: --q, --annotation, --param-type, --return-type, --interface, --property-type, --section-key, --section-value")
-    return _helpers.fetch_json(build_url(args.server, "/api/structure/search", search_params))
+    return _helpers.fetch_json(args.server, "/api/structure/search", search_params)
 
 
 def cmd_source(args: argparse.Namespace) -> Any:
@@ -1214,7 +1214,7 @@ def cmd_source(args: argparse.Namespace) -> Any:
         params: dict[str, str] = {"q": args.search, "service": args.service, "limit": str(args.limit)}
         if args.path:
             params["path"] = args.path
-        return _helpers.fetch_json(build_url(args.server, "/api/source/search", params))
+        return _helpers.fetch_json(args.server, "/api/source/search", params)
 
     if getattr(args, "file", None):
         params = {"file": args.file, "service": args.service, "mode": "graph"}
@@ -1222,7 +1222,7 @@ def cmd_source(args: argparse.Namespace) -> Any:
             params["start"] = str(args.start)
         if args.end:
             params["end"] = str(args.end)
-        return _helpers.fetch_json(build_url(args.server, "/api/source", params))
+        return _helpers.fetch_json(args.server, "/api/source", params)
 
     raise SystemExit("source requires --search or --file")
 

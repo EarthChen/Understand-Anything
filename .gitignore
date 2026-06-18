@@ -8,6 +8,9 @@ dist
 .env
 .env.*
 coverage/
+.coverage
+.coverage.*
+htmlcov/
 *.log
 __pycache__/
 .claude/

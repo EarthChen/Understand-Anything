@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import sys
 from typing import Any
-from _utils import fetch_json, build_url, url_quote, _IMPL_SUFFIXES, _CONFIG_SUFFIXES
+from _utils import fetch_json, url_quote, _IMPL_SUFFIXES, _CONFIG_SUFFIXES
 
 def _score_node_relevance(node: dict[str, Any], query: str) -> float:
     """Score a node's relevance to the query using language-agnostic structural signals."""
@@ -88,7 +88,7 @@ def _search_api(server: str, query: str, service: str | None = None, scope: str 
         params["tag"] = tag
     if offset > 0:
         params["offset"] = str(offset)
-    data = fetch_json(build_url(server, "/api/search", params))
+    data = fetch_json(server, "/api/search", params)
     return data.get("results", [])
 
 
@@ -202,7 +202,7 @@ def _fetch_neighbors(
     }
     if edge_type:
         params["edgeType"] = edge_type
-    return fetch_json(build_url(server, "/api/graph-query/neighbors", params))
+    return fetch_json(server, "/api/graph-query/neighbors", params)
 
 
 def _neighbor_entries(nbr_data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -253,7 +253,7 @@ def _auto_discover_service(server: str, query: str, platform: str | None = None)
     class_keywords = [p for p in parts if p[0:1].isupper() and len(p) > 5 and any(c.islower() for c in p)]
     if class_keywords:
         try:
-            svc_list = fetch_json(build_url(server, "/api/services", {}))
+            svc_list = fetch_json(server, "/api/services", {})
             for class_kw in class_keywords[:3]:
                 for svc in svc_list.get("services", []):
                     svc_name = svc.get("name", "")
@@ -297,9 +297,9 @@ def _auto_discover_service(server: str, query: str, platform: str | None = None)
     if not service_votes:
         try:
             if platform:
-                biz_resp = fetch_json(build_url(server, "/api/business/search", {
+                biz_resp = fetch_json(server, "/api/business/search", {
                     "q": search_query, "platform": platform,
-                }))
+                })
                 biz_features_api_used = True
                 biz_hits = biz_resp.get("results", [])
             else:
@@ -328,7 +328,7 @@ def _auto_discover_service(server: str, query: str, platform: str | None = None)
             biz_params: dict[str, str] = {"q": search_query}
             if platform:
                 biz_params["platform"] = platform
-            biz_resp = fetch_json(build_url(server, "/api/business/search", biz_params))
+            biz_resp = fetch_json(server, "/api/business/search", biz_params)
             if biz_resp and biz_resp.get("results"):
                 biz_feature_seen: set[str] = set()
                 for match in biz_resp["results"][:5]:
@@ -344,7 +344,7 @@ def _auto_discover_service(server: str, query: str, platform: str | None = None)
     # Strategy 3: KG search across all services with wiki/kg data
     if not service_votes:
         try:
-            svc_list = fetch_json(build_url(server, "/api/services", {}))
+            svc_list = fetch_json(server, "/api/services", {})
             for svc in svc_list.get("services", []):
                 svc_name = svc.get("name", "")
                 layers = svc.get("dataLayers", {})
@@ -381,7 +381,7 @@ def _fetch_wiki_domain(server: str, service: str, query: str) -> dict | None:
             try:
                 svc_encoded = url_quote(service, safe="")
                 domain_encoded = url_quote(slug, safe="")
-                return fetch_json(build_url(server, f"/api/wiki/service/{svc_encoded}/domain/{domain_encoded}", {}))
+                return fetch_json(server, f"/api/wiki/service/{svc_encoded}/domain/{domain_encoded}", {})
             except RuntimeError:
                 continue
         return None
@@ -393,7 +393,7 @@ def _fetch_domain_flows(server: str, service: str, query: str) -> list[dict] | N
     """Fetch domain graph flows matching the query."""
     try:
         params: dict[str, str] = {"service": service, "file": "domain-graph.json"}
-        data = fetch_json(build_url(server, "/api/graph", params))
+        data = fetch_json(server, "/api/graph", params)
         flows = [n for n in data.get("nodes", []) if n.get("type") == "flow"]
         if not flows:
             return None
@@ -472,7 +472,7 @@ def _cmd_structure_symbol(args: argparse.Namespace) -> Any:
             params["limit"] = str(max(args.limit, 1))
         if args.path:
             params["pathPattern"] = args.path
-        data = fetch_json(build_url(args.server, "/api/structure/symbol-source", params))
+        data = fetch_json(args.server, "/api/structure/symbol-source", params)
         return {"symbol": symbol, "matches": data.get("results", [])}
 
     # Non-source symbol search hits /api/structure/search (cap 500); fall back to 50.
@@ -484,7 +484,7 @@ def _cmd_structure_symbol(args: argparse.Namespace) -> Any:
     }
     if args.path:
         params["pathPattern"] = args.path
-    data = fetch_json(build_url(args.server, "/api/structure/search", params))
+    data = fetch_json(args.server, "/api/structure/search", params)
     results = data.get("results", [])
     matches = [
         {
