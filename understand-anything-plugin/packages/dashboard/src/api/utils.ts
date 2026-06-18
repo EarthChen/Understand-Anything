@@ -76,3 +76,17 @@ export function readJsonFile<T>(filePath: string): T | null {
     return null
   }
 }
+
+/**
+ * Merge a parsed JSON POST body into a URLSearchParams so handlers (which read
+ * from searchParams) transparently support POST. Body values override query
+ * params on key conflict; null/undefined are skipped; non-object bodies no-op.
+ */
+export function mergePostBody(searchParams: URLSearchParams, body: unknown): void {
+  if (!body || typeof body !== "object") return
+  for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+    if (value !== null && value !== undefined) {
+      searchParams.set(key, String(value))
+    }
+  }
+}
