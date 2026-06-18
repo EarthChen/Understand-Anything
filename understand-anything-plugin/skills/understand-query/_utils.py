@@ -423,6 +423,25 @@ def _format_markdown(data: Any) -> str:
             lines.append("")
         return "\n".join(lines)
 
+    if isinstance(data, dict) and isinstance(data.get("symbols"), list):
+        slines = [f"# Symbols ({len(data['symbols'])})", ""]
+        for g in data["symbols"]:
+            slines.append(f"## {g.get('symbol', '?')}")
+            if g.get("error"):
+                slines.append(f"> error: {g['error']}")
+                slines.append("")
+                continue
+            for m in g.get("matches", []):
+                lr = m.get("lineRange", [])
+                lr_str = f"L{lr[0]}-{lr[1]}" if lr and len(lr) == 2 else ""
+                slines.append(f"### {m.get('kind', '?')} `{m.get('name', '?')}` — `{m.get('filePath', '?')}:{lr_str}`")
+                source = m.get("source")
+                if source:
+                    ext = m.get("filePath", "").rsplit(".", 1)[-1] if "." in m.get("filePath", "") else "java"
+                    slines.append(f"```{_lang_for_ext(ext)}\n{source}\n```")
+            slines.append("")
+        return "\n".join(slines)
+
     if isinstance(data, dict) and "impactRadius" in data and "affectedNodes" in data:
         center = data.get("center", {})
         lines = [

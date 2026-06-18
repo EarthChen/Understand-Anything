@@ -939,6 +939,18 @@ class TestJsonFallback:
         assert "```json" in out
 
 
+def test_format_markdown_symbols_batch():
+    from _utils import _format_markdown
+    md = _format_markdown({"symbols": [
+        {"symbol": "Foo", "matches": [
+            {"kind": "class", "name": "Foo", "filePath": "F.java", "lineRange": [1, 9], "source": "class Foo {}"}]},
+        {"symbol": "Bar", "matches": [], "error": "HTTP 400: limit"}]})
+    assert "# Symbols (2)" in md
+    assert "## Foo" in md
+    assert "class Foo {}" in md
+    assert "> error: HTTP 400: limit" in md
+
+
 def test_format_markdown_source_files_batch():
     from _utils import _format_markdown
     md_out = _format_markdown({"files": [

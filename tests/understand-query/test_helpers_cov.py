@@ -1072,6 +1072,34 @@ class TestCmdStructureSymbol:
         assert path_arg == "/api/structure/search"
         assert params_arg["limit"] == "50"
 
+    @patch("_helpers.fetch_json")
+    def test_multi_symbol_returns_groups(self, mock_fetch):
+        mock_fetch.side_effect = [
+            {"results": [{"name": "Foo", "source": "f"}]},
+            {"results": [{"name": "Bar", "source": "b"}]}]
+        args = argparse.Namespace(server=SERVER, service="svc", symbol="Foo,Bar",
+                                  limit=None, path=None, source=True)
+        out = _helpers._cmd_structure_symbol(args)
+        assert [g["symbol"] for g in out["symbols"]] == ["Foo", "Bar"]
+        assert out["symbols"][0]["matches"][0]["name"] == "Foo"
+
+    @patch("_helpers.fetch_json")
+    def test_multi_symbol_error_isolated(self, mock_fetch):
+        mock_fetch.side_effect = [RuntimeError("HTTP 400: limit"), {"results": []}]
+        args = argparse.Namespace(server=SERVER, service="svc", symbol="Foo,Bar",
+                                  limit=None, path=None, source=True)
+        out = _helpers._cmd_structure_symbol(args)
+        assert out["symbols"][0]["error"].startswith("HTTP 400")
+        assert out["symbols"][1] == {"symbol": "Bar", "matches": []}
+
+    @patch("_helpers.fetch_json")
+    def test_single_symbol_shape_unchanged(self, mock_fetch):
+        mock_fetch.return_value = {"results": [{"name": "Foo", "source": "f"}]}
+        args = argparse.Namespace(server=SERVER, service="svc", symbol="Foo",
+                                  limit=None, path=None, source=True)
+        out = _helpers._cmd_structure_symbol(args)
+        assert out == {"symbol": "Foo", "matches": [{"name": "Foo", "source": "f"}]}
+
 
 # ---------------------------------------------------------------------------
 # _kg_file_toc

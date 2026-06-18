@@ -474,48 +474,42 @@ def _extract_symbol(content: str, symbol: str) -> str | None:
 
 
 
-def _cmd_structure_symbol(args: argparse.Namespace) -> Any:
-    symbol = args.symbol
+def _structure_symbol_one(args: argparse.Namespace, symbol: str) -> Any:
     include_source = getattr(args, "source", False)
-
     if include_source:
-        # symbol-source returns full source per match and caps limit at 20 server-side.
-        # Forward --limit only when explicitly set, so an unset limit hits the server's
-        # smaller per-endpoint default (5) rather than the search default (50), which
-        # the endpoint rejects with HTTP 400 "limit must be between 1 and 20".
-        params: dict[str, str] = {
-            "service": args.service,
-            "symbol": symbol,
-        }
+        params: dict[str, str] = {"service": args.service, "symbol": symbol}
         if args.limit is not None:
             params["limit"] = str(max(args.limit, 1))
         if args.path:
             params["pathPattern"] = args.path
         data = fetch_json(args.server, "/api/structure/symbol-source", params)
         return {"symbol": symbol, "matches": data.get("results", [])}
-
-    # Non-source symbol search hits /api/structure/search (cap 500); fall back to 50.
     limit = max(args.limit if args.limit is not None else 50, 1)
-    params: dict[str, str] = {
-        "service": args.service,
-        "symbol": symbol,
-        "limit": str(limit),
-    }
+    params = {"service": args.service, "symbol": symbol, "limit": str(limit)}
     if args.path:
         params["pathPattern"] = args.path
     data = fetch_json(args.server, "/api/structure/search", params)
     results = data.get("results", [])
     matches = [
-        {
-            "name": r.get("name", ""),
-            "kind": r.get("kind", ""),
-            "filePath": r.get("filePath", ""),
-            "lineRange": r.get("lineRange"),
-            "match": r.get("match", {}),
-        }
+        {"name": r.get("name", ""), "kind": r.get("kind", ""),
+         "filePath": r.get("filePath", ""), "lineRange": r.get("lineRange", []),
+         "match": r.get("match", {})}
         for r in results
     ]
     return {"symbol": symbol, "matches": matches}
+
+
+def _cmd_structure_symbol(args: argparse.Namespace) -> Any:
+    names = [s.strip() for s in args.symbol.split(",") if s.strip()]
+    if len(names) <= 1:
+        return _structure_symbol_one(args, names[0] if names else args.symbol)
+    groups: list[dict[str, Any]] = []
+    for n in names:
+        try:
+            groups.append(_structure_symbol_one(args, n))
+        except RuntimeError as exc:
+            groups.append({"symbol": n, "matches": [], "error": str(exc)})
+    return {"symbols": groups}
 
 
 def _kg_file_toc(args: argparse.Namespace, graph_data: dict[str, Any]) -> list[dict[str, Any]]:
