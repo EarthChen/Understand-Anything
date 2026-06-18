@@ -98,6 +98,7 @@ python ua_query.py trace --service SERVICE --query "keyword" --source --grouped
 7. **Use server-side filters**: Pass `--type`/`--tag` to `kg --search` and `--type` to `trace` instead of post-filtering results client-side. Reduces payload and improves accuracy.
 8. **Use `--q` for structure fuzzy search**: `structure --q "getUser"` is faster and more accurate than iterating `--annotation`/`--param-type` separately.
 9. **Paginate large results**: Use `--offset N` with `--limit` for large result sets instead of fetching everything.
+10. **Batch known reads into ONE call**: Once you've located the specific files or symbols you need (from a search/toc/trace), read them **together**, not one call each — `source --file "A.java:1-60,B.java,C.java"` (per-file line ranges; a bad path is isolated as a per-file error, the rest still return) and `structure --symbol "A,B,C" --source`. N tool calls → 1. Requests are sent as POST, so long keyword/file lists have no URL-length limit — batch freely.
 
 ---
 
@@ -108,8 +109,8 @@ python ua_query.py trace --service SERVICE --query "keyword" --source --grouped
 | `ask` | **Start here for business questions.** Auto-discover → trace → wiki → domain → source-verify | This file |
 | `trace` | Search→neighbors→source in one call (with optional wiki/domain/verify/grouped) | [kg-trace.md](docs/kg-trace.md#trace--aggregated-searchneighborssource-recommended-for-agents) |
 | `kg` | Source-level KG: classes, calls, RPC, file annotations, file summary | [kg-trace.md](docs/kg-trace.md#kg--knowledge-graph-queries) |
-| `structure` | Code structure: signatures, annotations, types, cross-file symbol search + source | [structure-commands.md](docs/structure-commands.md) |
-| `source` | Source content: full-text search (`--search`), file read by path/line range (`--file`); `--limit N` caps search results (default 20, max 50) | [source-code.md](docs/source-code.md) |
+| `structure` | Code structure: signatures, annotations, types, cross-file symbol search + source (`--symbol`, **comma-separate for many symbols in one call**) | [structure-commands.md](docs/structure-commands.md) |
+| `source` | Source content: full-text search (`--search`), file read by path/line range (`--file`, **comma-separate to read many files in one call**); `--limit N` caps search results (default 20, max 50) | [source-code.md](docs/source-code.md) |
 | `impact` | Server-side BFS impact analysis from a symbol (depth 1–10) | [graph-analysis.md](docs/graph-analysis.md#impact--transitive-impact-analysis) |
 | `callers` | Who calls this symbol? (inbound `calls` edges) | [graph-analysis.md](docs/graph-analysis.md#callers--callees--call-graph-navigation) |
 | `callees` | What does this symbol call? (outbound `calls` edges) | [graph-analysis.md](docs/graph-analysis.md#callers--callees--call-graph-navigation) |
@@ -370,6 +371,7 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "Where is X implemented?" / "X在哪里实现？" | `trace --auto-discover --query "X,English" --source` | Auto-locates service + source; empty? try `source --search` |
 | "Concept not in KG?" / "KG搜不到X？" | `ask --query "X" --depth full` | Returns `structureFallback`, `sourceFallback`, or `traceHint` automatically |
 | "Show me code for X" / "X方法的源码" | `structure --service S --symbol X --source` | Precise symbol + source |
+| "Show me code for X, Y, Z" / "X、Y、Z的源码" | `structure --service S --symbol "X,Y,Z" --source` | **Batch — many symbols in ONE call** → `{symbols:[…]}` (prefer over one call each) |
 | "Read file F" / "读取文件F" | `kg --service S --file F` | Full file content |
 | "Read lines 100-200 of F" / "读F的100-200行" | `kg --service S --file F --start 100 --end 200` | Line range read |
 | "Methods in file F" / "文件F有哪些方法？" | `kg --service S --file F --toc` | Method index (cheap, no source) |
@@ -378,6 +380,7 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "Search source for timeout" / "源码中搜索timeout" | `source --service S --search "timeout"` | Full-text content search (replaces `structure --grep`) |
 | "Config timeout value?" / "配置中的超时设置？" | `source --service S --search "timeout" --path "*.yml"` | Config file content search |
 | "Read source file by path" / "按路径读源码" | `source --service S --file PATH [--start N --end M]` | Read source code by path and line range |
+| "Read several files at once" / "一次读多个文件" | `source --service S --file "A.java:1-60,B.java,C.java"` | **Batch — many files in ONE call**, optional per-file line ranges, failed paths isolated → `{files:[…]}` (prefer over one call each) |
 | **Structure & Type Analysis** |||
 | "Who implements interface IX?" / "哪些类实现了IX？" | `structure --service S --implementors IX` | Interface implementation search |
 | "All classes with @X annotation" / "所有@X注解的类" | `structure --service S --annotation X` | Annotation batch search |
