@@ -56,6 +56,11 @@ interface StructureIndexCache {
 const cache = new Map<string, StructureCache>()
 const indexCache = new Map<string, StructureIndexCache>()
 
+export function clearStructureIndexCache(): void {
+  cache.clear()
+  indexCache.clear()
+}
+
 function loadStructuralAnalysis(serviceName: string): StructuralAnalysis | null {
   const filePath = resolveServiceDataPath(
     serviceName,

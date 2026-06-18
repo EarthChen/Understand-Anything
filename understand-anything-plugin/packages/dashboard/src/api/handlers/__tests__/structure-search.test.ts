@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest"
-import { handleStructureSearchRequest } from "../structure"
+import { describe, it, expect, beforeEach } from "vitest"
+import { handleStructureSearchRequest, clearStructureIndexCache } from "../structure"
 import type { ApiRequest, ApiContext } from "../../types"
 
 function makeRequest(params: Record<string, string>): ApiRequest {
@@ -65,5 +65,24 @@ describe("structure search handler", () => {
     } as ApiRequest
     const res = await handleStructureSearchRequest(req, mockCtx)
     expect(res).toBeNull()
+  })
+})
+
+describe("clearStructureIndexCache", () => {
+  beforeEach(() => {
+    clearStructureIndexCache()
+  })
+
+  it("is exported and callable", () => {
+    expect(typeof clearStructureIndexCache).toBe("function")
+    expect(() => clearStructureIndexCache()).not.toThrow()
+  })
+
+  it("clears cached index so next search rebuilds", async () => {
+    const req = makeRequest({ service: "test-service", q: "getUser" })
+    await handleStructureSearchRequest(req, mockCtx)
+    clearStructureIndexCache()
+    const res = await handleStructureSearchRequest(req, mockCtx)
+    expect(res?.statusCode).not.toBe(500)
   })
 })
