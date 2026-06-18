@@ -8,169 +8,39 @@ argument-hint: ["<subcommand> [--server URL] [--format json|md] [--verbose] [sub
 
 Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the shared Understand-Anything API server. Use progressively deeper layers — from business landscape and service discovery down to source-verified code — to answer questions without loading entire graphs into context.
 
-## Operating Principles (precedence)
+## How This Skill Runs
 
-Apply in this order — **#1 is a hard constraint; #2–#3 optimize within it (never around it):**
+A user question is answered by **one** dispatched `understand-query-worker` agent. That worker owns the entire investigation — layered drill-down, escalation, source verification, and batched reads — and returns one source-cited answer. **All worker behavior is defined in [`agents/understand-query-worker.md`](../../agents/understand-query-worker.md); this file is the orchestration contract plus the CLI reference the worker consults.**
 
-1. **Code is the only source of truth — never traded away.** `wiki`/`domain`/`business` are LLM summaries: use them to *locate*, never to *conclude*. Every claim you present must be backed by source you actually read (see [Source Verification Rule](#source-verification-rule-mandatory)).
-2. **Fewest tool calls.** Take the cheapest path that *fully* answers — for most how/where/what questions that is one `ask --depth full`. Don't open with throwaway exploratory calls you'll have to re-verify anyway.
-3. **Fewest tokens.** Read *narrowly* (targeted methods, not whole files) and *in bulk* (batch located reads into one call) — see [Agent Efficiency Rules](#agent-efficiency-rules).
-
-**Stopping rule:** stop the moment source corroborates the answer. Locating the concept in a higher layer is *not* "done" — descend to source, confirm, cite, then stop.
-
-## Source Verification Rule (MANDATORY)
-
-**No answer may rest on `wiki` or `domain` data alone — every factual claim presented to the user MUST be corroborated by source code.** Wiki, domain, and business layers are LLM-generated summaries: they may be stale, incomplete, or simply wrong. Source code is the only ground truth. If you cannot point to the source (file + symbol or line range) that backs a claim, you have **not** verified it — read the code before you answer. A polished summary built only from `wiki`/`domain`/`business` output is an unverified guess, no matter how confident it reads.
-
-**Violating the letter of this rule is violating its spirit:** "the wiki was detailed enough" and "the domain flow already explained it" are not exceptions — they are exactly the failure this rule exists to prevent.
-
-### Verification Protocol
-
-1. **Always use `--source`** (or `--depth full` with `ask`) for questions about:
-   - Business rules and their enforcement
-   - Flow steps and their implementation
-   - Integration points (RPC, Kafka, Redis)
-   - Error handling and edge cases
-2. **Cross-check wiki claims**: If wiki says "Method X does Y", read the actual source to confirm.
-3. **Flag discrepancies**: If source code contradicts wiki/domain data, report the discrepancy explicitly.
-4. **Never trust wiki alone** for: parameter validation logic, error codes, conditional branches, or concurrency controls.
-5. **Cite the proof**: Ground every claim in the source you actually read — name the file and the symbol/line range it came from. An answer with no source citation is unverified and must not be presented as fact.
-
-### Red Flags — STOP, you are about to answer without code
-
-- You are about to summarize a flow, rule, or behavior using only `wiki` / `domain` / `business` output.
-- "The wiki already explains this clearly." / "The domain flow is detailed enough."
-- You are presenting `ask --depth standard` or `--depth quick` output to the user as fact.
-- There is no `--source` (or `ask --depth full`) call in this turn, yet you are stating how the code behaves.
-
-**All of these mean: run `--source` / `ask --depth full`, read the code, and cite it before answering.**
-
-### CRITICAL: Agents Must Pass `--depth full` for User-Facing Answers
-
-**The CLI default is `standard`, but agents MUST explicitly pass `--depth full` when answering user-facing questions (not `standard` or `quick`).** The `standard` depth skips source verification and may return unverified wiki/domain claims. Only use `standard`/`quick` for internal exploratory searches where the output is not directly presented to the user as factual.
-
-**Decision table:**
-| Scenario | Required Depth |
-|----------|---------------|
-| Answering a user question | `full` (mandatory) |
-| Agent internal exploration | `standard` (acceptable) |
-| Quick service/domain check | `quick` (acceptable) |
+> **Code is the only source of truth.** `wiki` / `domain` / `business` layers are LLM summaries used to *locate* concepts; every factual claim must be corroborated by source the worker actually reads (mandatory `--depth full` / `--source`, cite file + symbol/line range). The binding version of this rule lives in the worker agent — it is noted here so the CLI reference below is read in that light.
 
 ---
 
-## Execution Mode: Orchestrator vs Worker
+## Execution Mode: Dispatch the Worker
 
-This skill is read by two roles. **Decide which you are from an observable signal — *who handed you this task* — and act accordingly. Getting this wrong causes infinite sub-agent nesting.**
+This skill is the **orchestrator**. When the human user asks a codebase question, dispatch **exactly one** [`understand-query-worker`](../../agents/understand-query-worker.md) agent with the user's **whole question**, wait for its single final answer, and present it. The worker runs the entire investigation — drill-down, escalation, source verification, batched reads — and returns one source-cited answer. Its discipline is baked into its own definition, so you do **not** re-specify the protocol here.
 
-| You received the task from… | You are the… | Do this |
-|---|---|---|
-| The **human user**, directly | **Orchestrator** | Dispatch **exactly one** worker with the user's **whole question**. Wait for its single final answer. Present it. |
-| **Another agent** (you were dispatched) | **Worker** | Run the **entire** investigation yourself with `ua_query.py` (all layers, escalation, source verification, batched reads). Return **one** final, source-cited answer. Do **NOT** invoke the understand-query skill again, and do **NOT** dispatch another sub-agent. |
+### One question → one worker → one answer
 
-### One question → one worker → one answer (orchestrator MUST follow)
+**Do NOT** run `ua_query.py` yourself, walk the layers, or dispatch a separate worker per command / per layer / per file. Dispatch once, synthesize once.
 
-The worker owns the **whole workflow**. Everything below in this skill — the Golden Rule, the Layered Drill-Down, the Query Escalation Protocol, the decision trees, the batched reads — runs **inside the single worker**, not in the orchestrator.
+❌ **Wrong (the bug — wastes calls and floods the main context):** dispatch → "query business" → back → dispatch → "query source" → back → dispatch → "verify" → … *(N dispatches, one per step)*
 
-**The orchestrator does NOT** run `ua_query.py` itself, walk the layers, or dispatch a separate worker per command / per layer / per file. It dispatches once and synthesizes once.
+✅ **Right:** dispatch **one** `understand-query-worker` with the user's full question → it does business + wiki + domain + source-verify + batched reads **by itself** → returns **one** final source-cited answer → you present it.
 
-❌ **Wrong (this is the bug — it wastes calls and floods the main context):** dispatch worker → "query business" → result back to orchestrator → dispatch worker → "query source" → result back → dispatch worker → "verify" → … *(N dispatches, one per step)*
+### Dispatch per platform
 
-✅ **Right:** dispatch **one** worker with the user's full question → the worker does business + wiki + domain + source-verify + batched reads **by itself** → returns **one** final source-cited answer → orchestrator presents it.
+| Platform | Mechanism |
+|----------|-----------|
+| **Claude Code** | `Agent` tool with `subagent_type: "understand-query-worker"` |
+| **Cursor** | `Task` tool targeting the `understand-query-worker` agent |
+| **Codex / others** | Platform-native sub-agent dispatch of the `understand-query-worker` agent |
 
-**The dispatch prompt must be self-contained** — the user's whole question **plus this instruction:**
+The agent is registered for all three platforms (each plugin manifest points `agents` at `understand-anything-plugin/agents/`). The dispatch prompt needs only the user's question — the worker's discipline lives in its own definition, so **no protocol summary is required**. The worker never dispatches further and never re-invokes this skill, so the old "am I a sub-agent?" recursion problem no longer applies.
 
-> "You are the understand-query **worker**. Answer the question end-to-end by running `ua_query.py` directly: follow the layered drill-down, verify every claim against source, batch your reads. Return ONE final, source-cited answer. Do NOT call the understand-query skill. Do NOT dispatch any sub-agent."
+### Run inline (no dispatch) when
 
-Without that instruction the worker re-reads this skill, sees "dispatch a worker," and spawns another — the recursion this prevents. The stop-condition is keyed on *what your dispatch prompt tells you*, **not** on the unobservable "am I already a sub-agent?" — a freshly dispatched agent cannot tell that on its own.
-
-### Dispatch Instructions (Orchestrator only, cross-platform)
-
-| Platform | Mechanism | Type |
-|----------|-----------|------|
-| **Cursor** | `Task` tool | `subagent_type: "generalPurpose"` (needs shell for CLI) |
-| **Claude Code** | `Agent` tool (sub-agent dispatch) | General-purpose agent with shell access |
-| **Codex** | Platform-native sub-agent / task dispatch | Agent with shell access |
-
-### Run inline (no dispatch) when:
-- You are the **worker** (see table above) — always run inline.
 - The query is a **single trivial command** (e.g., `services --list`) whose result is needed inline.
-
----
-
-## Golden Rule for Agents (Read FIRST)
-
-For ANY "How does X work?" or "Where is X implemented?" question:
-
-**Option 1 — Single command (recommended):**
-```bash
-python ua_query.py ask --query "中文关键词,EnglishName,Synonym" --depth full
-```
-
-**Option 2 — Manual trace with verification:**
-```bash
-python ua_query.py trace --service SERVICE --query "中文关键词,EnglishName,Synonym" --source --business --wiki --domain-flows
-```
-
-Both approaches search KG, retrieve neighbors, read source code, include business/wiki/domain context, and verify against source. **Option 1 also auto-discovers the service.**
-
-**Multi-service questions?** Run trace once per relevant service:
-
-```bash
-python ua_query.py trace --service svc-a --query "keyword" --source --business && \
-python ua_query.py trace --service svc-b --query "keyword" --source
-```
-
-**Reading many matches at once?** Add `--grouped` to `trace --source` to return source code grouped by file (plus a relationship map between matched nodes) instead of per-node — fewer, denser reads:
-
-```bash
-python ua_query.py trace --service SERVICE --query "keyword" --source --grouped
-```
-
-### After `ask`/`trace` returns matched nodes — NEVER read those files one at a time
-
-This is the single most common efficiency mistake. The moment a result hands you several files/symbols:
-
-1. **Reuse what you already have.** `ask --depth full` and `trace --source` already include the matched nodes' source (`sourceReads`). Read that first — do **not** re-fetch it with a `source --file`.
-2. **Still need more files/symbols than the result included? Fetch them ALL in ONE call** — never a loop of single-file reads:
-
-```bash
-# all matches' source, grouped by file, in one call
-python ua_query.py trace --service S --query "A,B,C" --source --grouped
-# many files / line ranges in one call
-python ua_query.py source --service S --file "A.java:20-80,B.java,C.java:1-40"
-# many symbols in one call
-python ua_query.py structure --service S --symbol "A,B,C" --source
-```
-
-> One `source --file` with 5 comma-separated paths is **one** tool call; five separate `source --file` calls are **five** — same result, 5× the cost. If you are about to issue a second single-file read in a row, stop and batch instead.
-
----
-
-## Agent Efficiency Rules
-
-**Goal: answer in the fewest tool calls AND the fewest tokens.** Efficiency comes first — read *narrowly* (target the methods you need, not whole files) and read *in bulk* (batch the located reads into one call). Then pick the right command and flags.
-
-**Minimize tool calls**
-
-1. **Prefer `ask` for business questions** — one command replaces 5+ individual calls (auto-discover → trace → wiki → domain → source-verify).
-2. **Read targeted methods in segments — never dump a whole file.** A `--file` read with no line range pulls the *entire* file into context; that is the expensive default to avoid. Instead, read in segments scoped to the method(s) you actually need: (a) get the cheap method index first — `kg --file F --toc` (no source) or `structure --symbol "name"` (signatures only) — to find the spans, (b) read only those spans by line range, e.g. `source --file "F.java:120-180"` or `structure --symbol "method" --source`. Reach for a full-file read only when the file is small or you genuinely need all of it.
-3. **Batch the targeted reads into ONE call — the moment a search/`ask`/`trace` hands you ≥2 files or symbols, your next call reads ALL of them at once.** Once you've located the specific files/symbols/ranges, read them together, not one call each: `source --file "A.java:120-180,B.java:20-80,C.java"` (per-file line ranges; a bad path is isolated as a per-file `error`, the rest still return → `{files:[…]}`) and `structure --symbol "A,B,C" --source` (→ `{symbols:[…]}`). N targeted reads → 1 call. A second single-file read in a row is the signal you should have batched.
-4. **Chain mixed commands with `&&`** — when you genuinely need *different* commands, combine them into ONE shell call. Prefer a native batch flag (rule 3) when the calls differ only by file/symbol; `&&` is the fallback for heterogeneous commands.
-5. **Expand keywords before trace** — pass 2-4 comma-separated variants in a single `--query "中文,English,CamelCase"`; multi-keyword parallel search eliminates retry loops.
-
-> Requests are sent as POST, so long keyword/file lists and large batches have **no URL-length limit** — batch freely.
-
-**Pick the right command + flags**
-
-6. **Use `--q` for structure fuzzy search** — `structure --q "getUser"` beats iterating `--annotation`/`--param-type` separately.
-7. **Use server-side filters** — pass `--type`/`--tag` to `kg --search` and `--type` to `trace` instead of post-filtering client-side; smaller payload, better accuracy.
-8. **Paginate large result sets** — `--offset N` with `--limit` instead of fetching everything.
-
-**Output quality**
-
-9. **Use `--format md`** when an agent will read the output (not parse JSON).
-10. **Use `--source`** (or `ask --depth full`) for anything presented to the user as factual.
-11. **RRF is trace's default fusion** — `trace` applies `fusion=rrf` automatically, no flag needed.
 
 ---
 
@@ -335,7 +205,7 @@ When a command returns empty or unexpected results, follow the fallback chain:
 
 ## Query Escalation Protocol (Concept Not Found)
 
-When a user asks about a concept that has **no direct domain/feature match** (e.g., wiki didn't generate a separate domain for it, or it's merged into a broader domain), agents MUST escalate through the layers of the [Layered Drill-Down Model](#layered-drill-down-model) above — L1 (Business) → L6 (File) — stopping at the first layer that **locates** the concept. **Locating is not answering:** once located, drill down to L5b/L6 source and verify before presenting any factual claim (see [Source Verification Rule](#source-verification-rule-mandatory)). The lower layers (L5a/L5b/L6) are deterministic and always complete, so a concept that genuinely exists in source will always surface there.
+When a user asks about a concept that has **no direct domain/feature match** (e.g., wiki didn't generate a separate domain for it, or it's merged into a broader domain), agents MUST escalate through the layers of the [Layered Drill-Down Model](#layered-drill-down-model) above — L1 (Business) → L6 (File) — stopping at the first layer that **locates** the concept. **Locating is not answering:** once located, drill down to L5b/L6 source and verify before presenting any factual claim (see Source Verification in [`agents/understand-query-worker.md`](../../agents/understand-query-worker.md)). The lower layers (L5a/L5b/L6) are deterministic and always complete, so a concept that genuinely exists in source will always surface there.
 
 ### Agent Decision Logic
 
