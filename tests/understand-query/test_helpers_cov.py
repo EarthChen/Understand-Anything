@@ -1107,3 +1107,18 @@ class TestKgFileToc:
         args = argparse.Namespace(file="nonexistent.java")
         out = _helpers._kg_file_toc(args, {"nodes": [{"name": "X", "filePath": "a.py"}]})
         assert out == []
+
+
+# ---------------------------------------------------------------------------
+# _parse_file_specs
+# ---------------------------------------------------------------------------
+class TestParseFileSpecs:
+    def test_plain_paths(self):
+        assert _helpers._parse_file_specs("a.java,b.java") == [
+            ("a.java", None, None), ("b.java", None, None)]
+    def test_inline_ranges_and_mixed(self):
+        assert _helpers._parse_file_specs("a.java:1-60,b.java,c.java:20-80") == [
+            ("a.java", 1, 60), ("b.java", None, None), ("c.java", 20, 80)]
+    def test_strips_and_skips_empty(self):
+        assert _helpers._parse_file_specs(" a.java , ,b.java ") == [
+            ("a.java", None, None), ("b.java", None, None)]

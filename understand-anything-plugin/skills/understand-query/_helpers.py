@@ -1,9 +1,28 @@
 """Search, graph traversal, scoring, and pure logic helpers."""
 from __future__ import annotations
+import argparse
 import re
 import sys
 from typing import Any
 from _utils import fetch_json, url_quote, _IMPL_SUFFIXES, _CONFIG_SUFFIXES
+
+_FILE_RANGE_RE = re.compile(r":(\d+)-(\d+)$")
+
+
+def _parse_file_specs(raw: str) -> list[tuple[str, int | None, int | None]]:
+    """Split a comma-separated --file value into (path, start, end) specs.
+    Only a trailing ':<start>-<end>' is treated as a line range; empty parts skipped."""
+    specs: list[tuple[str, int | None, int | None]] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        m = _FILE_RANGE_RE.search(part)
+        if m:
+            specs.append((part[: m.start()], int(m.group(1)), int(m.group(2))))
+        else:
+            specs.append((part, None, None))
+    return specs
 
 def _score_node_relevance(node: dict[str, Any], query: str) -> float:
     """Score a node's relevance to the query using language-agnostic structural signals."""

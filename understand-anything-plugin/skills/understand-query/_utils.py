@@ -808,6 +808,29 @@ def _format_markdown(data: Any) -> str:
         lines.append(f"```{lang}\n{data.get('content', '')[:6000]}\n```")
         return "\n".join(lines)
 
+    if (
+        isinstance(data, dict)
+        and isinstance(data.get("files"), list)
+        and data["files"]
+        and isinstance(data["files"][0], dict)
+        and ("content" in data["files"][0] or "error" in data["files"][0])
+    ):
+        flines = [f"# Source Files ({len(data['files'])})", ""]
+        for f in data["files"]:
+            fp = f.get("file", "?")
+            if f.get("error"):
+                flines.append(f"## {fp}")
+                flines.append(f"> error: {f['error']}")
+                flines.append("")
+                continue
+            lr = f.get("lineRange")
+            lr_str = f" (lines {lr[0]}-{lr[1]})" if isinstance(lr, list) and len(lr) == 2 else ""
+            ext = fp.rsplit(".", 1)[-1] if "." in fp else "java"
+            flines.append(f"## Source: {fp}{lr_str}")
+            flines.append(f"```{_lang_for_ext(ext)}\n{f.get('content', '')[:6000]}\n```")
+            flines.append("")
+        return "\n".join(flines)
+
     # Generic dict fallback — render as structured markdown instead of raw JSON
     if isinstance(data, dict):
         lines = []

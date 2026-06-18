@@ -1217,12 +1217,35 @@ def cmd_source(args: argparse.Namespace) -> Any:
         return _helpers.fetch_json(args.server, "/api/source/search", params)
 
     if getattr(args, "file", None):
-        params = {"file": args.file, "service": args.service, "mode": "graph"}
-        if args.start:
-            params["start"] = str(args.start)
-        if args.end:
-            params["end"] = str(args.end)
-        return _helpers.fetch_json(args.server, "/api/source", params)
+        specs = _helpers._parse_file_specs(args.file)
+
+        def _read_one(path: str, start: int | None, end: int | None) -> Any:
+            params = {"file": path, "service": args.service, "mode": "graph"}
+            s = start if start is not None else args.start
+            e = end if end is not None else args.end
+            if s:
+                params["start"] = str(s)
+            if e:
+                params["end"] = str(e)
+            return _helpers.fetch_json(args.server, "/api/source", params)
+
+        if len(specs) <= 1:
+            path, start, end = specs[0] if specs else (args.file, None, None)
+            return _read_one(path, start, end)
+
+        files_out: list[dict[str, Any]] = []
+        for path, start, end in specs:
+            try:
+                data = _read_one(path, start, end)
+                files_out.append({
+                    "file": data.get("file", path),
+                    "lineRange": data.get("lineRange"),
+                    "content": data.get("content", data.get("source", "")),
+                    "lineCount": data.get("lineCount", data.get("totalLines", 0)),
+                })
+            except RuntimeError as exc:
+                files_out.append({"file": path, "error": str(exc)})
+        return {"files": files_out}
 
     raise SystemExit("source requires --search or --file")
 

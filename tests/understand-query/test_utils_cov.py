@@ -937,3 +937,14 @@ class TestJsonFallback:
     def test_dict_with_only_empty_values_falls_through(self):
         out = md({"a": None, "b": [], "c": {}})
         assert "```json" in out
+
+
+def test_format_markdown_source_files_batch():
+    from _utils import _format_markdown
+    md_out = _format_markdown({"files": [
+        {"file": "A.java", "lineRange": [1, 3], "content": "AAA", "lineCount": 3},
+        {"file": "B.java", "error": "HTTP 404: nope"}]})
+    assert "# Source Files (2)" in md_out
+    assert "## Source: A.java (lines 1-3)" in md_out
+    assert "AAA" in md_out
+    assert "> error: HTTP 404: nope" in md_out

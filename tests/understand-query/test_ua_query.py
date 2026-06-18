@@ -240,3 +240,42 @@ class TestStructureSubcommand:
         params_arg = mock_fetch.call_args[0][2]
         assert path_arg == "/api/structure/implementors"
         assert params_arg["interface"] == "Serializable"
+
+
+class TestSourceMultiFile:
+    @patch("_helpers.fetch_json")
+    def test_multi_file_aggregates(self, mock_fetch):
+        mock_fetch.side_effect = [
+            {"file": "A.java", "content": "AAA", "lineCount": 3},
+            {"file": "B.java", "content": "BBB", "lineCount": 3}]
+        out = ua_query.cmd_source(ua_query.parse_args(
+            ["source", "--service", "svc", "--file", "A.java,B.java"]))
+        assert [f["file"] for f in out["files"]] == ["A.java", "B.java"]
+        assert out["files"][0]["content"] == "AAA"
+
+    @patch("_helpers.fetch_json")
+    def test_inline_range_sent_as_params(self, mock_fetch):
+        mock_fetch.side_effect = [
+            {"file": "A.java", "content": "x", "lineCount": 1},
+            {"file": "B.java", "content": "y", "lineCount": 1}]
+        ua_query.cmd_source(ua_query.parse_args(
+            ["source", "--service", "svc", "--file", "A.java:10-20,B.java"]))
+        server, path, params = mock_fetch.call_args_list[0][0][:3]
+        assert path == "/api/source"
+        assert params["start"] == "10" and params["end"] == "20"
+
+    @patch("_helpers.fetch_json")
+    def test_per_file_error_isolated(self, mock_fetch):
+        mock_fetch.side_effect = [RuntimeError("HTTP 404: nope"),
+                                  {"file": "B.java", "content": "ok", "lineCount": 1}]
+        out = ua_query.cmd_source(ua_query.parse_args(
+            ["source", "--service", "svc", "--file", "A.java,B.java"]))
+        assert out["files"][0]["error"].startswith("HTTP 404")
+        assert out["files"][1]["content"] == "ok"
+
+    @patch("_helpers.fetch_json")
+    def test_single_file_shape_unchanged(self, mock_fetch):
+        mock_fetch.return_value = {"file": "A.java", "content": "x", "lineCount": 1}
+        out = ua_query.cmd_source(ua_query.parse_args(
+            ["source", "--service", "svc", "--file", "A.java"]))
+        assert out == {"file": "A.java", "content": "x", "lineCount": 1}
