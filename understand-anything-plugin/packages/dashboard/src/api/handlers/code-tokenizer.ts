@@ -21,6 +21,7 @@ export function codeTokenize(text: string): string[] {
   for (const part of parts) {
     if (!part) continue
     const lower = part.toLowerCase()
+    // eslint-disable-next-line no-control-regex -- \x00-\x7F range intentionally matches full ASCII set including NUL
     if (lower.length >= 2 && /^[\x00-\x7F]+$/.test(lower)) {
       tokens.push(lower)
     }

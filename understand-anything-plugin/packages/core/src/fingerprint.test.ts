@@ -2,9 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   extractFileFingerprint,
   compareFingerprints,
-  contentHash,
   type FileFingerprint,
-  type ClassFingerprint,
 } from "./fingerprint.js";
 import type { StructuralAnalysis } from "./types.js";
 

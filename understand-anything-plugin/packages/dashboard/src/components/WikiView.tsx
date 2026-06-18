@@ -876,7 +876,7 @@ export default function WikiView() {
   const handleMermaidNodeClick = useCallback(
     (label: string) => {
       const services = wikiTopology?.services ?? [];
-      const sanitize = (s: string) => s.replace(/["\[\](){}|<>#&]/g, " ").trim();
+      const sanitize = (s: string) => s.replace(/["[\](){}|<>#&]/g, " ").trim();
       const match = services.find((s) => s.name === label || sanitize(s.name) === label);
       if (match) {
         handleSelect({ type: "service", id: match.name, service: match.name });

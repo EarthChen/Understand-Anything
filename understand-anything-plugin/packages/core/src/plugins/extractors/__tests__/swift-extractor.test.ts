@@ -1,9 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { SwiftExtractor } from "../swift-extractor.js";
-
-const require = createRequire(import.meta.url);
 
 let Parser: any;
 let Language: any;

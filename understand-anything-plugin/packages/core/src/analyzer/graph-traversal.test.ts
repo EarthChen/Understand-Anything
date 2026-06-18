@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { traverseNeighbors } from "./graph-traversal.js";
-import type { KnowledgeGraph, GraphNode, GraphEdge } from "../types.js";
+import type { KnowledgeGraph, GraphEdge } from "../types.js";
 
 function makeGraph(nodes: string[], edges: Array<[string, string, string]>): KnowledgeGraph {
   return {
