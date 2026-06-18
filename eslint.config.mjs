@@ -53,4 +53,19 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },
+  {
+    files: ['**/skills/**/workflow.js'],
+    languageOptions: {
+      globals: {
+        agent: 'readonly',
+        parallel: 'readonly',
+        pipeline: 'readonly',
+        log: 'readonly',
+        phase: 'readonly',
+        args: 'readonly',
+        budget: 'readonly',
+        workflow: 'readonly',
+      },
+    },
+  },
 );
