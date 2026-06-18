@@ -17,6 +17,11 @@ export default defineConfig({
     ],
     include: ["src/**/__tests__/**/*.test.{ts,tsx}"],
     setupFiles: ["src/__tests__/setup-dom.ts"],
+    server: {
+      deps: {
+        inline: ["zustand"],
+      },
+    },
     // Force single React instance — pnpm workspace creates two copies
     // (repo-level and plugin-level) which causes "Invalid hook call" errors.
     // Paths are validated at startup by vitest-react-aliases.ts.
