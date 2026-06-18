@@ -89,15 +89,28 @@ python ua_query.py trace --service SERVICE --query "keyword" --source --grouped
 
 ## Agent Efficiency Rules
 
-1. **Prefer `ask` for business questions**: One command replaces 5+ individual calls.
-2. **Batch CLI calls**: Combine multiple CLI commands into ONE Shell call using `&&`.
-3. **Expand keywords before trace**: Always provide 2-4 comma-separated variants (original + English + synonym).
-4. **Use `--format md`** when the output will be read by an agent (not parsed as JSON).
-5. **Use `--source`** for any answer that will be presented as factual to the user.
-6. **RRF is default for trace** — `trace` uses `fusion=rrf` automatically.
-7. **Use server-side filters**: Pass `--type`/`--tag` to `kg --search` and `--type` to `trace` instead of post-filtering results client-side. Reduces payload and improves accuracy.
-8. **Use `--q` for structure fuzzy search**: `structure --q "getUser"` is faster and more accurate than iterating `--annotation`/`--param-type` separately.
-9. **Paginate large results**: Use `--offset N` with `--limit` for large result sets instead of fetching everything.
+**Goal: answer in the fewest tool calls.** Reach for the call-reducing patterns first, then pick the right command and flags.
+
+**Minimize tool calls**
+
+1. **Prefer `ask` for business questions** — one command replaces 5+ individual calls (auto-discover → trace → wiki → domain → source-verify).
+2. **Batch known reads into ONE call** — once you've located the specific files/symbols (from a search/toc/trace), read them together, not one call each: `source --file "A.java:1-60,B.java,C.java"` (per-file line ranges; a bad path is isolated as a per-file `error`, the rest still return → `{files:[…]}`) and `structure --symbol "A,B,C" --source` (→ `{symbols:[…]}`). N calls → 1.
+3. **Chain mixed commands with `&&`** — when you genuinely need *different* commands, combine them into ONE shell call. Prefer a native batch flag (rule 2) when the calls differ only by file/symbol; `&&` is the fallback for heterogeneous commands.
+4. **Expand keywords before trace** — pass 2-4 comma-separated variants in a single `--query "中文,English,CamelCase"`; multi-keyword parallel search eliminates retry loops.
+
+> Requests are sent as POST, so long keyword/file lists and large batches have **no URL-length limit** — batch freely.
+
+**Pick the right command + flags**
+
+5. **Use `--q` for structure fuzzy search** — `structure --q "getUser"` beats iterating `--annotation`/`--param-type` separately.
+6. **Use server-side filters** — pass `--type`/`--tag` to `kg --search` and `--type` to `trace` instead of post-filtering client-side; smaller payload, better accuracy.
+7. **Paginate large result sets** — `--offset N` with `--limit` instead of fetching everything.
+
+**Output quality**
+
+8. **Use `--format md`** when an agent will read the output (not parse JSON).
+9. **Use `--source`** (or `ask --depth full`) for anything presented to the user as factual.
+10. **RRF is trace's default fusion** — `trace` applies `fusion=rrf` automatically, no flag needed.
 
 ---
 
@@ -108,8 +121,8 @@ python ua_query.py trace --service SERVICE --query "keyword" --source --grouped
 | `ask` | **Start here for business questions.** Auto-discover → trace → wiki → domain → source-verify | This file |
 | `trace` | Search→neighbors→source in one call (with optional wiki/domain/verify/grouped) | [kg-trace.md](docs/kg-trace.md#trace--aggregated-searchneighborssource-recommended-for-agents) |
 | `kg` | Source-level KG: classes, calls, RPC, file annotations, file summary | [kg-trace.md](docs/kg-trace.md#kg--knowledge-graph-queries) |
-| `structure` | Code structure: signatures, annotations, types, cross-file symbol search + source | [structure-commands.md](docs/structure-commands.md) |
-| `source` | Source content: full-text search (`--search`), file read by path/line range (`--file`); `--limit N` caps search results (default 20, max 50) | [source-code.md](docs/source-code.md) |
+| `structure` | Code structure: signatures, annotations, types, cross-file symbol search + source (`--symbol`, **comma-separate for many symbols in one call**) | [structure-commands.md](docs/structure-commands.md) |
+| `source` | Source content: full-text search (`--search`), file read by path/line range (`--file`, **comma-separate to read many files in one call**); `--limit N` caps search results (default 20, max 50) | [source-code.md](docs/source-code.md) |
 | `impact` | Server-side BFS impact analysis from a symbol (depth 1–10) | [graph-analysis.md](docs/graph-analysis.md#impact--transitive-impact-analysis) |
 | `callers` | Who calls this symbol? (inbound `calls` edges) | [graph-analysis.md](docs/graph-analysis.md#callers--callees--call-graph-navigation) |
 | `callees` | What does this symbol call? (outbound `calls` edges) | [graph-analysis.md](docs/graph-analysis.md#callers--callees--call-graph-navigation) |
@@ -326,6 +339,7 @@ The CLI uses `http://172.18.228.71:3001` as the default API server.
 - Override with `UNDERSTAND_SERVER` environment variable or `--server` flag.
 - If the server is unreachable, the CLI exits with code 2 and prints startup instructions.
 - The agent should NOT attempt to auto-start the server — report the error to the user.
+- The CLI sends **all** requests via HTTP POST (JSON body); the server accepts both GET and POST on every route. This removes URL-length limits and query-string encoding edge cases.
 
 ---
 
@@ -369,6 +383,7 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "Where is X implemented?" / "X在哪里实现？" | `trace --auto-discover --query "X,English" --source` | Auto-locates service + source; empty? try `source --search` |
 | "Concept not in KG?" / "KG搜不到X？" | `ask --query "X" --depth full` | Returns `structureFallback`, `sourceFallback`, or `traceHint` automatically |
 | "Show me code for X" / "X方法的源码" | `structure --service S --symbol X --source` | Precise symbol + source |
+| "Show me code for X, Y, Z" / "X、Y、Z的源码" | `structure --service S --symbol "X,Y,Z" --source` | **Batch — many symbols in ONE call** → `{symbols:[…]}` (prefer over one call each) |
 | "Read file F" / "读取文件F" | `kg --service S --file F` | Full file content |
 | "Read lines 100-200 of F" / "读F的100-200行" | `kg --service S --file F --start 100 --end 200` | Line range read |
 | "Methods in file F" / "文件F有哪些方法？" | `kg --service S --file F --toc` | Method index (cheap, no source) |
@@ -377,6 +392,7 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "Search source for timeout" / "源码中搜索timeout" | `source --service S --search "timeout"` | Full-text content search (replaces `structure --grep`) |
 | "Config timeout value?" / "配置中的超时设置？" | `source --service S --search "timeout" --path "*.yml"` | Config file content search |
 | "Read source file by path" / "按路径读源码" | `source --service S --file PATH [--start N --end M]` | Read source code by path and line range |
+| "Read several files at once" / "一次读多个文件" | `source --service S --file "A.java:1-60,B.java,C.java"` | **Batch — many files in ONE call**, optional per-file line ranges, failed paths isolated → `{files:[…]}` (prefer over one call each) |
 | **Structure & Type Analysis** |||
 | "Who implements interface IX?" / "哪些类实现了IX？" | `structure --service S --implementors IX` | Interface implementation search |
 | "All classes with @X annotation" / "所有@X注解的类" | `structure --service S --annotation X` | Annotation batch search |

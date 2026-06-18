@@ -103,12 +103,10 @@ const SEARCH_BOOST = {
 }
 
 export class StructureIndex {
-  private service: string
   private miniSearch: MiniSearch
   private docs: StructureDoc[]
 
   constructor(service: string, data: StructuralAnalysis) {
-    this.service = service
     this.docs = this.buildDocs(service, data)
     this.miniSearch = new MiniSearch(MINI_SEARCH_OPTIONS)
     if (this.docs.length > 0) {
@@ -196,8 +194,8 @@ export class StructureIndex {
       })
     } else {
       miniResults = this.docs
-        .filter((doc) => filter(doc as Record<string, unknown>))
-        .map((doc) => ({ id: doc.id, score: 0, ...doc }))
+        .filter((doc) => filter(doc as unknown as Record<string, unknown>))
+        .map((doc) => ({ ...doc, score: 0 }))
     }
 
     let filtered = miniResults

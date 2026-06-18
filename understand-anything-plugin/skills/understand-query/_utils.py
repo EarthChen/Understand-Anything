@@ -30,9 +30,20 @@ class ServerUnavailableError(RuntimeError):
 
 
 
-def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT) -> Any:
+def fetch_json(server: str, path: str, params: dict | None = None, timeout: int = DEFAULT_TIMEOUT) -> Any:
+    """POST `params` as a JSON body to `server + path` and return parsed JSON.
+
+    POST (not GET) so large/batch requests have no URL-length ceiling and free-text
+    values never pass through query-string encoding.
+    """
+    url = f"{server.rstrip('/')}{path}"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(params or {}).encode("utf-8"),
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
     try:
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except HTTPError as e:
@@ -50,9 +61,9 @@ def fetch_json(url: str, timeout: int = DEFAULT_TIMEOUT) -> Any:
         raise RuntimeError(msg) from e
     except (TimeoutError, OSError) as e:
         if "timed out" in str(e).lower() or isinstance(e, TimeoutError):
-            raise RuntimeError(f"Request timed out ({timeout}s): {url.split('?')[0]}") from e
+            raise RuntimeError(f"Request timed out ({timeout}s): {url}") from e
         raise ServerUnavailableError(
-            f"API Server unavailable at {url.split('?')[0]}. "
+            f"API Server unavailable at {url}. "
             f"Start it with: cd understand-anything-plugin/packages/dashboard && pnpm run serve\n"
             f"Detail: {e}"
         ) from e
@@ -411,6 +422,25 @@ def _format_markdown(data: Any) -> str:
                 lines.append(f"```{lang}\n{source}\n```")
             lines.append("")
         return "\n".join(lines)
+
+    if isinstance(data, dict) and isinstance(data.get("symbols"), list):
+        slines = [f"# Symbols ({len(data['symbols'])})", ""]
+        for g in data["symbols"]:
+            slines.append(f"## {g.get('symbol', '?')}")
+            if g.get("error"):
+                slines.append(f"> error: {g['error']}")
+                slines.append("")
+                continue
+            for m in g.get("matches", []):
+                lr = m.get("lineRange", [])
+                lr_str = f"L{lr[0]}-{lr[1]}" if lr and len(lr) == 2 else ""
+                slines.append(f"### {m.get('kind', '?')} `{m.get('name', '?')}` — `{m.get('filePath', '?')}:{lr_str}`")
+                source = m.get("source")
+                if source:
+                    ext = m.get("filePath", "").rsplit(".", 1)[-1] if "." in m.get("filePath", "") else "java"
+                    slines.append(f"```{_lang_for_ext(ext)}\n{source}\n```")
+            slines.append("")
+        return "\n".join(slines)
 
     if isinstance(data, dict) and "impactRadius" in data and "affectedNodes" in data:
         center = data.get("center", {})
@@ -796,6 +826,29 @@ def _format_markdown(data: Any) -> str:
         lines = [f"# Source: {data.get('file', '?')}", f"Lines: {data.get('lineCount', '?')}", ""]
         lines.append(f"```{lang}\n{data.get('content', '')[:6000]}\n```")
         return "\n".join(lines)
+
+    if (
+        isinstance(data, dict)
+        and isinstance(data.get("files"), list)
+        and data["files"]
+        and isinstance(data["files"][0], dict)
+        and ("content" in data["files"][0] or "error" in data["files"][0])
+    ):
+        flines = [f"# Source Files ({len(data['files'])})", ""]
+        for f in data["files"]:
+            fp = f.get("file", "?")
+            if f.get("error"):
+                flines.append(f"## {fp}")
+                flines.append(f"> error: {f['error']}")
+                flines.append("")
+                continue
+            lr = f.get("lineRange")
+            lr_str = f" (lines {lr[0]}-{lr[1]})" if isinstance(lr, list) and len(lr) == 2 else ""
+            ext = fp.rsplit(".", 1)[-1] if "." in fp else "java"
+            flines.append(f"## Source: {fp}{lr_str}")
+            flines.append(f"```{_lang_for_ext(ext)}\n{f.get('content', '')[:6000]}\n```")
+            flines.append("")
+        return "\n".join(flines)
 
     # Generic dict fallback — render as structured markdown instead of raw JSON
     if isinstance(data, dict):

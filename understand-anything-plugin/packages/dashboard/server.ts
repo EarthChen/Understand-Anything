@@ -2,7 +2,7 @@ import express from "express"
 import cors from "cors"
 import { WikiDataService } from "./wiki-api"
 import { createApiRouter } from "./src/api/index"
-import { resolveProjectRoot } from "./src/api/utils"
+import { resolveProjectRoot, mergePostBody } from "./src/api/utils"
 import { warmupSearchIndex } from "./src/api/handlers/search"
 
 export interface ServerOptions {
@@ -19,6 +19,7 @@ export function createApp(opts: ServerOptions = {}) {
   }
   const router = createApiRouter()
   const app = express()
+  app.use(express.json({ limit: "5mb" }))
   const allowedOrigins = process.env.CORS_ORIGINS?.split(",").map(s => s.trim()) ?? []
   app.use(cors({
     origin: (origin, callback) => {
@@ -38,8 +39,10 @@ export function createApp(opts: ServerOptions = {}) {
   app.use(async (req, res, next) => {
     try {
       const url = new URL(req.url, `http://127.0.0.1`)
+      const searchParams = url.searchParams
+      if (req.method === "POST") mergePostBody(searchParams, req.body)
       const apiRes = await router.handle(
-        { pathname: url.pathname, searchParams: url.searchParams },
+        { pathname: url.pathname, searchParams },
         { getWikiService },
       )
       if (apiRes === null) { next(); return }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi } from "vitest"
 
 vi.mock("fs", () => {
   let mtime = 1000
@@ -42,7 +42,7 @@ vi.mock("../service-resolver", () => ({
 }))
 
 import { handleStructureSearchRequest } from "../structure"
-import type { ApiRequest, ApiContext } from "../types"
+import type { ApiRequest, ApiContext } from "../../types"
 
 function makeRequest(params: Record<string, string>): ApiRequest {
   const searchParams = new URLSearchParams(params)

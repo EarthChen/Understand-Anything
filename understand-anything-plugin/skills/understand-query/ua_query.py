@@ -7,7 +7,7 @@ import sys
 # Re-export from sub-modules so tests can import from ua_query directly
 from _utils import (
     DEFAULT_SERVER, DEFAULT_TIMEOUT, _IMPL_SUFFIXES, _CONFIG_SUFFIXES,
-    ServerUnavailableError, fetch_json, build_url,
+    ServerUnavailableError, fetch_json,
     format_output, _format_markdown, _short_type_name,
 )
 from _helpers import (
@@ -138,7 +138,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     struct.add_argument("--section-value", help="Filter by section content (content substring)")
     struct.add_argument("--q", help="Fuzzy search query (searches name, annotations, params, return type)")
     struct.add_argument("--path", help="Filter results by path pattern (substring match)")
-    struct.add_argument("--limit", type=int, default=50, help="Max results to return")
+    struct.add_argument("--limit", type=int, default=None, help="Max results to return (search default: 50; symbol-source uses the server default of 5, max 20)")
     struct.add_argument("--offset", type=int, default=0, help="Pagination offset")
     struct.add_argument("--chain", help="Traverse inheritance chain for a class name")
     struct.add_argument("--direction", choices=["up", "down"], default="up", help="Chain direction: up=superclasses, down=subclasses")

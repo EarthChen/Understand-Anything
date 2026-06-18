@@ -262,6 +262,15 @@ python ua_query.py trace --service order-svc --query "Order,订单,OrderService"
 python ua_query.py structure --service order-svc --file OrderServiceImpl.java
 ```
 
+### Batch file read (one call, fewer tool calls)
+
+Read several files at once — comma-separated, optional per-file line range:
+
+```bash
+python ua_query.py source --service S --file "A.java:1-60,B.java,C.java:20-80"
+```
+Returns `{files: [{file, lineRange, content, lineCount, error?}]}`. A single `--file` keeps the original single-file shape. A bad path is reported as a per-file `error` without failing the others.
+
 ---
 
 ## Decision Matrix: Which Tool First?

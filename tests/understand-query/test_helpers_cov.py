@@ -25,6 +25,39 @@ SERVER = "http://s"
 
 
 # ---------------------------------------------------------------------------
+# _score_node_relevance — config-suffix penalty + tag-match bonus branches
+# ---------------------------------------------------------------------------
+class TestScoreNodeRelevance:
+    def test_config_suffix_penalizes_score(self):
+        # A name ending in a _CONFIG_SUFFIXES entry (e.g. "Config") takes the
+        # elif branch and subtracts 2.0. With no other signal the score floors at 0.
+        node = {"name": "AppConfig", "type": "module"}
+        penalized = _helpers._score_node_relevance(node, "unrelated")
+        plain = _helpers._score_node_relevance({"name": "AppCore", "type": "module"}, "unrelated")
+        assert penalized < plain
+
+    def test_tag_match_adds_bonus(self):
+        # query present AND found in a tag → +4.0 over an otherwise-identical node
+        # whose tags do not contain the query.
+        with_tag = _helpers._score_node_relevance(
+            {"name": "X", "type": "module", "tags": ["billing", "order"]}, "billing"
+        )
+        without_tag = _helpers._score_node_relevance(
+            {"name": "X", "type": "module", "tags": ["shipping"]}, "billing"
+        )
+        assert with_tag == without_tag + 4.0
+
+    def test_tags_present_but_query_absent_no_bonus(self):
+        # tags present, query not in tag text → enters the `if q and tags` block
+        # but the inner `if q in tag_text` is False (no bonus).
+        scored = _helpers._score_node_relevance(
+            {"name": "X", "type": "module", "tags": ["shipping"]}, "billing"
+        )
+        no_tags = _helpers._score_node_relevance({"name": "X", "type": "module"}, "billing")
+        assert scored == no_tags
+
+
+# ---------------------------------------------------------------------------
 # _extract_code_keywords (line 69 — individual long-word branch)
 # ---------------------------------------------------------------------------
 class TestExtractCodeKeywords:
@@ -63,12 +96,14 @@ class TestSearchApi:
             fusion="rrf", type="class", tag="t", offset=5,
         )
         assert out == [{"id": "x"}]
-        url = mock_fetch.call_args[0][0]
-        assert "service=svc" in url
-        assert "fusion=rrf" in url
-        assert "type=class" in url
-        assert "tag=t" in url
-        assert "offset=5" in url
+        path_arg = mock_fetch.call_args[0][1]
+        params_arg = mock_fetch.call_args[0][2]
+        assert path_arg == "/api/search"
+        assert params_arg["service"] == "svc"
+        assert params_arg["fusion"] == "rrf"
+        assert params_arg["type"] == "class"
+        assert params_arg["tag"] == "t"
+        assert params_arg["offset"] == "5"
 
     @patch("_helpers.fetch_json")
     def test_missing_results_key_returns_empty(self, mock_fetch):
@@ -219,20 +254,21 @@ class TestFetchNeighbors:
             SERVER, "svc", "n1", direction="out", depth=2, edge_type="calls"
         )
         assert out == {"neighbors": []}
-        url = mock_fetch.call_args[0][0]
-        assert "/api/graph-query/neighbors" in url
-        assert "service=svc" in url
-        assert "node=n1" in url
-        assert "direction=out" in url
-        assert "depth=2" in url
-        assert "edgeType=calls" in url
+        path_arg = mock_fetch.call_args[0][1]
+        params_arg = mock_fetch.call_args[0][2]
+        assert path_arg == "/api/graph-query/neighbors"
+        assert params_arg["service"] == "svc"
+        assert params_arg["node"] == "n1"
+        assert params_arg["direction"] == "out"
+        assert params_arg["depth"] == "2"
+        assert params_arg["edgeType"] == "calls"
 
     @patch("_helpers.fetch_json")
     def test_no_edge_type_omits_param(self, mock_fetch):
         mock_fetch.return_value = {"neighbors": [1]}
         _helpers._fetch_neighbors(SERVER, "svc", "n1")
-        url = mock_fetch.call_args[0][0]
-        assert "edgeType" not in url
+        params_arg = mock_fetch.call_args[0][2]
+        assert "edgeType" not in params_arg
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +398,7 @@ class TestAutoDiscoverStrategy0:
             "services": [{"name": "svc-a", "dataLayers": {"kg": True}}]
         }
 
-        def fetch_side(url):
+        def fetch_side(server, path, params=None, timeout=5):
             return services_resp
 
         mock_fetch.side_effect = fetch_side
@@ -420,7 +456,7 @@ class TestAutoDiscoverStrategy0:
     @patch("_helpers.fetch_json")
     def test_strategy0_services_fetch_runtime_error_falls_through(self, mock_fetch, mock_search):
         # /api/services raises in Strategy 0 → outer except pass; then wiki resolves.
-        def fetch_side(url):
+        def fetch_side(server, path, params=None, timeout=5):
             raise RuntimeError("services down")
 
         mock_fetch.side_effect = fetch_side
@@ -484,9 +520,9 @@ class TestAutoDiscoverStrategy2:
         # wiki empty → no votes → Strategy 2 runs. platform set → /api/business/search.
         mock_search.return_value = []  # wiki + any kg empty
 
-        def fetch_side(url):
-            assert "/api/business/search" in url
-            assert "platform=android" in url
+        def fetch_side(server, path, params=None, timeout=5):
+            assert path == "/api/business/search"
+            assert params["platform"] == "android"
             return {
                 "results": [
                     {
@@ -540,10 +576,10 @@ class TestAutoDiscoverStrategy2:
         mock_search.side_effect = search_side
         with patch("_helpers.fetch_json") as mock_fetch:
             # Strategy 2b fetch + Strategy 3 services fetch.
-            def fetch_side(url):
-                if "/api/business/search" in url:
+            def fetch_side(server, path, params=None, timeout=5):
+                if path == "/api/business/search":
                     return {}  # no results
-                if "/api/services" in url:
+                if path == "/api/services":
                     return {"services": []}
                 return {}
 
@@ -563,8 +599,8 @@ class TestAutoDiscoverStrategy2b:
 
         mock_search.side_effect = search_side
 
-        def fetch_side(url):
-            if "/api/business/search" in url:
+        def fetch_side(server, path, params=None, timeout=5):
+            if path == "/api/business/search":
                 return {
                     "results": [
                         {"service": "feat-svc"},
@@ -596,11 +632,11 @@ class TestAutoDiscoverStrategy2b:
 
         calls = {"n": 0}
 
-        def fetch_side(url):
+        def fetch_side(server, path, params=None, timeout=5):
             calls["n"] += 1
-            if "/api/business/search" in url:
+            if path == "/api/business/search":
                 return {"results": []}  # Strategy 2 yields nothing
-            if "/api/services" in url:
+            if path == "/api/services":
                 return {"services": [{"name": "kg-svc", "dataLayers": {"kg": True}}]}
             return {}
 
@@ -625,9 +661,9 @@ class TestAutoDiscoverStrategy2b:
 
         captured = {}
 
-        def fetch_side(url):
-            if "/api/business/search" in url:
-                captured["url"] = url
+        def fetch_side(server, path, params=None, timeout=5):
+            if path == "/api/business/search":
+                captured["params"] = params
                 return {"results": [{"service": "feat-svc"}]}
             return {}
 
@@ -638,17 +674,17 @@ class TestAutoDiscoverStrategy2b:
         # wiki-svc has 2 votes, feat-svc (from 2b) has 2 → tie; first inserted wins.
         assert svc == "wiki-svc"
         # Confirm 2b actually ran with the platform param.
-        assert "platform=harmony" in captured["url"]
+        assert captured["params"]["platform"] == "harmony"
 
     @patch("_helpers._search_api")
     @patch("_helpers.fetch_json")
     def test_business_features_runtime_error_handled(self, mock_fetch, mock_search):
         mock_search.return_value = []  # wiki + business empty
 
-        def fetch_side(url):
-            if "/api/business/search" in url:
+        def fetch_side(server, path, params=None, timeout=5):
+            if path == "/api/business/search":
                 raise RuntimeError("features down")
-            if "/api/services" in url:
+            if path == "/api/services":
                 return {"services": []}
             return {}
 
@@ -680,10 +716,10 @@ class TestAutoDiscoverStrategy3:
 
         mock_search.side_effect = search_side
 
-        def fetch_side(url):
-            if "/api/business/search" in url:
+        def fetch_side(server, path, params=None, timeout=5):
+            if path == "/api/business/search":
                 return {}
-            if "/api/services" in url:
+            if path == "/api/services":
                 return {
                     "services": [
                         {"name": "kg-strong", "dataLayers": {"kg": True}},
@@ -711,10 +747,10 @@ class TestAutoDiscoverStrategy3:
 
         mock_search.side_effect = search_side
 
-        def fetch_side(url):
-            if "/api/business/search" in url:
+        def fetch_side(server, path, params=None, timeout=5):
+            if path == "/api/business/search":
                 return {}
-            if "/api/services" in url:
+            if path == "/api/services":
                 return {
                     "services": [
                         {"name": "err-svc", "dataLayers": {"kg": True}},
@@ -732,10 +768,10 @@ class TestAutoDiscoverStrategy3:
     def test_strategy3_services_fetch_error_returns_none(self, mock_fetch, mock_search):
         mock_search.return_value = []  # wiki + business empty
 
-        def fetch_side(url):
-            if "/api/business/search" in url:
+        def fetch_side(server, path, params=None, timeout=5):
+            if path == "/api/business/search":
                 return {}
-            if "/api/services" in url:
+            if path == "/api/services":
                 raise RuntimeError("services down")
             return {}
 
@@ -775,8 +811,8 @@ class TestFetchWikiDomain:
         mock_fetch.return_value = {"name": "Order Flow", "summary": "ok"}
         out = _helpers._fetch_wiki_domain(SERVER, "svc", "order")
         assert out["summary"] == "ok"
-        url = mock_fetch.call_args[0][0]
-        assert "/api/wiki/service/svc/domain/order-flow" in url
+        path_arg = mock_fetch.call_args[0][1]
+        assert path_arg == "/api/wiki/service/svc/domain/order-flow"
 
     @patch("_helpers._search_api")
     def test_empty_results_returns_none(self, mock_search):
@@ -916,9 +952,10 @@ class TestCmdStructureSymbol:
         out = _helpers._cmd_structure_symbol(args)
         assert out["symbol"] == "Foo"
         assert out["matches"] == [{"name": "Foo", "source": "code"}]
-        url = mock_fetch.call_args[0][0]
-        assert "/api/structure/symbol-source" in url
-        assert "pathPattern=" in url
+        path_arg = mock_fetch.call_args[0][1]
+        params_arg = mock_fetch.call_args[0][2]
+        assert path_arg == "/api/structure/symbol-source"
+        assert "pathPattern" in params_arg
 
     @patch("_helpers.fetch_json")
     def test_non_source_mode_maps_fields(self, mock_fetch):
@@ -945,9 +982,10 @@ class TestCmdStructureSymbol:
         assert m["filePath"] == "B.java"
         assert m["lineRange"] == [1, 5]
         assert m["match"] == {"score": 1}
-        url = mock_fetch.call_args[0][0]
-        assert "/api/structure/search" in url
-        assert "pathPattern" not in url
+        path_arg = mock_fetch.call_args[0][1]
+        params_arg = mock_fetch.call_args[0][2]
+        assert path_arg == "/api/structure/search"
+        assert "pathPattern" not in params_arg
 
     @patch("_helpers.fetch_json")
     def test_non_source_mode_with_path(self, mock_fetch):
@@ -959,9 +997,10 @@ class TestCmdStructureSymbol:
         )
         out = _helpers._cmd_structure_symbol(args)
         assert out == {"symbol": "P", "matches": []}
-        url = mock_fetch.call_args[0][0]
-        assert "/api/structure/search" in url
-        assert "pathPattern=lib" in url
+        path_arg = mock_fetch.call_args[0][1]
+        params_arg = mock_fetch.call_args[0][2]
+        assert path_arg == "/api/structure/search"
+        assert params_arg["pathPattern"] == "lib/**"
 
     @patch("_helpers.fetch_json")
     def test_limit_floored_to_one(self, mock_fetch):
@@ -972,8 +1011,8 @@ class TestCmdStructureSymbol:
         )
         out = _helpers._cmd_structure_symbol(args)
         assert out["matches"] == []
-        url = mock_fetch.call_args[0][0]
-        assert "limit=1" in url
+        params_arg = mock_fetch.call_args[0][2]
+        assert params_arg["limit"] == "1"
 
     @patch("_helpers.fetch_json")
     def test_source_mode_no_path(self, mock_fetch):
@@ -984,9 +1023,82 @@ class TestCmdStructureSymbol:
         )
         out = _helpers._cmd_structure_symbol(args)
         assert out["symbol"] == "Z"
-        url = mock_fetch.call_args[0][0]
-        assert "/api/structure/symbol-source" in url
-        assert "pathPattern" not in url
+        path_arg = mock_fetch.call_args[0][1]
+        params_arg = mock_fetch.call_args[0][2]
+        assert path_arg == "/api/structure/symbol-source"
+        assert "pathPattern" not in params_arg
+
+    @patch("_helpers.fetch_json")
+    def test_source_mode_omits_limit_when_unset(self, mock_fetch):
+        # When --limit is not passed (None), the symbol-source request must NOT send
+        # a limit param so the server applies its per-endpoint default (5). Sending
+        # the old CLI default (50) made the endpoint reject it: it caps limit at 20
+        # and returns HTTP 400 "limit must be between 1 and 20".
+        mock_fetch.return_value = {"results": []}
+        args = argparse.Namespace(
+            server=SERVER, service="svc", symbol="GuildProfitSettlement",
+            limit=None, path=None, source=True,
+        )
+        _helpers._cmd_structure_symbol(args)
+        path_arg = mock_fetch.call_args[0][1]
+        params_arg = mock_fetch.call_args[0][2]
+        assert path_arg == "/api/structure/symbol-source"
+        assert "limit" not in params_arg
+
+    @patch("_helpers.fetch_json")
+    def test_source_mode_forwards_explicit_limit(self, mock_fetch):
+        # An explicit --limit is still honored on the symbol-source path.
+        mock_fetch.return_value = {"results": []}
+        args = argparse.Namespace(
+            server=SERVER, service="svc", symbol="X",
+            limit=10, path=None, source=True,
+        )
+        _helpers._cmd_structure_symbol(args)
+        params_arg = mock_fetch.call_args[0][2]
+        assert params_arg["limit"] == "10"
+
+    @patch("_helpers.fetch_json")
+    def test_non_source_mode_unset_limit_defaults_to_50(self, mock_fetch):
+        # The non-source symbol search hits /api/structure/search (cap 500); an unset
+        # --limit falls back to the historical default of 50.
+        mock_fetch.return_value = {"results": []}
+        args = argparse.Namespace(
+            server=SERVER, service="svc", symbol="X",
+            limit=None, path=None, source=False,
+        )
+        _helpers._cmd_structure_symbol(args)
+        path_arg = mock_fetch.call_args[0][1]
+        params_arg = mock_fetch.call_args[0][2]
+        assert path_arg == "/api/structure/search"
+        assert params_arg["limit"] == "50"
+
+    @patch("_helpers.fetch_json")
+    def test_multi_symbol_returns_groups(self, mock_fetch):
+        mock_fetch.side_effect = [
+            {"results": [{"name": "Foo", "source": "f"}]},
+            {"results": [{"name": "Bar", "source": "b"}]}]
+        args = argparse.Namespace(server=SERVER, service="svc", symbol="Foo,Bar",
+                                  limit=None, path=None, source=True)
+        out = _helpers._cmd_structure_symbol(args)
+        assert [g["symbol"] for g in out["symbols"]] == ["Foo", "Bar"]
+        assert out["symbols"][0]["matches"][0]["name"] == "Foo"
+
+    @patch("_helpers.fetch_json")
+    def test_multi_symbol_error_isolated(self, mock_fetch):
+        mock_fetch.side_effect = [RuntimeError("HTTP 400: limit"), {"results": []}]
+        args = argparse.Namespace(server=SERVER, service="svc", symbol="Foo,Bar",
+                                  limit=None, path=None, source=True)
+        out = _helpers._cmd_structure_symbol(args)
+        assert out["symbols"][0]["error"].startswith("HTTP 400")
+        assert out["symbols"][1] == {"symbol": "Bar", "matches": []}
+
+    @patch("_helpers.fetch_json")
+    def test_single_symbol_shape_unchanged(self, mock_fetch):
+        mock_fetch.return_value = {"results": [{"name": "Foo", "source": "f"}]}
+        args = argparse.Namespace(server=SERVER, service="svc", symbol="Foo",
+                                  limit=None, path=None, source=True)
+        out = _helpers._cmd_structure_symbol(args)
+        assert out == {"symbol": "Foo", "matches": [{"name": "Foo", "source": "f"}]}
 
 
 # ---------------------------------------------------------------------------
@@ -1023,3 +1135,18 @@ class TestKgFileToc:
         args = argparse.Namespace(file="nonexistent.java")
         out = _helpers._kg_file_toc(args, {"nodes": [{"name": "X", "filePath": "a.py"}]})
         assert out == []
+
+
+# ---------------------------------------------------------------------------
+# _parse_file_specs
+# ---------------------------------------------------------------------------
+class TestParseFileSpecs:
+    def test_plain_paths(self):
+        assert _helpers._parse_file_specs("a.java,b.java") == [
+            ("a.java", None, None), ("b.java", None, None)]
+    def test_inline_ranges_and_mixed(self):
+        assert _helpers._parse_file_specs("a.java:1-60,b.java,c.java:20-80") == [
+            ("a.java", 1, 60), ("b.java", None, None), ("c.java", 20, 80)]
+    def test_strips_and_skips_empty(self):
+        assert _helpers._parse_file_specs(" a.java , ,b.java ") == [
+            ("a.java", None, None), ("b.java", None, None)]
