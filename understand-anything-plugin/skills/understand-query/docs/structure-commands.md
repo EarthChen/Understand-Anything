@@ -60,6 +60,12 @@ python ua_query.py structure --service S --symbol OrderService --limit 10
 
 Returns structural detail per match: `filePath`, `name`, `kind`, `lineRange`, `match`.
 
+`--symbol` also accepts **comma-separated names** to look up multiple symbols in one call — returns `{symbols: [{symbol, matches}]}` instead of a flat list. Example:
+
+```bash
+python ua_query.py structure --service S --symbol "GuildProfitSettlementStaticsService,GuildDomainRepo"
+```
+
 ### Symbol search with source code
 
 Find the symbol AND read its implementation in one call:

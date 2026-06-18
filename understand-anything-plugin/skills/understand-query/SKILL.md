@@ -326,6 +326,7 @@ The CLI uses `http://172.18.228.71:3001` as the default API server.
 - Override with `UNDERSTAND_SERVER` environment variable or `--server` flag.
 - If the server is unreachable, the CLI exits with code 2 and prints startup instructions.
 - The agent should NOT attempt to auto-start the server — report the error to the user.
+- The CLI sends **all** requests via HTTP POST (JSON body); the server accepts both GET and POST on every route. This removes URL-length limits and query-string encoding edge cases.
 
 ---
 
