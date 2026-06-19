@@ -629,8 +629,8 @@ Assemble the full KnowledgeGraph JSON object:
   },
   "nodes": [<all nodes from assembled-graph.json after Phase 4 review>],
   "edges": [<all edges from assembled-graph.json after Phase 4 review>],
-  "layers": [<layers from Phase 4>],
-  "tour": [<steps from Phase 5>]
+  "layers": [<layers from Phase 5>],
+  "tour": [<steps from Phase 6>]
 }
 ```
 
@@ -645,7 +645,7 @@ Assemble the full KnowledgeGraph JSON object:
 
    If structural validation fails (missing fields, dangling refs), automatically normalize and rewrite the graph into this shape before saving. If the graph still fails final validation after the normalization pass, save it with warnings but mark dashboard auto-launch as skipped.
 
-   **CRITICAL:** If `layers` or `tour` is empty after Phase 4/5, this is a **blocking error**, not a warning. Re-run the missing phase(s) before proceeding to Phase 7.
+   **CRITICAL:** If `layers` or `tour` is empty after Phase 5/6, this is a **blocking error**, not a warning. Re-run the missing phase(s) before proceeding to Phase 7.
 
 2. Write the assembled graph to `$PROJECT_ROOT/.understand-anything/intermediate/assembled-graph.json`.
 

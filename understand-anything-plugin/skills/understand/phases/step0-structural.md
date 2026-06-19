@@ -145,69 +145,10 @@ Report: `Rule engine complete. $TOTAL_RULE_EDGES annotation edges.`
 The file-analyzer agents expect per-batch extraction and rule engine files. Split the global results into per-batch subset files so downstream steps (dispatch planner, file-analyzer, quality gate, merge) remain unchanged.
 
 ```bash
-python3 - "$PROJECT_ROOT" << 'PYSCRIPT'
-import json, sys, os
-project_root = sys.argv[1]
-tmp_dir = os.path.join(project_root, ".understand-anything", "tmp")
-batches_path = os.path.join(project_root, ".understand-anything", "intermediate", "batches.json")
-
-def extract_path_from_node_id(node_id):
-    """Extract file path from node ID like 'class:path/to/file:ClassName'."""
-    if ":" not in node_id:
-        return node_id
-    parts = node_id.split(":", 1)
-    rest = parts[1]
-    if ":" in rest:
-        return rest.rsplit(":", 1)[0]
-    return rest
-
-# Load global extraction results (file-path-indexed format)
-with open(os.path.join(tmp_dir, "structural-analysis.json"), encoding="utf-8") as f:
-    extraction_by_path = json.load(f)
-
-# Load global rule engine results
-rule_path = os.path.join(tmp_dir, "rule-engine-results.json")
-with open(rule_path, encoding="utf-8") as f:
-    rule_data = json.load(f)
-all_edges = rule_data.get("edges", [])
-all_unresolved = rule_data.get("unresolved", [])
-
-# Load batches
-batches = json.load(open(batches_path))["batches"]
-
-for batch in batches:
-    batch_index = batch["batchIndex"]
-    batch_files = batch.get("files", batch.get("batchFiles", []))
-    batch_paths = sorted(f["path"] for f in batch_files)
-    batch_path_set = set(batch_paths)
-
-    # Filter extraction results for this batch
-    batch_results = [extraction_by_path[p] for p in batch_paths if p in extraction_by_path]
-    extract_out = {
-        "scriptCompleted": True,
-        "filesAnalyzed": len(batch_results),
-        "filesSkipped": [p for p in batch_paths if p not in extraction_by_path],
-        "results": [{"path": p, **extraction_by_path[p]} for p in batch_paths if p in extraction_by_path],
-    }
-    extract_path = os.path.join(tmp_dir, f"ua-file-extract-results-{batch_index}.json")
-    with open(extract_path, "w", encoding="utf-8") as f:
-        json.dump(extract_out, f, ensure_ascii=False)
-
-    # Filter rule engine edges for this batch (match by source path)
-    batch_edges = [e for e in all_edges if extract_path_from_node_id(e.get("source", "")) in batch_path_set]
-    # Filter unresolved by file field (not all unresolved — each batch gets its own subset)
-    batch_unresolved = [u for u in all_unresolved if u.get("file", "") in batch_path_set]
-    rule_out = {"edges": batch_edges, "unresolved": batch_unresolved,
-                "stats": {"totalEdges": len(batch_edges), "unresolved": len(batch_unresolved)}}
-    rule_out_path = os.path.join(tmp_dir, f"ua-rule-engine-results-{batch_index}.json")
-    with open(rule_out_path, "w", encoding="utf-8") as f:
-        json.dump(rule_out, f, ensure_ascii=False)
-
-print(f"  Split into {len(batches)} batch subsets (extraction + rule engine)")
-PYSCRIPT
+node <SKILL_DIR>/split-batch-results.mjs $PROJECT_ROOT
 ```
 
-Report: `[Phase 2/7] Structural extraction complete for <totalBatches> batches. Computing dispatch plan...`
+Report: `[Phase 2/8] Structural extraction complete for <totalBatches> batches. Computing dispatch plan...`
 
 ## Step 0d — Compute dispatch plan (fusion groups + quality gate)
 
@@ -225,3 +166,17 @@ Read the output at `$PROJECT_ROOT/.understand-anything/tmp/dispatch-plan.json`. 
 If the script fails, fall back to 1:1 dispatch (one subagent per batch, up to 10 concurrent).
 
 Report: `Dispatch plan: <totalBatches> batches → <actualGroups> groups (<wavesNeeded> wave(s), max 10 concurrent)`
+
+## Step 0e — Generate per-group config and batch slice files
+
+Run the deterministic prompt generator to create lightweight config files and per-group batch slices for file-analyzer agents:
+
+```bash
+node <SKILL_DIR>/gen-dispatch-prompts.mjs $PROJECT_ROOT <SKILL_DIR> "$LANGUAGE_DIRECTIVE"
+```
+
+The script reads `dispatch-plan.json` and `scan-result.json`, then writes to `$PROJECT_ROOT/.understand-anything/tmp/dispatch-prompts/`:
+- `group-<groupIndex>.json` — config file with project metadata, batchIndices, and file paths
+- `batches-group-<groupIndex>.json` — pre-sliced batch data containing only the batches for this group
+
+The batch slice files allow file-analyzer agents to read only their assigned batches instead of loading the entire `batches.json`.

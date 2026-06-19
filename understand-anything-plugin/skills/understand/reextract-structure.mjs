@@ -15,7 +15,7 @@
 
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -55,6 +55,7 @@ const importMapOutputPath = join(tmpDir, 'import-map-output.json');
 const extractInputPath = join(tmpDir, 'extract-input.json');
 const extractOutputPath = join(tmpDir, 'ua-extract-results-full.json');
 const structuralOutputPath = join(extractDir, 'structural-analysis.json');
+const tmpStructuralPath = join(tmpDir, 'structural-analysis.json');
 
 console.log('=== 重新提取结构信息 ===');
 console.log(`项目根目录: ${projectRoot}`);
@@ -205,8 +206,11 @@ for (const r of results) {
   }
 }
 
-writeFileSync(structuralOutputPath, JSON.stringify(merged, null, 2));
+const structuralJson = JSON.stringify(merged, null, 2);
+writeFileSync(structuralOutputPath, structuralJson);
+writeFileSync(tmpStructuralPath, structuralJson);
 console.log(`  写入: ${structuralOutputPath} (${Object.keys(merged).length} 个文件)`);
+console.log(`  写入: ${tmpStructuralPath} (副本)`);
 
 // ---------------------------------------------------------------------------
 // Step 5: build-source-index.mjs — source search index
@@ -251,9 +255,15 @@ console.log(`  类: ${Object.entries(summaryKinds).map(([k, v]) => `${k}=${v}`).
 console.log(`  函数: ${summaryFunctions}  |  导出: ${summaryExports}  |  端点: ${summaryEndpoints}`);
 
 // ---------------------------------------------------------------------------
-// Step 7: Cleanup — tmp/ is preserved for downstream pipeline use.
-// The pipeline's Phase 8 (Save) handles cleanup of intermediate and tmp files.
+// Step 7: Cleanup
+// In pipeline mode (--skip-scan), tmp/ is preserved for downstream batch-split
+// and dispatch use; Phase 8 (Save) handles final cleanup.
+// In standalone mode, clean up tmp/ now since no Phase 8 will run.
 // ---------------------------------------------------------------------------
+if (!skipScan) {
+  rmSync(tmpDir, { recursive: true, force: true });
+  console.log(`  清理 tmp/ 目录`);
+}
 
 console.log('\n=== 完成 ===');
 console.log(`  structural-analysis.json → ${structuralOutputPath}`);

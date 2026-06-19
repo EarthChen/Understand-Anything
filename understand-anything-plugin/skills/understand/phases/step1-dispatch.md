@@ -15,53 +15,39 @@ For remaining batches, use the fusion groups from `dispatch-plan.json` (Step 0d)
 
 If `dispatch-plan.json` is unavailable (Step 0d failed), fall back to 1:1 dispatch (one subagent per batch, up to 10 concurrent).
 
-For each fusion group, dispatch a subagent using the `file-analyzer` agent definition (at `agents/file-analyzer.md`). Append the following additional context:
+For each fusion group, dispatch a subagent using the `file-analyzer` agent definition (at `agents/file-analyzer.md`). **Use the following schema to enforce structured output:**
 
-> **Additional context from main session:**
->
-> Project: `<projectName>` — `<projectDescription>`
-> Languages: `<languages from Phase 1>`
->
-> $LANGUAGE_DIRECTIVE
+```json
+{
+  "type": "object",
+  "required": ["nodesCount", "edgesCount", "batchesProcessed"],
+  "properties": {
+    "nodesCount": { "type": "number" },
+    "edgesCount": { "type": "number" },
+    "batchesProcessed": { "type": "number" },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  }
+}
+```
 
-Dispatch prompt template — fill in values per fusion group. When a group contains multiple batches, concatenate all batch sections into the same prompt:
+Dispatch prompt template — fill in values per fusion group. **Prompt contains ONLY paths and metadata — no embedded batch data.** The file-analyzer reads batches.json itself at runtime.
 
 > Analyze these files and produce GraphNode and GraphEdge objects.
+>
 > Project root: `$PROJECT_ROOT`
-> Project: `<projectName>`
+> Project: `<projectName>` — `<projectDescription>`
 > Languages: `<languages>`
-> Skill directory (for bundled scripts): `<SKILL_DIR>`
+> Skill directory: `<SKILL_DIR>`
+> $LANGUAGE_DIRECTIVE
 >
 > **You are processing fusion group <groupIndex> containing <N> batch(es): [<batchIndices>].**
-> **You MUST write one output file per batch** — `batch-<batchIndex>.json` or `batch-<batchIndex>-part-<k>.json` for split mode.
-
-For EACH batch in the fusion group, include a batch section:
-
-> ---
-> ### Batch <batchIndex>/<totalBatches>
-> **Extraction results (already generated — do NOT re-run extract-structure.mjs):** `$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json`
-> **Rule engine edges (already generated — do NOT re-run rule engine):** Read from `$PROJECT_ROOT/.understand-anything/tmp/ua-rule-engine-results-<batchIndex>.json`
-> **Output:** write to `$PROJECT_ROOT/.understand-anything/intermediate/batch-<batchIndex>.json` (single-file mode) OR `batch-<batchIndex>-part-<k>.json` (split mode, per Step B of your output protocol).
+> **Total batches in project: <totalBatches>**
 >
-> Pre-resolved import data for this batch (use directly — do NOT re-resolve imports from source):
-> ```json
-> <batchImportData JSON from batches.json[i].batchImportData>
-> ```
+> **Batch data:** Read from `<batchSlicePath>` — pre-sliced for this group (Phase 0 of file-analyzer.md)
+> **Extraction results:** `$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json` (one per batch)
+> **Rule engine edges:** `$PROJECT_ROOT/.understand-anything/tmp/ua-rule-engine-results-<batchIndex>.json` (one per batch)
 >
-> Cross-batch neighbors with their exported symbols (confidence boost for cross-batch edges):
-> ```json
-> <neighborMap JSON from batches.json[i].neighborMap>
-> ```
->
-> Rule engine edges for this batch (annotation→edge mapping, meta-annotation resolution, call graph resolution):
-> ```json
-> <Read from $PROJECT_ROOT/.understand-anything/tmp/ua-rule-engine-results-<batchIndex>.json — include the full "edges" and "unresolved" arrays>
-> ```
->
-> Files to analyze in this batch (every entry MUST be passed through to `batchFiles` with all four fields — `path`, `language`, `sizeLines`, `fileCategory`):
-> 1. `<path>` (<sizeLines> lines, language: `<language>`, fileCategory: `<fileCategory>`)
-> 2. `<path>` (<sizeLines> lines, language: `<language>`, fileCategory: `<fileCategory>`)
-> ...
+> **You MUST write one output file per batch** — `batch-<batchIndex>.json` or `batch-<batchIndex>-part-<k>.json` for split mode. Write to `$PROJECT_ROOT/.understand-anything/intermediate/`.
 
 **Cross-batch edge generation in fusion groups.** When a fusion group contains multiple batches, the file-analyzer can see files from all batches in the group. Actively generate `depends_on`, `calls`, and `imports` edges for cross-batch file relationships within the same fusion group — for example, if batch 3 contains `Manager.m` and batch 7 contains `Manager.h`, emit a `depends_on` edge from the `.m` file to the `.h` file. Write cross-batch edges to the **source file's** batch output file (i.e., the edge goes into `batch-<sourceBatchIndex>.json`). This significantly improves cross-module relationship coverage for languages with header/implementation separation (C, C++, Objective-C) and module-level imports.
 

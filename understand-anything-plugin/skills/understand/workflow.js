@@ -61,17 +61,6 @@ const SCAN_SCHEMA = {
   },
 }
 
-const ANALYZE_SCHEMA = {
-  type: 'object',
-  required: ['nodesCount', 'edgesCount', 'batchesProcessed'],
-  properties: {
-    nodesCount:       { type: 'number' },
-    edgesCount:       { type: 'number' },
-    batchesProcessed: { type: 'number' },
-    warnings:         { type: 'array', items: { type: 'string' } },
-  },
-}
-
 const ASSEMBLE_SCHEMA = {
   type: 'object',
   required: ['issuesCount', 'autoFixed'],
@@ -345,40 +334,264 @@ Return the batch count and diagnostic info.`,
   { phase: 'Analyze', label: 'batch' }
 )
 
-// Read batches for the analyze phase
-const analyzeResult = await agent(
-  `Analyze project files and dispatch file-analyzer agents.
+// Step 1: Split global results into per-batch subsets (deterministic)
+const splitResult = await agent(
+  `Split global extraction and rule engine results into per-batch subsets.
+
+Run: node "${preflight.skillDir}/split-batch-results.mjs" "${preflight.projectRoot}"
+
+Return: success (boolean), batchesProcessed (number)`,
+  { phase: 'Analyze', label: 'split' }
+)
+
+log(`Split complete. ${splitResult.batchesProcessed || '?'} batch subsets created.`)
+
+// Step 2: Compute dispatch plan (deterministic)
+const DISPATCH_PLAN_SCHEMA = {
+  type: 'object',
+  required: ['fusionGroups'],
+  properties: {
+    fusionGroups: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['groupIndex', 'batchIndices'],
+        properties: {
+          groupIndex: { type: 'number' },
+          batchIndices: { type: 'array', items: { type: 'number' } },
+          totalLoc: { type: 'number' },
+          totalFiles: { type: 'number' },
+          estimatedTokens: { type: 'number' },
+          budgetUsage: { type: 'number' },
+        },
+      },
+    },
+  },
+}
+
+const dispatchPlanResult = await agent(
+  `Compute the dispatch plan for file-analyzer agents.
 
 Project root: ${preflight.projectRoot}
 Skill dir: ${preflight.skillDir}
-Plugin root: ${preflight.pluginRoot}
-Output language: ${preflight.outputLanguage}
-${preflight.languageDirective || ''}
 
-Structural extraction and rule engine have already completed (Phase 1.5).
-The global results are at:
-- Extraction: ${preflight.projectRoot}/.understand-anything/tmp/ua-extract-results-full.json
-- Rule engine: ${preflight.projectRoot}/.understand-anything/tmp/rule-engine-results.json
-- Batches: ${preflight.projectRoot}/.understand-anything/intermediate/batches.json
+Execute:
+\`\`\`bash
+python "${preflight.skillDir}/batch-dispatch-planner.py" --plan "${preflight.projectRoot}"
+\`\`\`
 
-Read the detailed step instructions from the phases/ subdirectory:
-1. Per-batch splitting + dispatch plan → Read ${preflight.skillDir}/phases/step0-structural.md (Step 0c.6 and 0d only)
-2. Agent dispatch + quality gate → Read ${preflight.skillDir}/phases/step1-dispatch.md
-3. Merge → Read ${preflight.skillDir}/phases/step2-merge.md
+Read the output at ${preflight.projectRoot}/.understand-anything/tmp/dispatch-plan.json
 
-For incremental updates (changed files only), read ${preflight.skillDir}/phases/incremental.md
-
-The pipeline should:
-1. Split global extraction + rule engine results into per-batch subsets (Step 0c.6)
-2. Compute dispatch plan (Step 0d)
-3. Dispatch file-analyzer agents for each batch (up to 10 concurrent)
-4. Run quality validation on each batch result
-5. Merge all batch results into assembled-graph.json
-6. Link tested_by edges
-
-Return: nodesCount, edgesCount, batchesProcessed, warnings`,
-  { schema: ANALYZE_SCHEMA, phase: 'Analyze', label: 'analyze' }
+Return the fusionGroups array with all fields (groupIndex, batchIndices, totalLoc, totalFiles, estimatedTokens, budgetUsage).`,
+  { phase: 'Analyze', label: 'dispatch-plan', schema: DISPATCH_PLAN_SCHEMA }
 )
+
+const fusionGroups = dispatchPlanResult.fusionGroups || []
+log(`Dispatch plan: ${fusionGroups.length} groups`)
+
+// Step 2.5: Generate per-group dispatch prompt files and per-group batch slices (deterministic script)
+const genPromptsResult = await agent(
+  `Generate per-group dispatch prompt files and batch slices for file-analyzer agents.
+
+Project root: ${preflight.projectRoot}
+Skill dir: ${preflight.skillDir}
+Language directive: ${preflight.languageDirective || ''}
+
+Execute this command:
+\`\`\`bash
+node "${preflight.skillDir}/gen-dispatch-prompts.mjs" "${preflight.projectRoot}" "${preflight.skillDir}" "${preflight.languageDirective || ''}"
+\`\`\`
+
+The script reads dispatch-plan.json and scan-result.json, then writes:
+1. Lightweight JSON config files (paths + metadata only) to:
+   ${preflight.projectRoot}/.understand-anything/tmp/dispatch-prompts/group-<groupIndex>.json
+2. Per-group batch slice files to:
+   ${preflight.projectRoot}/.understand-anything/tmp/dispatch-prompts/batches-group-<groupIndex>.json
+
+Return: groupsGenerated (number)`,
+  { phase: 'Analyze', label: 'gen-prompts' }
+)
+
+log(`Generated ${genPromptsResult.groupsGenerated || '?'} dispatch prompt files`)
+
+log(`Dispatching ${fusionGroups.length} file-analyzer agents...`)
+
+// Schema for file-analyzer structured response
+const FILE_ANALYZER_SCHEMA = {
+  type: 'object',
+  required: ['nodesCount', 'edgesCount', 'batchesProcessed'],
+  properties: {
+    nodesCount:       { type: 'number' },
+    edgesCount:       { type: 'number' },
+    batchesProcessed: { type: 'number' },
+    warnings:         { type: 'array', items: { type: 'string' } },
+  },
+}
+
+const MAX_CONCURRENT = 10
+const allWarnings = []
+let totalNodes = 0
+let totalEdges = 0
+let totalBatchesProcessed = 0
+
+for (let waveIdx = 0; waveIdx < fusionGroups.length; waveIdx += MAX_CONCURRENT) {
+  const wave = fusionGroups.slice(waveIdx, waveIdx + MAX_CONCURRENT)
+  const waveNum = Math.floor(waveIdx / MAX_CONCURRENT) + 1
+  const totalWaves = Math.ceil(fusionGroups.length / MAX_CONCURRENT)
+  log(`Wave ${waveNum}/${totalWaves}: dispatching ${wave.length} agents...`)
+
+  const waveResults = await parallel(
+    wave.map(group => () => {
+      const promptPath = `${preflight.projectRoot}/.understand-anything/tmp/dispatch-prompts/group-${group.groupIndex}.json`
+
+      return agent(
+        `You are a file-analyzer agent. Read the config file at "${promptPath}" — it contains project metadata, batchIndices, and file paths.
+
+Use the file-analyzer agent definition at: ${preflight.pluginRoot}/agents/file-analyzer.md
+
+Follow the agent definition to:
+1. Phase 0: Read batch data from batchSlicePath for your batchIndices
+2. Phase 1: Read extraction results from disk
+3. Phase 1.5: Read rule engine edges from disk
+4. Phase 2: Semantic analysis — produce GraphNode and GraphEdge objects
+
+Write output to $PROJECT_ROOT/.understand-anything/intermediate/batch-<batchIndex>.json (one per batch).
+
+Return the structured result: { nodesCount, edgesCount, batchesProcessed, warnings? }.`,
+        {
+          phase: 'Analyze',
+          label: `file-analyzer-${group.groupIndex}`,
+          schema: FILE_ANALYZER_SCHEMA,
+        }
+      )
+    })
+  )
+
+  const succeeded = waveResults.filter(Boolean)
+  log(`Wave ${waveNum}/${totalWaves} complete: ${succeeded.length}/${wave.length} succeeded`)
+
+  for (const result of succeeded) {
+    if (result.nodesCount) totalNodes += result.nodesCount
+    if (result.edgesCount) totalEdges += result.edgesCount
+    if (result.batchesProcessed) totalBatchesProcessed += result.batchesProcessed
+    if (result.warnings) allWarnings.push(...result.warnings)
+  }
+}
+
+log(`All ${fusionGroups.length} file-analyzer agents dispatched. Running quality validation...`)
+
+// Step 4: Quality validation with retry loop
+const QUALITY_SCHEMA = {
+  type: 'object',
+  required: ['passed', 'warned', 'failed'],
+  properties: {
+    passed:       { type: 'number' },
+    warned:       { type: 'number' },
+    failed:       { type: 'number' },
+    retryBatches: { type: 'array', items: { type: 'number' } },
+  },
+}
+const MAX_RETRIES = 2
+let qualityResult
+
+for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  qualityResult = await agent(
+    `Run batch quality validation.
+
+Project root: ${preflight.projectRoot}
+Skill dir: ${preflight.skillDir}
+
+Execute:
+\`\`\`bash
+python "${preflight.skillDir}/batch-dispatch-planner.py" --validate "${preflight.projectRoot}"
+\`\`\`
+
+Read the output at ${preflight.projectRoot}/.understand-anything/tmp/batch-validation.json.
+The result contains: summary.total, summary.passed, summary.warned, summary.failed, retryBatches[].
+
+Report the quality gate results and return: passed, warned, failed, retryBatches`,
+    { phase: 'Analyze', label: `quality${attempt > 0 ? `-retry-${attempt}` : ''}`, schema: QUALITY_SCHEMA }
+  )
+
+  log(`Quality gate${attempt > 0 ? ` (retry ${attempt})` : ''}: ${qualityResult.passed || '?'} passed, ${qualityResult.warned || '?'} warned, ${qualityResult.failed || '?'} failed`)
+
+  const retryBatches = qualityResult.retryBatches || []
+  if (retryBatches.length === 0 || attempt === MAX_RETRIES) {
+    if (retryBatches.length > 0) {
+      log(`WARNING: ${retryBatches.length} batches still failing after ${MAX_RETRIES} retries — proceeding to merge`)
+    }
+    break
+  }
+
+  // Re-dispatch failed batches: find which fusion groups contain them
+  const retryBatchSet = new Set(retryBatches)
+  const retryGroups = fusionGroups.filter(g =>
+    g.batchIndices.some(idx => retryBatchSet.has(idx))
+  )
+  log(`Retrying ${retryGroups.length} groups (${retryBatches.length} failed batches)...`)
+
+  for (let waveIdx = 0; waveIdx < retryGroups.length; waveIdx += MAX_CONCURRENT) {
+    const wave = retryGroups.slice(waveIdx, waveIdx + MAX_CONCURRENT)
+    const waveResults = await parallel(
+      wave.map(group => () => {
+        const promptPath = `${preflight.projectRoot}/.understand-anything/tmp/dispatch-prompts/group-${group.groupIndex}.json`
+        return agent(
+          `You are a file-analyzer agent. Read the config file at "${promptPath}" — it contains project metadata, batchIndices, and file paths.
+
+Use the file-analyzer agent definition at: ${preflight.pluginRoot}/agents/file-analyzer.md
+
+Follow the agent definition to:
+1. Phase 0: Read batch data from batchSlicePath for your batchIndices
+2. Phase 1: Read extraction results from disk
+3. Phase 1.5: Read rule engine edges from disk
+4. Phase 2: Semantic analysis — produce GraphNode and GraphEdge objects
+
+Write output to $PROJECT_ROOT/.understand-anything/intermediate/batch-<batchIndex>.json (one per batch).
+
+Return the structured result: { nodesCount, edgesCount, batchesProcessed, warnings? }.`,
+          { phase: 'Analyze', label: `file-analyzer-retry-${group.groupIndex}`, schema: FILE_ANALYZER_SCHEMA }
+        )
+      })
+    )
+
+    for (const result of waveResults.filter(Boolean)) {
+      if (result.nodesCount) totalNodes += result.nodesCount
+      if (result.edgesCount) totalEdges += result.edgesCount
+      if (result.batchesProcessed) totalBatchesProcessed += result.batchesProcessed
+      if (result.warnings) allWarnings.push(...result.warnings)
+    }
+  }
+}
+
+// Step 5: Merge all batch results
+const mergeResult = await agent(
+  `Merge all batch results into assembled graph.
+
+Project root: ${preflight.projectRoot}
+Skill dir: ${preflight.skillDir}
+
+Execute:
+\`\`\`bash
+python "${preflight.skillDir}/merge-batch-graphs.py" "${preflight.projectRoot}"
+\`\`\`
+
+The script reads all batch-*.json files from ${preflight.projectRoot}/.understand-anything/intermediate/
+and merges them into assembled-graph.json.
+
+Include any warnings from the script in your response.
+
+Return: nodesCount (number), edgesCount (number), warnings (array of strings)`,
+  { phase: 'Analyze', label: 'merge' }
+)
+
+log(`Merge complete. ${mergeResult.nodesCount || '?'} nodes, ${mergeResult.edgesCount || '?'} edges`)
+
+const analyzeResult = {
+  nodesCount: mergeResult.nodesCount ?? totalNodes,
+  edgesCount: mergeResult.edgesCount ?? totalEdges,
+  batchesProcessed: totalBatchesProcessed,
+  warnings: [...allWarnings, ...(mergeResult.warnings || [])],
+}
 
 log(`Phase 3 complete. Extracted ${analyzeResult.nodesCount} nodes, ${analyzeResult.edgesCount} edges`)
 
@@ -519,7 +732,7 @@ const knowledgeGraph = {
     languages: languages,
     frameworks: frameworks,
     description: projectDescription,
-    analyzedAt: new Date().toISOString(),
+    analyzedAt: '<placeholder>', // Will be set by Save agent
     gitCommitHash: preflight.commitHash,
   },
   nodes: [], // Would be populated from assembled-graph.json
@@ -654,7 +867,7 @@ kg = {
     'frameworks': scan.get('frameworks',[]),
     'analyzedAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
     'gitCommitHash': '${preflight.commitHash}',
-    'provenance': {'generationMode':'auto','completedStages':['scan','analyze','assemble','architecture','tour'],'degraded':False,'toolVersion':'1.0.0'}
+    'provenance': {'generationMode':'auto','completedStages':['scan','structural','analyze','assemble','architecture','tour'],'degraded':False,'toolVersion':'1.0.0'}
   },
   'nodes': graph.get('nodes',[]),
   'edges': graph.get('edges',[]),

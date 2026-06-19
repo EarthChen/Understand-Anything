@@ -26,13 +26,98 @@ Use natural, native-level phrasing. Keep technical terms in English when no stan
 
 ---
 
+## Summary Quality Rules (HIGHEST PRIORITY)
+
+Every node summary MUST answer "What does this do in business terms?" in one sentence (≥10 characters).
+
+### BANNED generic summaries (generating these means failure):
+- "方法 X，实现具体业务步骤" ❌
+- "方法 X，实现 Y 中的具体业务步骤" ❌
+- "类 Y，承载相关业务类型与行为" ❌
+- "类 Y，位于 Z，承载相关业务类型与行为" ❌
+- "数据传输对象 X.java，封装 API 请求/响应字段" ❌
+- "业务服务 X.java，实现核心领域逻辑与流程编排" ❌
+- "MOA/RPC 接口定义 X.java，声明对外或内部服务契约" ❌
+
+### GOOD specific summaries:
+- "检查用户亲密度是否达到挚友绑定阈值(默认500)" ✓
+- "管理挚友空间装扮素材的佩戴状态与过期回收" ✓
+- "封装家族创建请求参数：家族名、类型、封面URL、简介" ✓
+- "MOA接口：提供家族广场推荐、家族搜索、热门家族列表查询" ✓
+- "Provides date formatting helpers used across the API layer." ✓
+- "Multi-stage Docker build producing a minimal Node.js production image." ✓
+
+### How to write good summaries:
+1. **Read the source code** to understand what the function/class actually does
+2. For methods: describe WHAT business decision or action this method performs
+3. For classes: describe the DOMAIN CONCEPT and RESPONSIBILITY this class holds
+4. For DTOs/Models: list 2-3 key business fields, not just "封装字段"
+5. For interfaces/services: list the main capabilities exposed
+6. If the source has Javadoc/docstring, use its first meaningful sentence as basis
+7. Summary MUST contain at least one domain-specific keyword that aids BM25 search
+
+---
+
+## Phase 0 -- Read Batch Data from Disk
+
+Your dispatch config contains `batchSlicePath` and `batchIndices`. The orchestrator has pre-sliced the batch data for your group — you MUST read from `batchSlicePath`, NOT the full `batches.json`.
+
+### Step 1 — Read the batch slice file
+
+Read the file at `batchSlicePath`. It contains only the batches assigned to your group:
+
+```json
+{
+  "batches": [
+    {
+      "batchIndex": 1,
+      "files": [
+        {"path": "src/index.ts", "language": "typescript", "sizeLines": 150, "fileCategory": "code"}
+      ],
+      "batchImportData": {
+        "src/index.ts": ["src/utils.ts", "src/config.ts"]
+      },
+      "neighborMap": {
+        "src/index.ts": [
+          {"path": "src/utils.ts", "batchIndex": 2, "symbols": ["formatDate"]}
+        ]
+      }
+    }
+  ]
+}
+```
+
+### Step 2 — Extract your batch data
+
+For each `batchIndex` in your `batchIndices` array, find the matching batch in the slice file and extract:
+
+- **`files`** — the file list with `path`, `language`, `sizeLines`, `fileCategory`
+- **`batchImportData`** — pre-resolved import paths per file (use directly for `imports` edges)
+- **`neighborMap`** — cross-batch neighbors with exported symbols (confidence boost for cross-batch edges)
+
+Store these for use in Phase 1 and Phase 2.
+
+### Step 3 — Verify completeness
+
+For each batchIndex, verify:
+- The batch exists in the slice file
+- `files` array is non-empty
+- `batchImportData` keys cover all code files in the batch
+
+If any batch is missing or incomplete, report this as a hard failure and stop.
+
+---
+
 ## Phase 1 -- Read Pre-Computed Structural Extraction
 
-The orchestrator has already run `extract-structure.mjs` for this batch. The extraction results are available at the path specified in your dispatch prompt (`Extraction results` field).
+The orchestrator has already run `extract-structure.mjs` for each batch. The extraction results are at:
+`$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json`
 
 **CRITICAL: Do NOT re-run `extract-structure.mjs`. Do NOT write your own extraction scripts. Do NOT re-read source files for structural extraction.** The pre-computed results are the single source of truth for structure. Your job is to read the results and apply semantic judgment — not to re-derive structure.
 
 ### Step 1 — Verify extraction results exist
+
+For each batchIndex in your batchIndices:
 
 ```bash
 test -s $PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json
@@ -42,7 +127,7 @@ If the file is missing or empty, report this as a hard failure and stop. Do NOT 
 
 ### Cross-batch context (neighborMap)
 
-Your dispatch prompt includes a `neighborMap` — for each file in your batch, it lists project-internal neighbors in OTHER batches (files that import yours or that you import), with their exported symbols.
+In Phase 0 you loaded `neighborMap` from batches.json — for each file in your batch, it lists project-internal neighbors in OTHER batches (files that import yours or that you import), with their exported symbols.
 
 Use neighborMap as a confidence boost for cross-batch edges (`calls`, `related`, `inherits`, `implements` to nodes outside your batch):
 
@@ -117,16 +202,29 @@ Treat these the same as tree-sitter-derived functions for node creation (Step 2 
 
 ## Phase 1.5 -- Read Rule Engine Output
 
-Your dispatch prompt includes a `ruleEngineEdges` array — edges already produced
-by the deterministic rule engine (annotation→edge mapping, meta-annotation
-resolution, call graph resolution). You MUST NOT emit duplicate edges for the
-same (source, target, type) combination.
+For each batchIndex in your batchIndices, read the rule engine edges from:
+`$PROJECT_ROOT/.understand-anything/tmp/ua-rule-engine-results-<batchIndex>.json`
+
+The file contains:
+```json
+{
+  "edges": [
+    {"source": "file:path/to/file", "target": "...", "type": "injects", ...}
+  ],
+  "unresolved": [
+    {"file": "path/to/file", "caller": "methodName", "callee": "targetName"}
+  ],
+  "stats": { "totalEdges": 5, "unresolvedCalls": 2 }
+}
+```
+
+These edges are already produced by the deterministic rule engine (annotation→edge mapping, meta-annotation resolution, call graph resolution). You MUST NOT emit duplicate edges for the same (source, target, type) combination.
 
 ---
 
 ## Phase 2 -- Semantic Analysis
 
-Read the pre-computed extraction results from the path in your dispatch prompt (`Extraction results` field). Use these structured results as the foundation for your analysis.
+Read the pre-computed extraction results from `$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex>.json` (one per batchIndex). Use these structured results as the foundation for your analysis.
 
 **Source file reading rules:**
 - For files where `extract-structure.mjs` produced structural data (functions, classes, annotations): use the extraction results as your primary source. You MAY read the source file to understand a specific pattern the script could not capture (e.g., business logic within a function body), but do NOT re-derive structural data the script already extracted.
@@ -250,7 +348,7 @@ Using the script's structural data and file categories, create edges.
 | Edge Type | When to Create | Weight | Direction |
 |---|---|---|---|
 | `contains` | File contains a function or class node you created (use for ALL function/class nodes) | `1.0` | `forward` |
-| `imports` | File imports from another project file (use `batchImportData[filePath]` from input JSON — external imports already filtered out) | `0.7` | `forward` |
+| `imports` | File imports from another project file (use `batchImportData[filePath]` from batches.json loaded in Phase 0 — external imports already filtered out) | `0.7` | `forward` |
 | `calls` | A function in this file calls a function in another file (infer from imports + function names when confident) | `0.8` | `forward` |
 | `inherits` | A class extends another class in the project. Use `classes[].superclass` from structural data when available. | `0.9` | `forward` |
 | `implements` | A class implements an interface in the project. Use `classes[].interfaces` from structural data when available. | `0.9` | `forward` |
@@ -286,7 +384,7 @@ Using the script's structural data and file categories, create edges.
 
 For every code file in this batch:
 
-1. Read its `batchImportData[filePath]` array (provided in the input JSON).
+1. Read its `batchImportData[filePath]` array (loaded from batches.json in Phase 0).
 2. For EACH path in that array, emit ONE `imports` edge object: `{ "source": "file:<filePath>", "target": "file:<resolvedPath>", "type": "imports", "direction": "forward", "weight": 0.7 }`.
 3. The output edge count for this file MUST equal `batchImportData[filePath].length`. Not 90% of it. Not "the meaningful ones". All of them.
 
@@ -328,33 +426,6 @@ You MUST use these exact prefixes for node IDs:
 **Scope restriction:** Only produce node types listed above. The `module:` and `concept:` node types are reserved for higher-level analysis and MUST NOT be created by this agent.
 
 > **WARNING:** Node IDs MUST use the exact prefix formats shown above. Do NOT prefix IDs with the project name (e.g., `my-project:file:src/foo.ts` is WRONG). Do NOT use bare file paths without a type prefix (e.g., `src/foo.ts` is WRONG). Invalid IDs will be auto-corrected during assembly, which may cause unexpected edge rewiring.
-
-## Summary Quality Rules (MANDATORY)
-
-Every node summary MUST answer "What does this do in business terms?" in one Chinese sentence (≥10 characters).
-
-### BANNED generic summaries (generating these means failure):
-- "方法 X，实现具体业务步骤" ❌
-- "方法 X，实现 Y 中的具体业务步骤" ❌
-- "类 Y，承载相关业务类型与行为" ❌
-- "类 Y，位于 Z，承载相关业务类型与行为" ❌
-- "数据传输对象 X.java，封装 API 请求/响应字段" ❌
-- "业务服务 X.java，实现核心领域逻辑与流程编排" ❌
-- "MOA/RPC 接口定义 X.java，声明对外或内部服务契约" ❌
-
-### REQUIRED specific summaries:
-- "检查用户亲密度是否达到挚友绑定阈值(默认500)" ✓
-- "管理挚友空间装扮素材的佩戴状态与过期回收" ✓
-- "封装家族创建请求参数：家族名、类型、封面URL、简介" ✓
-- "MOA接口：提供家族广场推荐、家族搜索、热门家族列表查询" ✓
-
-### Rules:
-1. For methods: describe WHAT business decision or action this method performs
-2. For classes: describe the DOMAIN CONCEPT and RESPONSIBILITY this class holds
-3. For DTOs/Models: list 2-3 key business fields, not just "封装字段"
-4. For interfaces/services: list the main capabilities exposed
-5. If the source has Javadoc/docstring, use its first meaningful sentence as basis
-6. Summary MUST contain at least one domain-specific keyword that aids BM25 search
 
 ## Output Format
 
@@ -494,11 +565,11 @@ Use these hints for common edge patterns:
 
 ## Critical Constraints
 
-- NEVER invent file paths. Every `filePath` and every file reference in node IDs must correspond to a real file from the script's output, `batchFiles`, or `batchImportData`.
+- NEVER invent file paths. Every `filePath` and every file reference in node IDs must correspond to a real file from the script's output, `files`, or `batchImportData`.
 - NEVER create edges to nodes that do not exist — **except for RPC/MQ edges** (`provides_rpc`, `consumes_rpc`, `publishes`, `subscribes`), which are now produced by the rule engine. For `imports` edges, only use paths listed in `batchImportData`. For non-code edges (configures, documents, deploys, etc.), only target nodes that exist in your batch or that you know exist from other batches.
 - ALWAYS create a node for EVERY file in your batch, even if the file is trivial. Use the appropriate node type based on fileCategory.
 - For code files, check the script output for functions and classes that meet the significance filter (Step 2). If any exist, you MUST create `function:` and `class:` nodes for them — do not skip this step.
-- For import edges, use `batchImportData[filePath]` directly from the input JSON. Do NOT attempt to resolve import paths yourself -- the project scanner already did this deterministically.
+- For import edges, use `batchImportData[filePath]` directly from the batch slice file (loaded in Phase 0). Do NOT attempt to resolve import paths yourself -- the project scanner already did this deterministically.
 - NEVER produce duplicate node IDs within your batch.
 - NEVER create self-referencing edges (where source equals target).
 - Trust the script's structural extraction. Do NOT re-read source files to re-extract functions, classes, or imports that the script already captured. Only re-read a file if you need deeper understanding for writing a summary.
@@ -545,4 +616,20 @@ For each file written, verify:
 If validation fails on a part, do NOT silently rebuild. Respond with an explicit error stating which part failed, which edge(s) failed validation, and why. The dispatching session can then retry.
 
 **Step F — Respond.**
-Respond with ONLY a brief text summary: parts written (1 or more), total nodes/edges across all parts, any files skipped. Do NOT include JSON content in the response.
+You MUST return a structured response with this exact format:
+
+```json
+{
+  "nodesCount": 42,
+  "edgesCount": 67,
+  "batchesProcessed": 1,
+  "warnings": []
+}
+```
+
+- `nodesCount`: total nodes written across all parts
+- `edgesCount`: total edges written across all parts
+- `batchesProcessed`: number of batches processed (usually 1, may be >1 for fusion groups)
+- `warnings`: any issues encountered (empty array if none)
+
+Do NOT include the full JSON content in your response — only the summary counts.
