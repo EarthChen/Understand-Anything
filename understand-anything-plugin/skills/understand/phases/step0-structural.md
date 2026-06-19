@@ -1,10 +1,12 @@
-# Phase 2 — Step 0: Deterministic Structural Extraction
+# Phase 1.5 — Step 0: Deterministic Structural Extraction
 
 Run `extract-structure.mjs` once in **full mode** to produce a single global extraction result file. This is a deterministic step — do NOT delegate it to file-analyzer sub-agents. The extraction results are required by `merge-batch-graphs.py` for RPC/MQ annotation recovery.
 
+**This step runs BEFORE batch computation** — it reads the file list directly from `scan-result.json`.
+
 ## Step 0a — Generate full-mode input file
 
-Write a helper script that reads `batches.json`, merges all files and importData across batches, and produces a single full-mode input JSON.
+Read `scan-result.json` to build the full-mode input JSON. The scan result already contains `fileList` and `importMap` in the correct format.
 
 ```bash
 export PROJECT_ROOT
@@ -12,15 +14,11 @@ python3 - "$PROJECT_ROOT" << 'PYSCRIPT'
 import json, sys, os
 project_root = os.environ.get("PROJECT_ROOT", sys.argv[1])
 tmp_dir = os.path.join(project_root, ".understand-anything", "tmp")
-batches_path = os.path.join(project_root, ".understand-anything", "intermediate", "batches.json")
+scan_path = os.path.join(project_root, ".understand-anything", "intermediate", "scan-result.json")
 os.makedirs(tmp_dir, exist_ok=True)
-batches = json.load(open(batches_path))["batches"]
-all_files = []
-all_import_data = {}
-for batch in batches:
-    files = batch.get("files", batch.get("batchFiles", []))
-    all_files.extend(files)
-    all_import_data.update(batch.get("batchImportData", {}))
+scan = json.load(open(scan_path, encoding="utf-8"))
+all_files = scan.get("fileList") or scan.get("files", [])
+all_import_data = scan.get("importMap", {})
 inp = {
     "projectRoot": project_root,
     "fileList": all_files,
@@ -71,11 +69,14 @@ If the extraction script exits non-zero or the output file is missing/empty or `
 
 Convert the raw extraction output into a file-path-indexed dictionary. The raw format (`{ scriptCompleted, results: [...] }`) is kept as `ua-extract-results-full.json` for rule engine and debugging; all downstream steps use `structural-analysis.json` (indexed format).
 
+Also copy to `intermediate/extraction/` for downstream use (source index build, dashboard StructureIndex).
+
 ```bash
 python3 -c "
-import json, os
+import json, os, shutil
 src = os.path.join('$PROJECT_ROOT', '.understand-anything', 'tmp', 'ua-extract-results-full.json')
 dst = os.path.join('$PROJECT_ROOT', '.understand-anything', 'tmp', 'structural-analysis.json')
+final = os.path.join('$PROJECT_ROOT', '.understand-anything', 'intermediate', 'extraction', 'structural-analysis.json')
 data = json.load(open(src, encoding='utf-8'))
 merged = {}
 for r in data.get('results', []):
@@ -84,6 +85,8 @@ for r in data.get('results', []):
         merged[p] = {k: v for k, v in r.items() if k != 'path'}
 with open(dst, 'w', encoding='utf-8') as f:
     json.dump(merged, f, indent=2, ensure_ascii=False)
+os.makedirs(os.path.dirname(final), exist_ok=True)
+shutil.copy2(dst, final)
 print(f'  Converted to file-path-indexed format: {len(merged)} files')
 "
 ```

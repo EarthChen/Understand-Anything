@@ -47,6 +47,7 @@ describe('understand workflow', () => {
       expect(phaseTitles).toEqual([
         'Pre-flight',
         'Scan',
+        'Structural',
         'Analyze',
         'Assemble',
         'Architecture',

@@ -15,7 +15,7 @@
 
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -25,16 +25,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // ---------------------------------------------------------------------------
 const args = process.argv.slice(2);
 if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
-  console.log(`用法: node reextract-structure.mjs <PROJECT_ROOT> [--pull]
+  console.log(`用法: node reextract-structure.mjs <PROJECT_ROOT> [--pull] [--skip-scan]
 示例:
   node reextract-structure.mjs /path/to/project
-  node reextract-structure.mjs /path/to/project --pull`);
+  node reextract-structure.mjs /path/to/project --pull
+  node reextract-structure.mjs /path/to/project --skip-scan`);
   process.exit(0);
 }
 
 const positional = args.filter(a => !a.startsWith('--'));
 const projectRoot = resolve(positional[0]);
 const doPull = args.includes('--pull');
+const skipScan = args.includes('--skip-scan');
 
 if (!existsSync(projectRoot)) {
   console.error(`错误: 项目根目录不存在: ${projectRoot}`);
@@ -73,23 +75,37 @@ if (doPull) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 1: scan-project.mjs — fresh filesystem scan
+// Step 1: scan-project.mjs — fresh filesystem scan (or reuse existing)
 // ---------------------------------------------------------------------------
-console.log('\n步骤1: 扫描文件列表...');
+let scanData;
+let fileList;
 
-const scanResult = spawnSync('node', [
-  join(__dirname, 'scan-project.mjs'),
-  projectRoot,
-  scanOutputPath,
-], { stdio: 'inherit', cwd: __dirname });
+if (skipScan && existsSync(scanOutputPath)) {
+  console.log('\n步骤1: 复用已有 scan-result.json (--skip-scan)...');
+  scanData = JSON.parse(readFileSync(scanOutputPath, 'utf-8'));
+  fileList = scanData.fileList || scanData.files || [];
+  console.log(`  文件列表: ${fileList.length} 个文件`);
+} else {
+  if (skipScan) {
+    console.log('\n步骤1: --skip-scan 但 scan-result.json 不存在，执行全量扫描...');
+  } else {
+    console.log('\n步骤1: 扫描文件列表...');
+  }
 
-if (scanResult.status !== 0) {
-  console.error('错误: scan-project.mjs 执行失败');
-  process.exit(1);
+  const scanResult = spawnSync('node', [
+    join(__dirname, 'scan-project.mjs'),
+    projectRoot,
+    scanOutputPath,
+  ], { stdio: 'inherit', cwd: __dirname });
+
+  if (scanResult.status !== 0) {
+    console.error('错误: scan-project.mjs 执行失败');
+    process.exit(1);
+  }
+
+  scanData = JSON.parse(readFileSync(scanOutputPath, 'utf-8'));
+  fileList = scanData.files || [];
 }
-
-const scanData = JSON.parse(readFileSync(scanOutputPath, 'utf-8'));
-const fileList = scanData.files || [];
 
 if (fileList.length === 0) {
   console.error('错误: 扫描结果中没有文件列表');
@@ -103,31 +119,37 @@ console.log(`  文件列表: ${fileList.length} 个文件`);
 // ---------------------------------------------------------------------------
 console.log('\n步骤2: 解析 import 依赖...');
 
-const importMapInput = {
-  projectRoot,
-  files: fileList.map(f => ({ path: f.path, language: f.language, fileCategory: f.fileCategory })),
-};
-writeFileSync(importMapInputPath, JSON.stringify(importMapInput, null, 2));
-
-const importMapResult = spawnSync('node', [
-  join(__dirname, 'extract-import-map.mjs'),
-  importMapInputPath,
-  importMapOutputPath,
-], { stdio: 'inherit', cwd: __dirname });
-
+// When --skip-scan, reuse importMap from the existing scan-result.json if present
 let importData = {};
-if (importMapResult.status !== 0) {
-  console.warn('  警告: extract-import-map.mjs 执行失败，继续不带 import 数据');
+if (skipScan && scanData.importMap && Object.keys(scanData.importMap).length > 0) {
+  importData = scanData.importMap;
+  console.log(`  复用已有 importMap (${Object.keys(importData).length} 个文件)`);
 } else {
-  const importMapData = JSON.parse(readFileSync(importMapOutputPath, 'utf-8'));
-  importData = importMapData.importMap || {};
-  const edgeCount = importMapData.stats?.totalEdges || 0;
-  console.log(`  import 解析完成: ${Object.keys(importData).length} 个文件, ${edgeCount} 条边`);
+  const importMapInput = {
+    projectRoot,
+    files: fileList.map(f => ({ path: f.path, language: f.language, fileCategory: f.fileCategory })),
+  };
+  writeFileSync(importMapInputPath, JSON.stringify(importMapInput, null, 2));
 
-  // Merge importMap into scan-result.json (follows understand pipeline convention)
-  scanData.importMap = importData;
-  writeFileSync(scanOutputPath, JSON.stringify(scanData, null, 2));
-  console.log(`  importMap 已写入 scan-result.json`);
+  const importMapResult = spawnSync('node', [
+    join(__dirname, 'extract-import-map.mjs'),
+    importMapInputPath,
+    importMapOutputPath,
+  ], { stdio: 'inherit', cwd: __dirname });
+
+  if (importMapResult.status !== 0) {
+    console.warn('  警告: extract-import-map.mjs 执行失败，继续不带 import 数据');
+  } else {
+    const importMapData = JSON.parse(readFileSync(importMapOutputPath, 'utf-8'));
+    importData = importMapData.importMap || {};
+    const edgeCount = importMapData.stats?.totalEdges || 0;
+    console.log(`  import 解析完成: ${Object.keys(importData).length} 个文件, ${edgeCount} 条边`);
+
+    // Merge importMap into scan-result.json (follows understand pipeline convention)
+    scanData.importMap = importData;
+    writeFileSync(scanOutputPath, JSON.stringify(scanData, null, 2));
+    console.log(`  importMap 已写入 scan-result.json`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -229,10 +251,9 @@ console.log(`  类: ${Object.entries(summaryKinds).map(([k, v]) => `${k}=${v}`).
 console.log(`  函数: ${summaryFunctions}  |  导出: ${summaryExports}  |  端点: ${summaryEndpoints}`);
 
 // ---------------------------------------------------------------------------
-// Step 7: Cleanup
+// Step 7: Cleanup — tmp/ is preserved for downstream pipeline use.
+// The pipeline's Phase 8 (Save) handles cleanup of intermediate and tmp files.
 // ---------------------------------------------------------------------------
-console.log('\n步骤7: 清理临时文件...');
-rmSync(tmpDir, { recursive: true, force: true });
 
 console.log('\n=== 完成 ===');
 console.log(`  structural-analysis.json → ${structuralOutputPath}`);

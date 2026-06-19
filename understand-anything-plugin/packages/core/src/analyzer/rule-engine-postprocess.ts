@@ -64,7 +64,7 @@ if (extractionMode) {
     unresolved: result.unresolved,
     stats: {
       totalEdges: result.edges.length,
-      unresolved: result.unresolved.length,
+      unresolvedCalls: result.unresolved.length,
     },
   };
 
@@ -122,7 +122,7 @@ graph.edges.push(...newEdges);
 const stats = {
   edgesAdded: newEdges.length,
   totalEdges: graph.edges.length,
-  unresolved: result.unresolved.length,
+  unresolvedCalls: result.unresolved.length,
 };
 
 if (dryRun) {

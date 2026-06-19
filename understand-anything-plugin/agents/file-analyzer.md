@@ -122,11 +122,6 @@ by the deterministic rule engine (annotation→edge mapping, meta-annotation
 resolution, call graph resolution). You MUST NOT emit duplicate edges for the
 same (source, target, type) combination.
 
-The `ruleEngineEdges` array also includes `unresolvedAnnotations` — annotations
-that the rule engine could not match to any built-in or user-defined rule. If
-you can determine the correct edge for an unresolved annotation through semantic
-analysis, you MAY emit it. Otherwise, skip it.
-
 ---
 
 ## Phase 2 -- Semantic Analysis

@@ -14,6 +14,10 @@ export const meta = {
 }
 
 // args = { rawArgs: string, cwd: string }
+// Note: args is provided by the Workflow harness and is readonly/frozen.
+// Do NOT mutate args — read properties directly. Fallbacks for safety:
+const _cwd = (args && args.cwd) || '.'
+const _rawArgs = (args && args.rawArgs) || ''
 
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
@@ -116,8 +120,8 @@ phase('Pre-flight')
 const preflight = await agent(
   `Resolve all configuration for understand-domain skill.
 
-Working directory: ${args.cwd}
-Raw arguments: ${args.rawArgs || ''}
+Working directory: ${_cwd}
+Raw arguments: ${_rawArgs}
 
 Complete ALL steps and return structured config.
 

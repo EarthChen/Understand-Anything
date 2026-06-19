@@ -154,4 +154,4 @@ export type {
 } from "./system-graph.js";
 export { validateSystemGraph } from "./system-graph.js";
 export { runRuleEngine } from "./analyzer/rule-engine.js";
-export type { AnnotationEdge, UnresolvedAnnotation } from "./analyzer/rule-engine.js";
+export type { AnnotationEdge } from "./analyzer/rule-engine.js";

@@ -73,8 +73,8 @@ describe('understand-wiki workflow fixes', () => {
         content.indexOf('// ─── Phase 5:') !== -1 ? content.indexOf('// ─── Phase 5:') : content.length
       )
 
-      // Should have a direct workflow({ name: 'understand' }) call
-      expect(pipelineSection).toMatch(/workflow\(\{[^`]*name:\s*['"]understand['"]/)
+      // Should have a direct workflow({ scriptPath: '...' }) call for understand
+      expect(pipelineSection).toMatch(/workflow\(\{[^`]*scriptPath:\s*`[^`]*understand\/workflow\.js/)
     })
 
     it('should call workflow() for DG build before agent validation', () => {
@@ -85,7 +85,7 @@ describe('understand-wiki workflow fixes', () => {
         content.indexOf('// ─── Phase 5:') !== -1 ? content.indexOf('// ─── Phase 5:') : content.length
       )
 
-      expect(pipelineSection).toMatch(/workflow\(\{[^`]*name:\s*['"]understand-domain['"]/)
+      expect(pipelineSection).toMatch(/workflow\(\{[^`]*scriptPath:\s*`[^`]*understand-domain\/workflow\.js/)
     })
   })
 

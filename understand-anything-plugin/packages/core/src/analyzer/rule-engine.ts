@@ -201,17 +201,10 @@ export interface AnnotationEdge {
   properties?: Record<string, unknown>;
 }
 
-export interface UnresolvedAnnotation {
-  file: string;
-  className: string;
-  annotation: string;
-  level: "class" | "property" | "method";
-}
-
 export function mapAnnotationsToEdges(
   extractionResults: ExtractionResult[],
   options: { frameworks: string[]; userRules?: RuleConfig },
-): { edges: AnnotationEdge[]; unresolved: UnresolvedAnnotation[] } {
+): { edges: AnnotationEdge[] } {
   // Get applicable rules based on detected frameworks
   const activeRules = BUILTIN_RULES.filter((r) => options.frameworks.includes(r.id));
 
@@ -229,20 +222,16 @@ export function mapAnnotationsToEdges(
   }
 
   const edges: AnnotationEdge[] = [];
-  const unresolved: UnresolvedAnnotation[] = [];
 
   for (const file of extractionResults) {
     if (!Array.isArray(file.classes)) continue;
     for (const cls of file.classes) {
       const classNodeId = `class:${file.path}:${cls.name}`;
 
-      // Class-level annotations
+      // Class-level annotations — only process annotations that have a configured rule
       for (const ann of cls.annotations ?? []) {
         const mapping = annotationMap.get(ann.name);
-        if (!mapping) {
-          unresolved.push({ file: file.path, className: cls.name, annotation: ann.name, level: "class" });
-          continue;
-        }
+        if (!mapping) continue;
 
         // For RPC providers: target from interfaces[]
         if (mapping.edge === "provides_rpc" && cls.interfaces?.length) {
@@ -272,14 +261,11 @@ export function mapAnnotationsToEdges(
         }
       }
 
-      // Property-level annotations (DI, RPC consumers)
+      // Property-level annotations (DI, RPC consumers) — only process configured rules
       for (const prop of cls.typedProperties ?? []) {
         for (const ann of prop.annotations ?? []) {
           const mapping = annotationMap.get(ann.name);
-          if (!mapping) {
-            unresolved.push({ file: file.path, className: cls.name, annotation: ann.name, level: "property" });
-            continue;
-          }
+          if (!mapping) continue;
 
           // For injects: target from property type
           if (mapping.edge === "injects" && prop.type) {
@@ -297,7 +283,7 @@ export function mapAnnotationsToEdges(
     }
   }
 
-  return { edges, unresolved };
+  return { edges };
 }
 
 function makeEdge(
@@ -365,7 +351,7 @@ export function detectFrameworks(dependencies: string[]): string[] {
 
 export interface RuleEngineResult {
   edges: AnnotationEdge[];
-  unresolved: Array<UnresolvedAnnotation | { file: string; caller: string; callee: string; lineNumber: number }>;
+  unresolved: Array<{ file: string; caller: string; callee: string; lineNumber: number }>;
   stats: RuleEngineStats;
 }
 
@@ -373,7 +359,7 @@ export interface RuleEngineStats {
   totalFiles: number;
   annotationsFound: number;
   edgesProduced: number;
-  unresolvedAnnotations: number;
+  unresolvedCalls: number;
   errors: number;
   frameworkDetected: string[];
   metaAnnotationsExpanded: number;
@@ -386,7 +372,7 @@ export function runRuleEngine(
 ): RuleEngineResult {
   const startTime = Date.now();
   const allEdges: AnnotationEdge[] = [];
-  const allUnresolved: Array<UnresolvedAnnotation | { file: string; caller: string; callee: string; lineNumber: number }> = [];
+  const allUnresolved: Array<{ file: string; caller: string; callee: string; lineNumber: number }> = [];
   let metaAnnotationsExpanded = 0;
 
   // Step 1: Detect frameworks if not provided
@@ -397,7 +383,6 @@ export function runRuleEngine(
   // Step 2: Map annotations to edges (per-file)
   const annotationResult = mapAnnotationsToEdges(extractionResults, { frameworks, userRules: options.userRules });
   allEdges.push(...annotationResult.edges);
-  allUnresolved.push(...annotationResult.unresolved);
 
   // Step 3: Meta-annotation expansion (global, JVM only)
   const allClasses = extractionResults.flatMap((f) =>
@@ -466,7 +451,7 @@ export function runRuleEngine(
         0,
       ),
       edgesProduced: allEdges.length,
-      unresolvedAnnotations: allUnresolved.length,
+      unresolvedCalls: allUnresolved.length,
       errors: 0,
       frameworkDetected: frameworks,
       metaAnnotationsExpanded,

@@ -14,6 +14,10 @@ export const meta = {
 }
 
 // args = { rawArgs: string, cwd: string }
+// Note: args is provided by the Workflow harness and is readonly/frozen.
+// Do NOT mutate args — read properties directly. Fallbacks for safety:
+const _cwd = (args && args.cwd) || '.'
+const _rawArgs = (args && args.rawArgs) || ''
 
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
@@ -256,8 +260,8 @@ phase('Setup')
 const setup = await agent(
   `You are the understand-wiki setup agent. Resolve all configuration needed to run.
 
-Working directory: ${args.cwd}
-Raw arguments: ${args.rawArgs || ''}
+Working directory: ${_cwd}
+Raw arguments: ${_rawArgs}
 
 Complete ALL steps and return structured config.
 
@@ -279,12 +283,12 @@ Always: PROJECT_ROOT = cwd (the directory where the skill is invoked)
 Single: SERVICE_ROOT = cwd, SERVICE_NAME = basename(cwd)
         (unless --service=X: SERVICE_ROOT = PROJECT_ROOT/X, SERVICE_NAME = X)
 Batch:  PROJECT_ROOT = cwd
-Always: BUSINESS_ROOT = parent directory of PROJECT_ROOT = \`dirname "${args.cwd}"\`
+Always: BUSINESS_ROOT = parent directory of PROJECT_ROOT = \`dirname "${_cwd}"\`
         (This is where understand-business will run — the parent containing backend/, mobile/, etc.)
 
 **Step 4 — Worktree redirect** (skip if PROJECT_ROOT is not a git repo)
-\`COMMON=$(git -C "${args.cwd}" rev-parse --git-common-dir 2>/dev/null)\`
-\`GITD=$(git -C "${args.cwd}" rev-parse --git-dir 2>/dev/null)\`
+\`COMMON=$(git -C "${_cwd}" rev-parse --git-common-dir 2>/dev/null)\`
+\`GITD=$(git -C "${_cwd}" rev-parse --git-dir 2>/dev/null)\`
 If both commands succeed and COMMON != GITD: PROJECT_ROOT = parent(COMMON).
 
 **Step 5 — Resolve PLUGIN_ROOT** (first candidate where package.json AND pnpm-workspace.yaml exist):
@@ -311,7 +315,14 @@ Build languageDirective string if non-English.
 If non-English: read $skillDir/locales/<lang>.md → localeGuidance (empty if missing).
 
 **Step 8 — Repo type + server wiki (for mobile)**
-Parse "--repo-type <type>" (default "backend").
+Parse "--repo-type <type>" from rawArgs.
+If specified: write to config.json "repoType".
+If not: read from config.json "repoType".
+If still not set: infer from project structure —
+  if PROJECT_ROOT contains *.xcodeproj, *.xcworkspace, Podfile, or .swiftpm → "mobile"
+  if PROJECT_ROOT contains package.json with "react" or "vue" in dependencies → "frontend"
+  else → "backend".
+  Write inferred value to config.json "repoType".
 If mobile: check system.json for server facet → serverWikiAvailable, serverFacetPath.
 
 **Step 9 — RPC annotations**
@@ -322,7 +333,7 @@ Read "rpcAnnotations" from config.json → rpcAnnotationsJson (JSON string, null
 python3 -c "
 import os, json
 
-project_root = '${args.cwd}'
+project_root = '${_cwd}'
 exclude = {'node_modules', 'dist', 'build', 'target', 'docs', 'scripts', 'tools'}
 service_markers = {'.understand-anything', 'pom.xml', 'package.json', 'go.mod', 'Cargo.toml'}
 
@@ -651,78 +662,118 @@ Return:
 
 // ─── Phase 1-4: Per-service pipeline (KG → DG → Wiki → Assembly) ─────────────
 // This runs for both batch (multiple services) and single-service (1-item list).
+//
+// IMPORTANT: workflow() calls MUST happen OUTSIDE pipeline() stages because
+// pipeline() does not pass args to child workflows. The pre-build phase runs
+// workflow() at the top level where args are available, then the pipeline
+// only uses agent() calls for validation, wiki generation, and assembly.
 
 if (services.length === 0) {
   log('No services with changes — all are current. Proceeding to cross-service phase.')
 }
 
-const pipelineResults = services.length > 0
-  ? await pipeline(
-      services,
+// Helper: check if an artifact file exists and has status "complete"
+// Uses agent() instead of execSync since Node.js APIs are unavailable in the Workflow sandbox.
+const ARTIFACT_CHECK_SCHEMA = {
+  type: 'object',
+  required: ['exists', 'status'],
+  properties: {
+    exists: { type: 'boolean' },
+    status: { type: 'string' },  // "complete" | "missing" | "incomplete"
+  },
+}
+const fileExists = async (p) => {
+  const r = await agent(`Check if file exists: ${p}\nRun: test -f "${p}" && echo true || echo false\nReturn { exists: <bool>, status: "missing" }`, { schema: ARTIFACT_CHECK_SCHEMA, label: 'file-check' })
+  return r?.exists ?? false
+}
+const validateComplete = async (p, contract) => {
+  const r = await agent(
+    `Check artifact status for: ${p}
+Step 1: test -f "${p}" — if missing, return { exists: false, status: "missing" }
+Step 2: node "${setup.skillDir}/../understand/validate-artifact.mjs" "${p}" "${contract}" 2>/dev/null — parse JSON, extract .status
+Step 3: Return { exists: true|false, status: "complete"|"missing"|"incomplete" }`,
+    { schema: ARTIFACT_CHECK_SCHEMA, label: 'validate-artifact' }
+  )
+  return r?.status ?? 'missing'
+}
 
-      // Stage 0.5 — Build KG via workflow() if missing (direct call, not in agent prompt)
-      async (svc) => {
-        const svcRoot = setup.mode === 'batch' ? `${setup.projectRoot}/${svc}` : setup.serviceRoot
-        const kgPath = `${svcRoot}/.understand-anything/knowledge-graph.json`
-        const { execSync } = await import('node:child_process')
-        const kgExists = (() => { try { execSync(`test -f "${kgPath}"`, { stdio: 'pipe' }); return true } catch { return false } })()
-        const kgStatus = kgExists
-          ? (() => { try { return execSync(`node "${setup.skillDir}/../understand/validate-artifact.mjs" "${kgPath}" knowledge-graph:complete 2>/dev/null`, { encoding: 'utf-8' }).trim() } catch { return '{"status":"missing"}' } })()
-          : '{"status":"missing"}'
-        const status = (() => { try { return JSON.parse(kgStatus).status } catch { return 'missing' } })()
+// Pre-build: ensure KG and DG exist for each service
+// These workflow() calls run at the top level where args are properly available.
+const preBuildErrors = {}
+if (services.length > 0) {
+  phase('Prepare')
+  for (const svc of services) {
+    const svcRoot = setup.mode === 'batch' ? `${setup.projectRoot}/${svc}` : setup.serviceRoot
 
-        if (status === 'complete' && !setup.force) {
-          log(`${svc}: KG exists and is complete — skipping build`)
-          return { serviceName: svc, kgPreBuilt: true }
-        }
-
-        log(`${svc}: Building KG via /understand workflow...`)
-        const args = `${svcRoot} --language ${setup.outputLanguage}${setup.force ? ' --full' : ''}`
-        const result = await workflow({ name: 'understand' }, { rawArgs: args, cwd: svcRoot })
+    // Build KG if missing or incomplete
+    const kgPath = `${svcRoot}/.understand-anything/knowledge-graph.json`
+    const kgStatus = await validateComplete(kgPath, 'knowledge-graph:complete')
+    if (kgStatus !== 'complete' || setup.force) {
+      log(`${svc}: Building KG via /understand workflow...`)
+      const rawArgs = `${svcRoot} --language ${setup.outputLanguage}${setup.force ? ' --full' : ''}`
+      try {
+        const result = await workflow({ scriptPath: `${setup.skillDir}/../understand/workflow.js` }, { rawArgs, cwd: svcRoot })
         if (!result || result.success === false) {
-          throw new Error(`${svc}: KG build failed — ${result?.error || 'workflow returned non-success'}`)
+          throw new Error(result?.error || 'workflow returned non-success')
         }
         log(`${svc}: KG build complete`)
-        return { serviceName: svc, kgPreBuilt: true }
-      },
-
-      // Stage 1 — Validate KG (agent reads SKILL.md only if build needed)
-      (preResult, svc) => agent(kgPrompt(svc),
-        { schema: KG_STAGE_SCHEMA, label: `kg:${svc}`, phase: 'Prepare' }),
-
-      // Stage 1.5 — Build DG via workflow() if missing (direct call, not in agent prompt)
-      async (kgResult, svc) => {
-        if (!kgResult || !kgResult.success) {
-          return { serviceName: svc, dgPreBuilt: false, kgFailed: true }
+      } catch (wfErr) {
+        const errMsg = wfErr?.message || String(wfErr)
+        if (!await fileExists(kgPath)) {
+          log(`${svc}: KG build failed: ${errMsg}`)
+          preBuildErrors[svc] = `KG build failed: ${errMsg}`
+          continue
         }
-        const svcRoot = setup.mode === 'batch' ? `${setup.projectRoot}/${svc}` : setup.serviceRoot
-        const dgPath = `${svcRoot}/.understand-anything/domain-graph.json`
-        const { execSync } = await import('node:child_process')
-        const dgExists = (() => { try { execSync(`test -f "${dgPath}"`, { stdio: 'pipe' }); return true } catch { return false } })()
-        const dgStatus = dgExists
-          ? (() => { try { return execSync(`node "${setup.skillDir}/../understand/validate-artifact.mjs" "${dgPath}" domain-graph:complete 2>/dev/null`, { encoding: 'utf-8' }).trim() } catch { return '{"status":"missing"}' } })()
-          : '{"status":"missing"}'
-        const status = (() => { try { return JSON.parse(dgStatus).status } catch { return 'missing' } })()
+        log(`${svc}: KG file exists despite workflow error — continuing`)
+      }
+    } else {
+      log(`${svc}: KG exists and is complete — skipping build`)
+    }
 
-        if (status === 'complete' && !setup.force) {
-          log(`${svc}: DG exists and is complete — skipping build`)
-          return { serviceName: svc, dgPreBuilt: true }
-        }
-
-        log(`${svc}: Building DG via /understand-domain workflow...`)
-        const args = `${svcRoot}${setup.force ? ' --full' : ''}${setup.outputLanguage ? ` --language ${setup.outputLanguage}` : ''}`
-        const result = await workflow({ name: 'understand-domain' }, { rawArgs: args, cwd: svcRoot })
+    // Build DG if missing or incomplete
+    const dgPath = `${svcRoot}/.understand-anything/domain-graph.json`
+    const dgStatus = await validateComplete(dgPath, 'domain-graph:complete')
+    if (dgStatus !== 'complete' || setup.force) {
+      log(`${svc}: Building DG via /understand-domain workflow...`)
+      const rawArgs = `${svcRoot}${setup.force ? ' --full' : ''}${setup.outputLanguage ? ` --language ${setup.outputLanguage}` : ''}`
+      try {
+        const result = await workflow({ scriptPath: `${setup.skillDir}/../understand-domain/workflow.js` }, { rawArgs, cwd: svcRoot })
         if (!result || result.success === false) {
-          throw new Error(`${svc}: DG build failed — ${result?.error || 'workflow returned non-success'}`)
+          throw new Error(result?.error || 'workflow returned non-success')
         }
         log(`${svc}: DG build complete`)
-        return { serviceName: svc, dgPreBuilt: true }
-      },
+      } catch (wfErr) {
+        const errMsg = wfErr?.message || String(wfErr)
+        if (!await fileExists(dgPath)) {
+          log(`${svc}: DG build failed: ${errMsg}`)
+          preBuildErrors[svc] = `DG build failed: ${errMsg}`
+          continue
+        }
+        log(`${svc}: DG file exists despite workflow error — continuing`)
+      }
+    } else {
+      log(`${svc}: DG exists and is complete — skipping build`)
+    }
+  }
+}
 
-      // Stage 2 — Validate DG + determine wiki state (agent reads SKILL.md only if build needed)
-      (preResult, svc) => {
-        if (preResult && preResult.kgFailed) {
-          return { serviceName: svc, success: false, error: 'KG stage failed', domainsAll: [], domainsToGenerate: [] }
+// Filter out services that failed pre-build
+const servicesReady = services.filter(svc => !preBuildErrors[svc])
+const preBuildFailed = Object.entries(preBuildErrors).map(([svc, err]) => ({ serviceName: svc, success: false, error: err }))
+
+// Pipeline: validate → wiki → assembly (only agent() calls, no workflow() calls)
+const pipelineResults = servicesReady.length > 0
+  ? await pipeline(
+      servicesReady,
+
+      // Stage 1 — Validate KG
+      (svc) => agent(kgPrompt(svc),
+        { schema: KG_STAGE_SCHEMA, label: `kg:${svc}`, phase: 'Prepare' }),
+
+      // Stage 2 — Validate DG + determine wiki state
+      (kgResult, svc) => {
+        if (!kgResult || !kgResult.success) {
+          return { serviceName: svc, success: false, error: kgResult?.error || 'KG validation failed', domainsAll: [], domainsToGenerate: [] }
         }
         return agent(dgPrompt(svc),
           { schema: DG_STAGE_SCHEMA, label: `dg:${svc}`, phase: 'Prepare' })
@@ -731,7 +782,7 @@ const pipelineResults = services.length > 0
       // Stage 3 — Wiki content generation (dispatches wiki-workers internally)
       (dgResult, svc) => {
         if (!dgResult || !dgResult.success) {
-          return { serviceName: svc, success: false, error: dgResult ? dgResult.error : 'DG stage failed' }
+          return { serviceName: svc, success: false, error: dgResult?.error || 'DG validation failed' }
         }
         if (dgResult.alreadyUpToDate) {
           log(`${svc}: wiki is up to date — skipping content generation`)
@@ -745,11 +796,10 @@ const pipelineResults = services.length > 0
           { schema: WIKI_STAGE_SCHEMA, label: `wiki:${svc}`, phase: 'Wiki Generation' })
       },
 
-      // Stage 4 — Deterministic assembly + quality gate (always runs if Stage 3 succeeded,
-      // including the "no domain changes" case where assembly updates the commit hash in meta.json)
+      // Stage 4 — Deterministic assembly + quality gate
       (wikiResult, svc) => {
         if (!wikiResult || !wikiResult.success) {
-          return { serviceName: svc, success: false, error: wikiResult ? wikiResult.error : 'Wiki stage failed' }
+          return { serviceName: svc, success: false, error: wikiResult?.error || 'Wiki generation failed' }
         }
         return agent(assemblyPrompt(svc),
           { schema: ASSEMBLY_STAGE_SCHEMA, label: `assembly:${svc}`, phase: 'Assembly' })
@@ -757,15 +807,16 @@ const pipelineResults = services.length > 0
     )
   : []
 
-// Collect outcomes
-const succeeded = (pipelineResults || []).filter(Boolean).filter(r => r && r.success)
-const failed    = (pipelineResults || []).filter(Boolean).filter(r => r && !r.success)
+// Combine pipeline results with pre-build failures
+const allResults = [...(pipelineResults || []), ...preBuildFailed]
+
+// Collect outcomes (allResults = pipeline results + pre-build failures)
+const succeeded = (allResults || []).filter(Boolean).filter(r => r && r.success)
+const failed    = (allResults || []).filter(Boolean).filter(r => r && !r.success)
 
 if (failed.length > 0) {
   failed.forEach(r => log(`✗ ${r.serviceName}: ${r.error || 'unknown error'}`))
   if (!setup.continueOnError && failed.length > 0) {
-    // Pipeline ran to completion for all services (per-service short-circuit applies within stages).
-    // --continue-on-error=false means we abort here: skip Cross-Service, Business, and Finalize.
     return {
       success: false,
       error: `Aborting after pipeline — ${failed.length} service(s) failed and --continue-on-error=false. First failure: ${failed[0].serviceName}. Cross-service and business phases skipped.`,

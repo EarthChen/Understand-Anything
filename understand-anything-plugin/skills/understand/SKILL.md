@@ -25,7 +25,7 @@ args: { rawArgs: "<$ARGUMENTS without --workflow>", cwd: "<current working direc
 
 Wait for the workflow to complete and surface its result. **Do not execute any manual phases below.**
 
-The workflow harness runs a deterministic multi-stage pipeline (Pre-flight → Scan → Analyze → Assemble → Architecture → Tour → Review → Save) with structured schemas and parallel execution.
+The workflow harness runs a deterministic multi-stage pipeline (Pre-flight → Scan → Structural → Analyze → Assemble → Architecture → Tour → Review → Save) with structured schemas and parallel execution.
 
 ### If `--workflow` is absent (default) → Manual LLM-driven path
 
@@ -50,11 +50,11 @@ Continue to the manual phases described in this file (LLM agent orchestrates eac
 Throughout execution, report progress to the user at each phase transition and during batch processing. This keeps users informed on large codebases where analysis can take a long time.
 
 - **Phase transitions:** At the start of each phase, print a status line:
-  > `[Phase N/7] <phase name>...`
+  > `[Phase N/8] <phase name>...`
   >
-  > Example: `[Phase 2/7] Analyzing files (12 batches)...`
+  > Example: `[Phase 3/8] Analyzing files (12 batches)...`
 
-- **Batch progress:** During Phase 2, report each batch with its index and total:
+- **Batch progress:** During Phase 3, report each batch with its index and total:
   > `Analyzing batch X/N (files: foo.ts, bar.ts, ...)` (list up to 3 filenames, then `...` if more)
 
 - **Phase completion:** When a phase finishes, briefly confirm:
@@ -190,11 +190,11 @@ Determine whether to run a full analysis or incremental update.
    |---|---|
    | `--full` flag in `$ARGUMENTS` | Full analysis (all phases). Also clear all phase checkpoints: `rm -f $PROJECT_ROOT/.understand-anything/intermediate/phase-*.json` |
    | No existing graph or meta | Full analysis (all phases) |
-   | `--review` flag + existing graph + unchanged commit hash | Skip to Phase 6 (review-only — reuse existing assembled graph) |
+   | `--review` flag + existing graph + unchanged commit hash | Skip to Phase 7 (review-only — reuse existing assembled graph) |
    | Existing graph + unchanged commit hash | Ask the user: "The graph is up to date at this commit. Would you like to: **(a)** run a full rebuild (`--full`), **(b)** run the LLM graph reviewer (`--review`), or **(c)** do nothing?" Then follow their choice. If they pick (c), STOP. |
    | Existing graph + changed files | Incremental update (re-analyze changed files only) |
 
-   **Review-only path:** Copy the existing `knowledge-graph.json` to `$PROJECT_ROOT/.understand-anything/intermediate/assembled-graph.json`, then jump directly to Phase 6 step 3.
+   **Review-only path:** Copy the existing `knowledge-graph.json` to `$PROJECT_ROOT/.understand-anything/intermediate/assembled-graph.json`, then jump directly to Phase 7 step 3.
 
    For incremental updates, get the changed file list:
    ```bash
@@ -257,7 +257,7 @@ Set up and verify the `.understandignore` file before scanning.
 
 ## Phase 1 — SCAN (Full analysis only)
 
-Report to the user: `[Phase 1/7] Scanning project files...`
+Report to the user: `[Phase 1/8] Scanning project files...`
 
 Dispatch a subagent using the `project-scanner` agent definition (at `agents/project-scanner.md`). Append the following additional context:
 
@@ -290,8 +290,8 @@ After the subagent completes, read `$PROJECT_ROOT/.understand-anything/intermedi
 - Complexity estimate
 - Import map (`importMap`): pre-resolved project-internal imports per file (non-code files have empty arrays)
 
-Store `importMap` in memory as `$IMPORT_MAP` for use in Phase 2 batch construction.
-Store the file list as `$FILE_LIST` with `fileCategory` metadata for use in Phase 2 batch construction.
+Store `importMap` in memory as `$IMPORT_MAP` for use in Phase 3 batch construction.
+Store the file list as `$FILE_LIST` with `fileCategory` metadata for use in Phase 3 batch construction.
 
 **Gate check:** If >100 files, inform the user and suggest scoping with a subdirectory argument. Proceed only if user confirms or add guidance that this may take a while.
 
@@ -300,9 +300,38 @@ If the scan result includes `filteredByIgnore > 0`, report:
 
 ---
 
-## Phase 1.5 — BATCH
+## Phase 1.5 — STRUCTURAL (Deterministic extraction + source index)
 
-Report: `[Phase 1.5/7] Computing structural batches...`
+Report: `[Phase 1.5/8] Extracting structure and building source index...`
+
+This phase runs **before** batch computation. It uses `reextract-structure.mjs` with `--skip-scan` to reuse Phase 1's scan results. The tmp directory is preserved for downstream pipeline use (cleanup happens in Phase 8).
+
+```bash
+node <SKILL_DIR>/reextract-structure.mjs $PROJECT_ROOT --skip-scan
+```
+
+The script handles: import resolution, tree-sitter extraction, structural-analysis.json generation, and source index building.
+
+After the script, run the rule engine separately (not included in reextract-structure.mjs):
+
+```bash
+node <SKILL_DIR>/rule-engine-postprocess.mjs \
+  $PROJECT_ROOT/.understand-anything/tmp/ua-extract-results-full.json \
+  $PROJECT_ROOT/.understand-anything/tmp/rule-engine-results.json \
+  --mode=extraction-input
+```
+
+After this phase completes, the following files exist:
+- `.understand-anything/tmp/ua-extract-results-full.json` — raw extraction results
+- `.understand-anything/tmp/rule-engine-results.json` — annotation-driven edges
+- `.understand-anything/intermediate/extraction/structural-analysis.json` — file-path-indexed extraction
+- `.understand-anything/intermediate/extraction/source-index.json` — source search index
+
+---
+
+## Phase 2 — BATCH + ANALYZE
+
+Report: `[Phase 2/8] Computing structural batches...`
 
 Reads `.understand-anything/intermediate/scan-result.json`, writes `.understand-anything/intermediate/batches.json`.
 
@@ -376,15 +405,11 @@ Capture stderr. Append any `Warning:` lines to `$PHASE_WARNINGS`. Report the fin
 
 **Automatic weak-batch absorption.** The script automatically absorbs weak batches (≤5 files, intra-edge <20%) into their strongest neighbor. `Diagnostic:` reports `absorbed=N`. This needs no tuning — only intervene if absorption can't solve the problem.
 
-If the script exits non-zero, relay the full stderr to the user as a Phase 1.5 failure. Do not attempt to recover — the script's internal fallback (count-based) already handles recoverable issues.
+If the script exits non-zero, relay the full stderr to the user as a Phase 2 failure. Do not attempt to recover — the script's internal fallback (count-based) already handles recoverable issues.
 
----
+After batching completes, read the detailed step instructions from the `phases/` subdirectory:
 
-## Phase 2 — ANALYZE
-
-Load `.understand-anything/intermediate/batches.json` (produced by Phase 1.5). Read the detailed step instructions from the `phases/` subdirectory next to this SKILL.md file:
-
-1. **Structural extraction** → Read `./phases/step0-structural.md` (Steps 0a–0d: full-mode extraction, rule engine, per-batch splitting, dispatch plan)
+1. **Per-batch splitting + dispatch plan** → Read `./phases/step0-structural.md` (Steps 0c.6 and 0d only — structural extraction already completed in Phase 1.5)
 2. **Agent dispatch + quality gate** → Read `./phases/step1-dispatch.md` (Steps 1–1.7: file-analyzer dispatch, quality validation, selective retry, recovery fallback)
 3. **Merge** → Read `./phases/step2-merge.md` (Step 2: merge-batch-graphs.py, normalization, tested_by linker)
 
@@ -392,9 +417,9 @@ For **incremental updates** (changed files only), read `./phases/incremental.md`
 
 ---
 
-## Phase 3 — ASSEMBLE REVIEW
+## Phase 4 — ASSEMBLE REVIEW
 
-Report to the user: `[Phase 3/7] Reviewing assembled graph...`
+Report to the user: `[Phase 4/8] Reviewing assembled graph...`
 
 Dispatch a subagent using the `assemble-reviewer` agent definition (at `agents/assemble-reviewer.md`).
 
@@ -421,9 +446,9 @@ After the subagent completes, read `$PROJECT_ROOT/.understand-anything/intermedi
 
 ---
 
-## Phase 4 — ARCHITECTURE
+## Phase 5 — ARCHITECTURE
 
-Report to the user: `[Phase 4/7] Identifying architectural layers...`
+Report to the user: `[Phase 5/8] Identifying architectural layers...`
 
 **Build the combined prompt template:**
  1. Use the `architecture-analyzer` agent definition (at `agents/architecture-analyzer.md`).
@@ -502,15 +527,15 @@ All four fields (`id`, `name`, `description`, `nodeIds`) are required.
 >
 > Maintain the same layer names and IDs where possible. Only add/remove layers if the file structure has materially changed.
 
-**Non-empty guard:** After normalization, verify `layers.length > 0`. If the subagent produced zero layers (empty file, parse failure, or subagent timeout), **retry Phase 4 once**. If the retry also produces zero layers, halt with a clear error message: `"Phase 4 failed: no layers produced after retry. Cannot continue — dashboard requires at least 1 layer."` Do NOT proceed to Phase 5 with empty layers.
+**Non-empty guard:** After normalization, verify `layers.length > 0`. If the subagent produced zero layers (empty file, parse failure, or subagent timeout), **retry Phase 5 once**. If the retry also produces zero layers, halt with a clear error message: `"Phase 5 failed: no layers produced after retry. Cannot continue — dashboard requires at least 1 layer."` Do NOT proceed to Phase 6 with empty layers.
 
-**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-4-layers.json` with the normalized layers array and `_checkpoint: { status: "complete" }`. On resume (non-`--full` runs), if this checkpoint exists and is valid **and contains at least 1 layer**, skip Phase 4 and load layers from the checkpoint. If the checkpoint exists but contains zero layers, treat it as invalid and re-run Phase 4.
+**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-5-layers.json` with the normalized layers array and `_checkpoint: { status: "complete" }`. On resume (non-`--full` runs), if this checkpoint exists and is valid **and contains at least 1 layer**, skip Phase 5 and load layers from the checkpoint. If the checkpoint exists but contains zero layers, treat it as invalid and re-run Phase 5.
 
 ---
 
-## Phase 5 — TOUR
+## Phase 6 — TOUR
 
-Report to the user: `[Phase 5/7] Building guided tour...`
+Report to the user: `[Phase 6/8] Building guided tour...`
 
 Dispatch a subagent using the `tour-builder` agent definition (at `agents/tour-builder.md`). Append the following additional context:
 
@@ -579,15 +604,15 @@ Each element of the final `tour` array MUST have this shape:
 
 Required fields: `order`, `title`, `description`, `nodeIds`. Preserve optional `languageLesson` when present.
 
-**Non-empty guard:** After normalization, verify `tour.length > 0`. If the subagent produced zero tour steps, **retry Phase 5 once**. If the retry also produces zero steps, log a warning: `"Phase 5 warning: no tour steps produced. Dashboard tour feature will be unavailable."` — proceed to Phase 6 but mark the issue for the final report.
+**Non-empty guard:** After normalization, verify `tour.length > 0`. If the subagent produced zero tour steps, **retry Phase 6 once**. If the retry also produces zero steps, log a warning: `"Phase 6 warning: no tour steps produced. Dashboard tour feature will be unavailable."` — proceed to Phase 7 but mark the issue for the final report.
 
-**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-5-tour.json` with the normalized tour array and `_checkpoint: { status: "complete" }`. On resume (non-`--full` runs), if this checkpoint exists and is valid **and contains at least 1 tour step**, skip Phase 5 and load the tour from the checkpoint. If the checkpoint exists but contains zero steps, treat it as invalid and re-run Phase 5.
+**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-6-tour.json` with the normalized tour array and `_checkpoint: { status: "complete" }`. On resume (non-`--full` runs), if this checkpoint exists and is valid **and contains at least 1 tour step**, skip Phase 6 and load the tour from the checkpoint. If the checkpoint exists but contains zero steps, treat it as invalid and re-run Phase 6.
 
 ---
 
-## Phase 6 — REVIEW
+## Phase 7 — REVIEW
 
-Report to the user: `[Phase 6/7] Validating knowledge graph...`
+Report to the user: `[Phase 7/8] Validating knowledge graph...`
 
 Assemble the full KnowledgeGraph JSON object:
 
@@ -602,8 +627,8 @@ Assemble the full KnowledgeGraph JSON object:
     "analyzedAt": "<ISO 8601 timestamp>",
     "gitCommitHash": "<commit hash from Phase 0>"
   },
-  "nodes": [<all nodes from assembled-graph.json after Phase 3 review>],
-  "edges": [<all edges from assembled-graph.json after Phase 3 review>],
+  "nodes": [<all nodes from assembled-graph.json after Phase 4 review>],
+  "edges": [<all edges from assembled-graph.json after Phase 4 review>],
   "layers": [<layers from Phase 4>],
   "tour": [<steps from Phase 5>]
 }
@@ -611,9 +636,9 @@ Assemble the full KnowledgeGraph JSON object:
 
 1. Before writing the assembled graph, validate that:
    - `layers` is an array of objects with these required fields: `id`, `name`, `description`, `nodeIds`
-   - `layers` is **NOT empty** — at least 1 layer MUST exist. If `layers` is empty (`[]`), this means Phase 4 failed or was skipped. **You MUST re-run Phase 4 before continuing.** Do NOT save a knowledge graph with zero layers — the dashboard's structural view requires layers to render and will show a blank canvas without them.
+   - `layers` is **NOT empty** — at least 1 layer MUST exist. If `layers` is empty (`[]`), this means Phase 5 failed or was skipped. **You MUST re-run Phase 5 before continuing.** Do NOT save a knowledge graph with zero layers — the dashboard's structural view requires layers to render and will show a blank canvas without them.
    - `tour` is an array of objects with these required fields: `order`, `title`, `description`, `nodeIds`
-   - `tour` is **NOT empty** — at least 1 tour step MUST exist. If `tour` is empty (`[]`), this means Phase 5 failed or was skipped. **You MUST re-run Phase 5 before continuing.** Do NOT save a knowledge graph with zero tour steps.
+   - `tour` is **NOT empty** — at least 1 tour step MUST exist. If `tour` is empty (`[]`), this means Phase 6 failed or was skipped. **You MUST re-run Phase 6 before continuing.** Do NOT save a knowledge graph with zero tour steps.
    - `tour[*].languageLesson` is allowed as an optional string field
    - Every `layers[*].nodeIds` entry exists in the merged node set
    - Every `tour[*].nodeIds` entry exists in the merged node set
@@ -638,7 +663,7 @@ node <SKILL_DIR>/validate-graph.mjs \
   "$PROJECT_ROOT/.understand-anything/intermediate/review.json"
 ```
 
-If the script exits non-zero (1=fatal, 2=dropped issues), read the report and log warnings. Continue to Phase 7 — the report captures what was auto-corrected or dropped.
+If the script exits non-zero (1=fatal, 2=dropped issues), read the report and log warnings. Continue to Phase 8 — the report captures what was auto-corrected or dropped.
 
 ---
 
@@ -682,13 +707,13 @@ Pass these parameters in the dispatch prompt:
 
 6. **If `issues` array is empty:** Proceed to Phase 7.
 
-**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-6-review.json` with the review result and `_checkpoint: { status: "complete" }` (or `"degraded"` if issues remain). On resume (non-`--full` runs), if this checkpoint exists and is valid/complete, skip Phase 6.
+**Checkpoint:** Write `$PROJECT_ROOT/.understand-anything/intermediate/phase-7-review.json` with the review result and `_checkpoint: { status: "complete" }` (or `"degraded"` if issues remain). On resume (non-`--full` runs), if this checkpoint exists and is valid/complete, skip Phase 7.
 
 ---
 
-## Phase 7 — SAVE
+## Phase 8 — SAVE
 
-Report to the user: `[Phase 7/7] Saving knowledge graph...`
+Report to the user: `[Phase 8/8] Saving knowledge graph...`
 
 1. Write the final knowledge graph to `$PROJECT_ROOT/.understand-anything/knowledge-graph.json`.
 
@@ -716,7 +741,7 @@ Report to the user: `[Phase 7/7] Saving knowledge graph...`
    **CRITICAL**: `analyzedAt` and `gitCommitHash` must be present at BOTH the `project` top level AND inside `provenance`. The dashboard's `validateGraph()` will reject the KG with `"Missing or invalid project metadata"` if any of these top-level fields are missing: `name`, `description`, `languages`, `frameworks`, `analyzedAt`, `gitCommitHash`.
    - Use `generationMode: "incremental"` when running with `--changed-files` (incremental update).
    - Use `generationMode: "standalone"` when the graph was built without full extraction.
-   - Set `degraded: true` only if Phase 6 checkpoint status was "degraded".
+   - Set `degraded: true` only if Phase 7 checkpoint status was "degraded".
    - `completedStages` must list every phase that actually ran and succeeded.
 
 2. **Generate structural fingerprints baseline.** This creates the basis for future automatic incremental updates and **must succeed before `meta.json` is written** — otherwise auto-update sees a fresh commit hash with no fingerprints to compare against, classifies every file as STRUCTURAL, and escalates to `FULL_UPDATE` on every subsequent commit (issue #152).
@@ -740,7 +765,7 @@ Report to the user: `[Phase 7/7] Saving knowledge graph...`
 
    The script uses `TreeSitterPlugin + PluginRegistry` exactly like `extract-structure.mjs`, so the baseline matches the comparison logic used during auto-updates.
 
-   **If the script exits non-zero or stdout does not include `Fingerprints baseline:`, abort Phase 7 and report the error. Do NOT proceed to step 3 (writing `meta.json`).**
+   **If the script exits non-zero or stdout does not include `Fingerprints baseline:`, abort Phase 8 and report the error. Do NOT proceed to step 3 (writing `meta.json`).**
 
 3. Write metadata to `$PROJECT_ROOT/.understand-anything/meta.json` (only after step 2 succeeded):
    ```json
@@ -763,7 +788,7 @@ Report to the user: `[Phase 7/7] Saving knowledge graph...`
 5. Clean up intermediate files, **preserving `scan-result.json`** and **`extraction/`** for downstream skill reuse:
    ```bash
    # Preserve scan-result.json — Phase 1's deterministic file inventory.
-   # Future incremental runs (Phase 2 compute-batches.mjs --changed-files=…)
+   # Future incremental runs (Phase 3 compute-batches.mjs --changed-files=…)
    # need this inventory; without it, Phase 1 must re-dispatch and pay ~157k
    # tokens / ~158s per incremental run.
    #

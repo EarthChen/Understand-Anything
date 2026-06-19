@@ -98,7 +98,7 @@ describe("mapAnnotationsToEdges", () => {
     expect(result.edges.some((e) => e.type === "provides_rpc")).toBe(true);
   });
 
-  it("collects unresolved annotations", () => {
+  it("ignores annotations that have no configured rule", () => {
     const fileResult = {
       path: "src/Unknown.java",
       classes: [{
@@ -113,8 +113,7 @@ describe("mapAnnotationsToEdges", () => {
       exports: [],
     };
     const result = mapAnnotationsToEdges([fileResult], { frameworks: [] });
-    expect(result.unresolved).toHaveLength(1);
-    expect(result.unresolved[0].annotation).toBe("SomeCustomThing");
+    expect(result.edges).toHaveLength(0);
   });
 });
 
