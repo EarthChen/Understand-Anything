@@ -68,8 +68,8 @@ export function clearKgIndexCache(): void {
 }
 
 export class KgIndex {
-  private miniSearch: MiniSearch
-  private docs: KgDoc[]
+  private miniSearch!: MiniSearch
+  private docs!: KgDoc[]
 
   constructor(graph: KnowledgeGraph, serviceName: string) {
     const cached = kgCache.get(graph)
