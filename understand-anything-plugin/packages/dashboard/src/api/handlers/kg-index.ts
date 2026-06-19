@@ -68,25 +68,32 @@ export function clearKgIndexCache(): void {
 }
 
 export class KgIndex {
-  private miniSearch!: MiniSearch
-  private docs!: KgDoc[]
+  private miniSearch: MiniSearch
+  private docs: KgDoc[]
 
-  constructor(graph: KnowledgeGraph, serviceName: string) {
+  private constructor(miniSearch: MiniSearch, docs: KgDoc[]) {
+    this.miniSearch = miniSearch
+    this.docs = docs
+  }
+
+  static create(graph: KnowledgeGraph, serviceName: string): KgIndex {
     const cached = kgCache.get(graph)
     if (cached && cached.gen === cacheGeneration) {
       return cached.index
     }
 
-    this.docs = this.buildDocs(graph, serviceName)
-    this.miniSearch = new MiniSearch(MINI_SEARCH_OPTIONS)
-    if (this.docs.length > 0) {
-      this.miniSearch.addAll(this.docs)
+    const docs = KgIndex.buildDocs(graph, serviceName)
+    const miniSearch = new MiniSearch(MINI_SEARCH_OPTIONS)
+    if (docs.length > 0) {
+      miniSearch.addAll(docs)
     }
 
-    kgCache.set(graph, { index: this, gen: cacheGeneration })
+    const index = new KgIndex(miniSearch, docs)
+    kgCache.set(graph, { index, gen: cacheGeneration })
+    return index
   }
 
-  private buildDocs(graph: KnowledgeGraph, serviceName: string): KgDoc[] {
+  private static buildDocs(graph: KnowledgeGraph, serviceName: string): KgDoc[] {
     if (!Array.isArray(graph?.nodes)) return []
     const byId = new Map<string, typeof graph.nodes[number]>()
     for (const node of graph.nodes) {

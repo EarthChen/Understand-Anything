@@ -373,7 +373,7 @@ function buildSearchIndex(projectRoot: string, serviceFilter: string | null): Se
     }
   }
 
-  const kgIndex = new KgIndex(kgGraph, serviceFilter ?? "all")
+  const kgIndex = KgIndex.create(kgGraph, serviceFilter ?? "all")
   const wikiIndex = new WikiIndex({ entries: wikiEntries })
 
   const adjacency = new Map<string, Set<string>>()

@@ -1,12 +1,37 @@
 ---
 name: understand-domain
 description: Extract business domain knowledge from a codebase and generate an interactive domain flow graph. Works standalone (lightweight scan) or derives from an existing /understand knowledge graph.
-argument-hint: '[--full] [--standalone]'
+argument-hint: '[--workflow|--full|--standalone]'
 ---
 
 # /understand-domain
 
 Extracts business domain knowledge — domains, business flows, and process steps — from a codebase and produces an interactive horizontal flow graph in the dashboard.
+
+---
+
+## Invocation Mode
+
+**Check `$ARGUMENTS` for `--workflow` before doing anything else.**
+
+### If `--workflow` is present → Workflow harness path
+
+Strip `--workflow` from `$ARGUMENTS`, then invoke the **Workflow tool** (not a sub-agent) with:
+
+```
+scriptPath: "$SKILL_DIR/workflow.js"
+args: { rawArgs: "<$ARGUMENTS without --workflow>", cwd: "<current working directory>" }
+```
+
+Wait for the workflow to complete and surface its result. **Do not execute any manual phases below.**
+
+The workflow harness runs a deterministic multi-stage pipeline (Pre-flight → Detect → Scan → Discovery → Extraction → Merge → Validate → Save) with structured schemas and parallel extraction.
+
+### If `--workflow` is absent (default) → Manual LLM-driven path
+
+Continue to the manual phases described in this file (LLM agent orchestrates each step directly).
+
+---
 
 ## How It Works
 

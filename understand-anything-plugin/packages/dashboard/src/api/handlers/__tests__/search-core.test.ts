@@ -42,7 +42,7 @@ function buildState(overrides: Partial<SearchIndexState> = {}): SearchIndexState
   adjacency.set("kg::UserService", new Set(["kg::AuthController"]))
 
   return {
-    kgIndex: new KgIndex(kg, "test-svc"),
+    kgIndex: KgIndex.create(kg, "test-svc"),
     wikiIndex: new WikiIndex({ entries: wikiEntries }),
     edges,
     adjacency,
@@ -215,7 +215,7 @@ describe("kgGraphExpansion", () => {
     adj.set("c", new Set(["b"]))
 
     const state: SearchIndexState = {
-      kgIndex: new KgIndex(kg, "svc"),
+      kgIndex: KgIndex.create(kg, "svc"),
       wikiIndex: new WikiIndex({ entries: [] }),
       edges: [
         { source: "a", target: "b", type: "uses" },
@@ -254,7 +254,7 @@ describe("kgGraphExpansion", () => {
     for (let i = 0; i < 100; i++) adj.set(`n${i}`, new Set(["center"]))
 
     const state: SearchIndexState = {
-      kgIndex: new KgIndex(kg, "svc"),
+      kgIndex: KgIndex.create(kg, "svc"),
       wikiIndex: new WikiIndex({ entries: [] }),
       edges: Array.from({ length: 100 }, (_, i) => ({ source: "center", target: `n${i}`, type: "uses" })),
       adjacency: adj,

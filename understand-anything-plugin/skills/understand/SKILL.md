@@ -1,12 +1,37 @@
 ---
 name: understand
 description: Analyze a codebase to produce an interactive knowledge graph for understanding architecture, components, and relationships
-argument-hint: ["[path] [--full|--auto-update|--no-auto-update|--review|--language <lang>]"]
+argument-hint: ["[path] [--workflow|--full|--auto-update|--no-auto-update|--review|--language <lang>]"]
 ---
 
 # /understand
 
 Analyze the current codebase and produce a `knowledge-graph.json` file in `.understand-anything/`. This file powers the interactive dashboard for exploring the project's architecture.
+
+---
+
+## Invocation Mode
+
+**Check `$ARGUMENTS` for `--workflow` before doing anything else.**
+
+### If `--workflow` is present → Workflow harness path
+
+Strip `--workflow` from `$ARGUMENTS`, then invoke the **Workflow tool** (not a sub-agent) with:
+
+```
+scriptPath: "$SKILL_DIR/workflow.js"
+args: { rawArgs: "<$ARGUMENTS without --workflow>", cwd: "<current working directory>" }
+```
+
+Wait for the workflow to complete and surface its result. **Do not execute any manual phases below.**
+
+The workflow harness runs a deterministic multi-stage pipeline (Pre-flight → Scan → Analyze → Assemble → Architecture → Tour → Review → Save) with structured schemas and parallel execution.
+
+### If `--workflow` is absent (default) → Manual LLM-driven path
+
+Continue to the manual phases described in this file (LLM agent orchestrates each step directly).
+
+---
 
 ## Options
 

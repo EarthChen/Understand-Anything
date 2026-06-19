@@ -344,7 +344,8 @@ print(json.dumps(services))
 "
 \`\`\`
 
-Filter services to those needing generation: no wiki/meta.json at \`PROJECT_ROOT/<svc>/.understand-anything/wiki/meta.json\` OR --full OR stale commit hash.
+Filter services to those needing generation: no wiki/meta.json at \`PROJECT_ROOT/<svc>/.understand-anything/wiki/meta.json\` OR --full OR stale commit hash OR missing knowledge-graph.json OR missing domain-graph.json.
+(The pipeline will build missing KG/DG automatically via /understand and /understand-domain workflows.)
 Return servicesToGenerate (filtered list) and businessRoot = BUSINESS_ROOT computed in Step 3.`,
   { schema: SETUP_SCHEMA, phase: 'Setup', label: 'setup' }
 )
@@ -367,33 +368,24 @@ function kgPrompt(svc) {
   const svcRoot = setup.mode === 'batch'
     ? `${setup.projectRoot}/${svc}`
     : setup.serviceRoot
-  return `Ensure the knowledge graph (KG) is complete and current for service "${svc}".
-Do NOT generate wiki content — only ensure the KG is ready.
+  return `Validate the knowledge graph (KG) for service "${svc}".
+Do NOT build or rebuild — only validate. If KG is missing or incomplete, return success=false.
 
 Service root: ${svcRoot}
 Plugin root: ${setup.pluginRoot}
 Skill dir: ${setup.skillDir}
-Output language: ${setup.outputLanguage}
-Force: ${setup.force}
 
 **Step 1 — Validate KG completeness**
 \`node "${setup.skillDir}/../understand/validate-artifact.mjs" "${svcRoot}/.understand-anything/knowledge-graph.json" knowledge-graph:complete 2>/dev/null || echo '{"status":"missing"}'\`
+If status != "complete": return { serviceName: "${svc}", success: false, error: "KG missing or incomplete" }.
 
-**Step 2 — Build KG if missing or degraded**
-If status != "complete":
-  Read ${setup.pluginRoot}/skills/understand/SKILL.md and follow its instructions.
-  Working dir: ${svcRoot}
-  Args: --language ${setup.outputLanguage}
-  Wait for completion. Re-validate. Retry once on failure.
-  On second failure: return { serviceName: "${svc}", success: false, error: "KG build failed after retry" }.
-
-**Step 3 — Staleness check** (skip if --force=${setup.force})
+**Step 2 — Staleness check** (skip if --force=${setup.force})
 ${setup.force
     ? `force=true: skip staleness check.`
     : `Run: \`python3 "${setup.skillDir}/wiki_staleness_check.py" "${svcRoot}" 2>/dev/null\`
-  If kg_stale=true: re-run /understand (incremental), re-validate. On failure after retry: return error.`}
+  If kg_stale=true: return { serviceName: "${svc}", success: true, stale: true }.`}
 
-Return { serviceName: "${svc}", success: true }.`
+Return { serviceName: "${svc}", success: true, stale: false }.`
 }
 
 // Build the DG-stage agent prompt for a given service
@@ -401,8 +393,9 @@ function dgPrompt(svc) {
   const svcRoot = setup.mode === 'batch'
     ? `${setup.projectRoot}/${svc}`
     : setup.serviceRoot
-  return `Ensure the domain graph (DG) is complete for service "${svc}".
+  return `Validate the domain graph (DG) for service "${svc}".
 Also determine the wiki generation state (full / incremental / up-to-date).
+Do NOT build or rebuild — only validate. If DG is missing or incomplete, return success=false.
 
 Service root: ${svcRoot}
 Plugin root: ${setup.pluginRoot}
@@ -411,18 +404,13 @@ Force: ${setup.force}  Full: ${setup.full}
 
 **Step 1 — Validate DG completeness**
 \`node "${setup.skillDir}/../understand/validate-artifact.mjs" "${svcRoot}/.understand-anything/domain-graph.json" domain-graph:complete 2>/dev/null || echo '{"status":"missing"}'\`
+If status != "complete": return { serviceName: "${svc}", success: false, error: "DG missing or incomplete" }.
 
-**Step 2 — Build DG if missing or degraded**
-If status != "complete":
-  Read ${setup.pluginRoot}/skills/understand-domain/SKILL.md and follow its instructions.
-  Working dir: ${svcRoot}. Wait. Re-validate. Retry once.
-  On failure: return { serviceName: "${svc}", success: false, error: "DG build failed" }.
-
-**Step 3 — DG staleness check** (skip if force=${setup.force})
+**Step 2 — DG staleness check** (skip if force=${setup.force})
 ${setup.force
     ? `force=true: skip.`
     : `Check staleness (run wiki_staleness_check.py if not already available from KG stage context).
-  If dg_stale=true: re-run /understand-domain. Re-validate. On failure: return error.`}
+  If dg_stale=true: return { serviceName: "${svc}", success: true, stale: true }.`}
 
 **Step 4 — Save DG snapshot** (for incremental diff on next run)
 If wiki/meta.json exists:
@@ -672,14 +660,69 @@ const pipelineResults = services.length > 0
   ? await pipeline(
       services,
 
-      // Stage 1 — Ensure KG (may run /understand internally)
-      (svc) => agent(kgPrompt(svc),
+      // Stage 0.5 — Build KG via workflow() if missing (direct call, not in agent prompt)
+      async (svc) => {
+        const svcRoot = setup.mode === 'batch' ? `${setup.projectRoot}/${svc}` : setup.serviceRoot
+        const kgPath = `${svcRoot}/.understand-anything/knowledge-graph.json`
+        const { execSync } = await import('node:child_process')
+        const kgExists = (() => { try { execSync(`test -f "${kgPath}"`, { stdio: 'pipe' }); return true } catch { return false } })()
+        const kgStatus = kgExists
+          ? (() => { try { return execSync(`node "${setup.skillDir}/../understand/validate-artifact.mjs" "${kgPath}" knowledge-graph:complete 2>/dev/null`, { encoding: 'utf-8' }).trim() } catch { return '{"status":"missing"}' } })()
+          : '{"status":"missing"}'
+        const status = (() => { try { return JSON.parse(kgStatus).status } catch { return 'missing' } })()
+
+        if (status === 'complete' && !setup.force) {
+          log(`${svc}: KG exists and is complete — skipping build`)
+          return { serviceName: svc, kgPreBuilt: true }
+        }
+
+        log(`${svc}: Building KG via /understand workflow...`)
+        const args = `${svcRoot} --language ${setup.outputLanguage}${setup.force ? ' --full' : ''}`
+        const result = await workflow({ name: 'understand' }, { rawArgs: args, cwd: svcRoot })
+        if (!result || result.success === false) {
+          throw new Error(`${svc}: KG build failed — ${result?.error || 'workflow returned non-success'}`)
+        }
+        log(`${svc}: KG build complete`)
+        return { serviceName: svc, kgPreBuilt: true }
+      },
+
+      // Stage 1 — Validate KG (agent reads SKILL.md only if build needed)
+      (preResult, svc) => agent(kgPrompt(svc),
         { schema: KG_STAGE_SCHEMA, label: `kg:${svc}`, phase: 'Prepare' }),
 
-      // Stage 2 — Ensure DG + determine wiki state
-      (kgResult, svc) => {
+      // Stage 1.5 — Build DG via workflow() if missing (direct call, not in agent prompt)
+      async (kgResult, svc) => {
         if (!kgResult || !kgResult.success) {
-          return { serviceName: svc, success: false, error: kgResult ? kgResult.error : 'KG stage failed', domainsAll: [], domainsToGenerate: [] }
+          return { serviceName: svc, dgPreBuilt: false, kgFailed: true }
+        }
+        const svcRoot = setup.mode === 'batch' ? `${setup.projectRoot}/${svc}` : setup.serviceRoot
+        const dgPath = `${svcRoot}/.understand-anything/domain-graph.json`
+        const { execSync } = await import('node:child_process')
+        const dgExists = (() => { try { execSync(`test -f "${dgPath}"`, { stdio: 'pipe' }); return true } catch { return false } })()
+        const dgStatus = dgExists
+          ? (() => { try { return execSync(`node "${setup.skillDir}/../understand/validate-artifact.mjs" "${dgPath}" domain-graph:complete 2>/dev/null`, { encoding: 'utf-8' }).trim() } catch { return '{"status":"missing"}' } })()
+          : '{"status":"missing"}'
+        const status = (() => { try { return JSON.parse(dgStatus).status } catch { return 'missing' } })()
+
+        if (status === 'complete' && !setup.force) {
+          log(`${svc}: DG exists and is complete — skipping build`)
+          return { serviceName: svc, dgPreBuilt: true }
+        }
+
+        log(`${svc}: Building DG via /understand-domain workflow...`)
+        const args = `${svcRoot}${setup.force ? ' --full' : ''}${setup.outputLanguage ? ` --language ${setup.outputLanguage}` : ''}`
+        const result = await workflow({ name: 'understand-domain' }, { rawArgs: args, cwd: svcRoot })
+        if (!result || result.success === false) {
+          throw new Error(`${svc}: DG build failed — ${result?.error || 'workflow returned non-success'}`)
+        }
+        log(`${svc}: DG build complete`)
+        return { serviceName: svc, dgPreBuilt: true }
+      },
+
+      // Stage 2 — Validate DG + determine wiki state (agent reads SKILL.md only if build needed)
+      (preResult, svc) => {
+        if (preResult && preResult.kgFailed) {
+          return { serviceName: svc, success: false, error: 'KG stage failed', domainsAll: [], domainsToGenerate: [] }
         }
         return agent(dgPrompt(svc),
           { schema: DG_STAGE_SCHEMA, label: `dg:${svc}`, phase: 'Prepare' })
