@@ -1,0 +1,69 @@
+{
+  "$schema": "Endpoint annotation configuration for extract-endpoints.py",
+  "$doc": "Each project type (backend/mobile/frontend) can provide its own config. This default covers Java/Kotlin backend (MOA/Dubbo/gRPC/Kafka) and mobile (Retrofit).",
+
+  "rpcProviders": {
+    "$doc": "Annotations that mark a class/method as an RPC service provider",
+    "annotations": ["MoaProvider", "DubboService", "GrpcService"],
+    "protocolMap": {
+      "MoaProvider": "moa",
+      "DubboService": "dubbo",
+      "GrpcService": "grpc"
+    }
+  },
+
+  "rpcConsumers": {
+    "$doc": "Annotations that mark a field/injection as an RPC consumer reference",
+    "fieldAnnotations": ["MoaConsumer", "DubboReference", "GrpcClient"],
+    "classAnnotations": ["FeignClient"],
+    "protocolMap": {
+      "MoaConsumer": "moa",
+      "DubboReference": "dubbo",
+      "GrpcClient": "grpc",
+      "FeignClient": "http"
+    }
+  },
+
+  "eventSubscribers": {
+    "$doc": "Annotations that mark a method as an event/message subscriber",
+    "annotations": ["KafkaListener"],
+    "protocolMap": {
+      "KafkaListener": "kafka"
+    }
+  },
+
+  "httpClient": {
+    "$doc": "HTTP client framework annotations for REST endpoint extraction",
+    "frameworks": {
+      "retrofit": {
+        "methodAnnotations": ["GET", "POST", "PUT", "DELETE", "PATCH", "HTTP"],
+        "pathArgument": "value",
+        "filePatterns": ["*Api*.kt", "*Api*.java", "*ApiService*.kt", "*Service*.kt"]
+      },
+      "feign": {
+        "methodAnnotations": ["GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "RequestMapping"],
+        "pathArgument": "value",
+        "filePatterns": ["*Client*.java", "*Feign*.java"]
+      }
+    }
+  },
+
+  "kgEdgeTypes": {
+    "$doc": "KG edge types used for graph-based endpoint extraction",
+    "rpc": ["provides_rpc", "consumes_rpc"],
+    "events": ["publishes", "subscribes"],
+    "http": ["consumes_api"]
+  },
+
+  "implicitConsumers": {
+    "$doc": "Heuristic rules for detecting implicit RPC consumers not annotated directly",
+    "namePatterns": ["MoaService$", "WrapperService$", "WrapperMoaService$", "MoaWrapperService$"],
+    "namePatternFlags": "IGNORECASE",
+    "tags": ["rpc-consumer"]
+  },
+
+  "internalClassTags": {
+    "$doc": "KG tags that indicate an internal/non-endpoint class (should be skipped)",
+    "tags": ["data-access", "redis", "configuration", "business-logic", "event-handler", "callback", "ultron-composite"]
+  }
+}

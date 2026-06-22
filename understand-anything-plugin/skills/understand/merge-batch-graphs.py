@@ -1480,18 +1480,38 @@ def read_global_extraction_results(global_file: Path) -> list[dict]:
 # (ua-file-extract-results-*.json) and emits any RPC/MQ edges that
 # annotations dictate but are missing from the assembled graph.
 
-_PROVIDER_ANNOTATIONS: frozenset[str] = frozenset({
-    "MoaProvider", "DubboService", "GrpcService",
-})
-_CONSUMER_ANNOTATIONS: frozenset[str] = frozenset({
-    "MoaConsumer", "DubboReference", "GrpcClient",
-})
-_CONSUMER_CLASS_ANNOTATIONS: frozenset[str] = frozenset({
-    "FeignClient",
-})
-_SUBSCRIBER_ANNOTATIONS: frozenset[str] = frozenset({
-    "KafkaListener",
-})
+_ENDPOINT_CONFIG_PATH = Path(__file__).parent / "endpoint-annotations.json"
+
+
+def _load_endpoint_config() -> dict[str, Any]:
+    """Load endpoint annotation config from endpoint-annotations.json."""
+    if _ENDPOINT_CONFIG_PATH.is_file():
+        try:
+            cfg = json.loads(_ENDPOINT_CONFIG_PATH.read_text(encoding="utf-8"))
+            if isinstance(cfg, dict):
+                return cfg
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {}
+
+
+def _get_annotation_sets(config: dict) -> tuple[frozenset, frozenset, frozenset, frozenset]:
+    """Extract annotation sets from config, with fallback defaults."""
+    rpc = config.get("rpcProviders", {})
+    cons = config.get("rpcConsumers", {})
+    evt = config.get("eventSubscribers", {})
+    return (
+        frozenset(rpc.get("annotations", ["MoaProvider", "DubboService", "GrpcService"])),
+        frozenset(cons.get("fieldAnnotations", ["MoaConsumer", "DubboReference", "GrpcClient"])),
+        frozenset(cons.get("classAnnotations", ["FeignClient"])),
+        frozenset(evt.get("annotations", ["KafkaListener"])),
+    )
+
+
+_endpoint_config = _load_endpoint_config()
+_PROVIDER_ANNOTATIONS, _CONSUMER_ANNOTATIONS, _CONSUMER_CLASS_ANNOTATIONS, _SUBSCRIBER_ANNOTATIONS = (
+    _get_annotation_sets(_endpoint_config)
+)
 
 
 def _annotation_names(annotations: Any) -> set[str]:

@@ -17,11 +17,17 @@ KG_ARG=""
 if [ -f "$KG_FILE" ]; then
   KG_ARG="--knowledge-graph=$KG_FILE"
 fi
+SA_FILE="$SERVICE_ROOT/.understand-anything/intermediate/extraction/structural-analysis.json"
+SA_ARG=""
+if [ -f "$SA_FILE" ]; then
+  SA_ARG="--structural-analysis=$SA_FILE"
+fi
 python3 "$SKILL_DIR/extract-endpoints.py" \
   "$SERVICE_ROOT/.understand-anything/tmp" \
   "$SERVICE_NAME" \
   --output="$PROJECT_ROOT/.understand-anything/intermediate/wiki/endpoints/$SERVICE_NAME.json" \
   --project-root="$SERVICE_ROOT" \
+  $SA_ARG \
   $KG_ARG
 ```
 
@@ -29,7 +35,8 @@ python3 "$SKILL_DIR/extract-endpoints.py" \
 - Reads `ua-file-extract-results-*.json` from the extraction directory
 - Detects MoaProvider, DubboService, GrpcService, FeignClient, KafkaListener annotations
 - Produces `ServiceEndpointDoc` JSON with `providers`, `consumers`, and `kafkaTopics` arrays
-- When `--knowledge-graph` is provided, also extracts client-side HTTP endpoints (Retrofit @GET/@POST etc.) from endpoint nodes in the knowledge graph, producing an `httpEndpoints` array
+- **When `--structural-analysis` is provided (preferred for mobile/frontend)**: extracts HTTP endpoints from `structural-analysis.json`'s `endpoints` and `functions` fields — deterministic parsing with near-100% recall for Retrofit/@GET/@POST annotations
+- When `--knowledge-graph` is provided (fallback): extracts HTTP endpoints from KG `endpoint` nodes via `consumes_api` edges (lower recall, depends on LLM-generated graph completeness)
 - When `--project-root` is provided, extracts Javadoc descriptions from interface source files and enriches each method with a `description` field (interface files are checked first, then falls back to implementation classes)
 - Skips gracefully if extraction directory is missing or empty
 

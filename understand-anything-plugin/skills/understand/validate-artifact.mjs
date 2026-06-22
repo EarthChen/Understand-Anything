@@ -20,6 +20,7 @@
 import { readFileSync, realpathSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Contract definitions: required stages per artifact type
@@ -94,15 +95,38 @@ export function validateArtifact({ artifactPath, contract, readFile, getGitCommi
 // ---------------------------------------------------------------------------
 // Semantic completeness check
 // ---------------------------------------------------------------------------
-const RPC_ANNOTATIONS = {
-  "@MoaProvider": "provides_rpc",
-  "@DubboService": "provides_rpc",
-  "@GrpcService": "provides_rpc",
-  "@MoaConsumer": "consumes_rpc",
-  "@DubboReference": "consumes_rpc",
-  "@GrpcClient": "consumes_rpc",
-  "@FeignClient": "consumes_rpc",
-};
+// Load annotation→edge mapping from endpoint-annotations.json config
+function _loadRpcAnnotations() {
+  const defaults = {
+    "@MoaProvider": "provides_rpc", "@DubboService": "provides_rpc", "@GrpcService": "provides_rpc",
+    "@MoaConsumer": "consumes_rpc", "@DubboReference": "consumes_rpc", "@GrpcClient": "consumes_rpc",
+    "@FeignClient": "consumes_rpc",
+  };
+  try {
+    const selfDir = dirname(fileURLToPath(import.meta.url));
+    const cfgPath = join(selfDir, 'endpoint-annotations.json');
+    const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
+    const map = {};
+    for (const section of ['rpcProviders', 'rpcConsumers', 'eventSubscribers']) {
+      const s = cfg[section] || {};
+      const edgeType = section === 'rpcProviders' ? 'provides_rpc'
+        : section === 'rpcConsumers' ? 'consumes_rpc' : 'subscribes';
+      for (const ann of (s.annotations || [])) {
+        map[`@${ann}`] = edgeType;
+      }
+      for (const ann of (s.classAnnotations || [])) {
+        map[`@${ann}`] = edgeType;
+      }
+      for (const ann of (s.fieldAnnotations || [])) {
+        map[`@${ann}`] = edgeType;
+      }
+    }
+    return Object.keys(map).length > 0 ? map : defaults;
+  } catch {
+    return defaults;
+  }
+}
+const RPC_ANNOTATIONS = _loadRpcAnnotations();
 
 function checkSemanticCompleteness(graph, sourceFiles) {
   const edgeTypes = new Set((graph.edges || []).map(e => e.type));
