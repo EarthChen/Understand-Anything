@@ -393,6 +393,19 @@ sources: [raw/prd/房间/2025-10-v2.25.0-跨房间PK.md]
         self.assertNotIn("requirement", emitted_types)
         self.assertNotIn("testcase", emitted_types)
 
+    def test_profile_override_generic_suppresses_prd_node_types(self):
+        manifest = parser.parse_wiki(FIXTURES / "prd-wiki", profile_override="generic")
+
+        self.assertEqual(manifest["profile"], "generic")
+        emitted_types = {node["type"] for node in manifest["nodes"]}
+        self.assertNotIn("requirement", emitted_types)
+        self.assertNotIn("testcase", emitted_types)
+
+    def test_profile_override_prd_wiki_sets_manifest_profile_for_generic_wiki(self):
+        manifest = parser.parse_wiki(FIXTURES / "generic-wiki", profile_override="prd-wiki")
+
+        self.assertEqual(manifest["profile"], "prd-wiki")
+
 
 class MergeFixtureTests(unittest.TestCase):
     def setUp(self):
@@ -419,6 +432,53 @@ class MergeFixtureTests(unittest.TestCase):
         self.assertIn("testcase", node_types)
         self.assertIn("prd-wiki", graph["project"]["frameworks"])
         self.assertEqual(graph["kind"], "knowledge")
+
+    def test_merge_places_requirement_entity_children_in_requirement_layer(self):
+        requirement_id = "requirement:summaries/房间-2025-10-v2.25.0-跨房间PK"
+        entity_id = "entity:pk-mode"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            work = Path(temp_dir) / "prd-wiki"
+            shutil.copytree(FIXTURES / "prd-wiki", work)
+            manifest = parser.parse_wiki(work)
+            intermediate = work / ".understand-anything" / "intermediate"
+            intermediate.mkdir(parents=True, exist_ok=True)
+            (intermediate / "scan-manifest.json").write_text(
+                json.dumps(manifest, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (intermediate / "analysis-batch-1.json").write_text(
+                json.dumps(
+                    {
+                        "nodes": [
+                            {
+                                "id": entity_id,
+                                "type": "entity",
+                                "name": "PK mode",
+                                "summary": "Cross-room PK mode",
+                                "tags": [],
+                                "complexity": "simple",
+                            }
+                        ],
+                        "edges": [
+                            {
+                                "source": requirement_id,
+                                "target": entity_id,
+                                "type": "related",
+                                "direction": "forward",
+                                "weight": 0.7,
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            graph = self.merge_module.merge(work)
+
+        layers_by_id = {layer["id"]: layer for layer in graph["layers"]}
+        self.assertIn(entity_id, layers_by_id["layer:summaries"]["nodeIds"])
+        self.assertNotIn(entity_id, layers_by_id.get("layer:other", {}).get("nodeIds", []))
 
 
 if __name__ == "__main__":

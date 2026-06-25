@@ -7,7 +7,7 @@ extracts structure from markdown files, resolves wikilinks, and derives
 categories from index.md section headings.
 
 Usage:
-    python parse-knowledge-base.py <wiki-directory>
+    python parse-knowledge-base.py <wiki-directory> [--profile auto|generic|prd-wiki]
 
 Output:
     Writes scan-manifest.json to <wiki-directory>/.understand-anything/intermediate/
@@ -643,7 +643,7 @@ def filter_specific_requirement_matches(requirements: list[dict]) -> list[dict]:
     return filtered
 
 
-def parse_wiki(root: Path) -> dict:
+def parse_wiki(root: Path, profile_override: str = PROFILE_AUTO) -> dict:
     """Parse a Karpathy-pattern wiki and produce the scan manifest."""
     root = Path(root).resolve()
     detection = detect_format(root)
@@ -652,6 +652,8 @@ def parse_wiki(root: Path) -> dict:
               file=sys.stderr)
         sys.exit(1)
 
+    if profile_override != PROFILE_AUTO:
+        detection["profile"] = profile_override
     profile = detection.get("profile", PROFILE_GENERIC)
     wiki_root = Path(detection["wiki_root"])
     raw_root = root / "raw"
@@ -956,17 +958,48 @@ def parse_wiki(root: Path) -> dict:
     }
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: parse-knowledge-base.py <wiki-directory>", file=sys.stderr)
-        sys.exit(1)
+def parse_cli_args(argv: list[str]) -> tuple[Path, str]:
+    profile = PROFILE_AUTO
+    root_arg = None
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--profile":
+            if i + 1 >= len(argv):
+                print("Error: --profile requires auto, generic, or prd-wiki", file=sys.stderr)
+                sys.exit(1)
+            profile = argv[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--profile="):
+            profile = arg.split("=", 1)[1]
+            i += 1
+            continue
+        if arg.startswith("--"):
+            print(f"Error: Unknown option {arg}", file=sys.stderr)
+            sys.exit(1)
+        if root_arg is not None:
+            print(f"Error: Unexpected path argument {arg}", file=sys.stderr)
+            sys.exit(1)
+        root_arg = arg
+        i += 1
 
-    root = Path(sys.argv[1]).resolve()
+    if root_arg is None:
+        print("Usage: parse-knowledge-base.py <wiki-directory> [--profile auto|generic|prd-wiki]", file=sys.stderr)
+        sys.exit(1)
+    if profile not in {PROFILE_AUTO, PROFILE_GENERIC, PROFILE_PRD_WIKI}:
+        print("Error: --profile must be auto, generic, or prd-wiki", file=sys.stderr)
+        sys.exit(1)
+    return Path(root_arg).resolve(), profile
+
+
+def main():
+    root, profile_override = parse_cli_args(sys.argv[1:])
     if not root.is_dir():
         print(f"Error: {root} is not a directory", file=sys.stderr)
         sys.exit(1)
 
-    manifest = parse_wiki(root)
+    manifest = parse_wiki(root, profile_override=profile_override)
 
     # Write output
     out_dir = root / ".understand-anything" / "intermediate"

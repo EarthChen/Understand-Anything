@@ -41,7 +41,7 @@ Intermediate files are preserved by default for checkpoint/resume. Use `--clean`
 
 2. Run the format detection script bundled with this skill:
    ```
-   python3 <SKILL_DIR>/parse-knowledge-base.py <TARGET_DIR>
+   python3 <SKILL_DIR>/parse-knowledge-base.py <TARGET_DIR> [--profile auto|generic|prd-wiki]
    ```
    - If the script exits with an error, tell the user this doesn't appear to be a Karpathy-pattern wiki and explain what was expected
    - If successful, proceed. The script writes `scan-manifest.json` to `<TARGET_DIR>/.understand-anything/intermediate/`
