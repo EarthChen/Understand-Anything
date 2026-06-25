@@ -46,6 +46,51 @@ describe("validateSystemGraph", () => {
     expect(result.issues).toEqual([]);
   });
 
+  it("accepts a knowledge facet with a PRD wiki service index entry", () => {
+    const graph: SystemGraph = {
+      ...validGraph,
+      nodes: [
+        ...validGraph.nodes,
+        {
+          id: "facet:knowledge",
+          type: "facet",
+          name: "Knowledge",
+          summary: "Product knowledge artifacts",
+          facetType: "knowledge",
+        },
+        {
+          id: "microservice:amar-prd",
+          type: "microservice",
+          name: "amar-prd",
+          summary: "PRD and testcase knowledge wiki",
+          languages: [],
+          frameworks: ["prd-wiki"],
+          stats: { nodes: 10, edges: 5, files: 0 },
+          kgPath: "amar-prd/.understand-anything/knowledge-graph.json",
+        },
+      ],
+      edges: [
+        ...validGraph.edges,
+        { source: "facet:knowledge", target: "microservice:amar-prd", type: "contains", weight: 1 },
+      ],
+      serviceIndex: {
+        ...validGraph.serviceIndex,
+        "amar-prd": {
+          hasKg: true,
+          hasWiki: false,
+          hasDomain: false,
+          basePath: "amar-prd",
+          facet: "knowledge",
+          profile: "prd-wiki",
+        },
+      },
+    };
+
+    const result = validateSystemGraph(graph);
+    expect(result.valid).toBe(true);
+    expect(result.data?.serviceIndex["amar-prd"].facet).toBe("knowledge");
+  });
+
   it("rejects non-object input", () => {
     const result = validateSystemGraph(null);
     expect(result.valid).toBe(false);

@@ -148,6 +148,23 @@ def discover_services(
     return services
 
 
+def _is_knowledge_artifact(kg: dict[str, Any]) -> bool:
+    project = kg.get("project", {})
+    frameworks = project.get("frameworks", [])
+    if "prd-wiki" in frameworks:
+        return True
+    nodes = kg.get("nodes", [])
+    return any(node.get("type") in {"requirement", "testcase"} for node in nodes)
+
+
+def _knowledge_profile(kg: dict[str, Any]) -> str:
+    project = kg.get("project", {})
+    frameworks = project.get("frameworks", [])
+    if "prd-wiki" in frameworks:
+        return "prd-wiki"
+    return "generic"
+
+
 def extract_service_info(service_name: str, kg: dict[str, Any]) -> dict[str, Any]:
     """Extract high-level info from a service's knowledge graph."""
     project = kg.get("project", {})
@@ -274,7 +291,11 @@ def build_system_graph(
         except (OSError, json.JSONDecodeError) as exc:
             print(f"  Warning: skipping {svc['name']}: {exc}", file=sys.stderr)
             continue
-        service_infos.append(extract_service_info(svc["name"], kg))
+        info = extract_service_info(svc["name"], kg)
+        if _is_knowledge_artifact(kg):
+            info["facet"] = "knowledge"
+            info["profile"] = _knowledge_profile(kg)
+        service_infos.append(info)
 
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
@@ -294,9 +315,20 @@ def build_system_graph(
                 "type": "facet",
                 "name": facet.get("name", facet_type),
                 "summary": "",
-                "facetType": facet_type if facet_type in ("server", "mobile", "frontend") else "server",
+                "facetType": facet_type if facet_type in ("server", "mobile", "frontend", "knowledge") else "server",
                 "path": facet.get("path", ""),
             })
+
+    if any(info.get("facet") == "knowledge" for info in service_infos) and "knowledge" not in facet_ids:
+        facet_ids["knowledge"] = "facet:knowledge"
+        nodes.append({
+            "id": "facet:knowledge",
+            "type": "facet",
+            "name": "Knowledge",
+            "summary": "Product and document knowledge artifacts",
+            "facetType": "knowledge",
+            "path": "",
+        })
 
     for info in service_infos:
         svc_id = f"microservice:{info['name']}"
@@ -319,7 +351,7 @@ def build_system_graph(
         })
 
         # Add facet → service contains edge
-        svc_facet = meta.get("facet", "")
+        svc_facet = info.get("facet") or meta.get("facet", "")
         if svc_facet and svc_facet in facet_ids:
             edges.append({
                 "source": facet_ids[svc_facet],
@@ -354,9 +386,11 @@ def build_system_graph(
             "kgCommit": info["kg_commit"],
             "basePath": base_path,
         }
-        svc_facet_val = meta.get("facet")
+        svc_facet_val = info.get("facet") or meta.get("facet")
         if svc_facet_val:
             idx_entry["facet"] = svc_facet_val
+        if info.get("profile"):
+            idx_entry["profile"] = info["profile"]
         service_index[info["name"]] = idx_entry
 
     edges.extend(_match_rpc_edges(service_infos))
