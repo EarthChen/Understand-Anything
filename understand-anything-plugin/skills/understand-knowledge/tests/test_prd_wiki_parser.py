@@ -186,8 +186,8 @@ sources: [raw/prd/房间/2025-10-v2.25.0-跨房间PK.md]
             for node in manifest["nodes"]
             if node["type"] == "article"
         }
-        self.assertEqual(nodes_by_path["string-tags.md"]["tags"], ["alpha", "beta"])
-        self.assertEqual(nodes_by_path["array-tags.md"]["tags"], ["delta", "gamma"])
+        self.assertEqual(nodes_by_path["wiki/string-tags.md"]["tags"], ["alpha", "beta"])
+        self.assertEqual(nodes_by_path["wiki/array-tags.md"]["tags"], ["delta", "gamma"])
 
     def test_prd_wiki_scan_emits_requirement_testcase_sources_and_edges(self):
         manifest = parser.parse_wiki(FIXTURES / "prd-wiki")
