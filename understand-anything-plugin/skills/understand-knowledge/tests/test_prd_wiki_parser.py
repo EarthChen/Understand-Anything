@@ -443,17 +443,18 @@ sources: [raw/prd/房间/2025-10-v2.25.0-跨房间PK.md]
 
     def test_parse_writes_standard_knowledge_graph_artifact(self):
         """Dashboard/query integration depends on the standard knowledge-graph.json path."""
-        fixture = self.fixture_root / "prd-wiki"
-        output_dir = fixture / ".understand-anything"
-        final_graph = output_dir / "knowledge-graph.json"
-        if final_graph.exists():
-            final_graph.unlink()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = Path(temp_dir) / "prd-wiki"
+            shutil.copytree(self.fixture_root / "prd-wiki", fixture)
+            output_dir = fixture / ".understand-anything"
+            final_graph = output_dir / "knowledge-graph.json"
 
-        result = self.run_parser(fixture, "--profile", "prd-wiki")
+            result = self.run_parser(fixture, "--profile", "prd-wiki")
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(final_graph.is_file())
-        graph = json.loads(final_graph.read_text(encoding="utf-8"))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(final_graph.is_file())
+            graph = json.loads(final_graph.read_text(encoding="utf-8"))
+
         node_types = {node["type"] for node in graph["nodes"]}
         self.assertIn("requirement", node_types)
         self.assertIn("testcase", node_types)
