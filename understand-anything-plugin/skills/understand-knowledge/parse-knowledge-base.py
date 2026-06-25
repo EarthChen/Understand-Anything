@@ -827,7 +827,7 @@ def parse_wiki(root: Path, profile_override: str = PROFILE_AUTO) -> dict:
             "month": month,
             "version": version,
             "detail": detail,
-            "content": text[:3000],  # First 3000 chars for LLM analysis
+            "content": text,
         }
         if subtype:
             knowledge_meta["subtype"] = subtype
