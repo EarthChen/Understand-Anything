@@ -35,6 +35,7 @@ PROFILE_AUTO = "auto"
 
 # Files that are part of wiki infrastructure, not content articles
 INFRA_FILES = {"index.md", "log.md", "claude.md", "agents.md", "soul.md"}
+NON_WIKI_CONTENT_DIRS = {".understand-anything", ".git", "raw"}
 
 # ---------------------------------------------------------------------------
 # Detection: is this a Karpathy-pattern wiki?
@@ -58,6 +59,9 @@ def detect_profile(root: Path, wiki_root: Path) -> str:
                 return PROFILE_PRD_WIKI
 
     for md_file in wiki_root.rglob("*.md"):
+        rel_parts = md_file.relative_to(wiki_root).parts
+        if any(part in NON_WIKI_CONTENT_DIRS for part in rel_parts[:-1]):
+            continue
         frontmatter = extract_frontmatter(md_file.read_text(encoding="utf-8", errors="replace"))
         if frontmatter.get("source_type") == "prd":
             return PROFILE_PRD_WIKI
@@ -158,19 +162,89 @@ def split_link_fragment(target: str) -> tuple[str, str | None]:
 def extract_markdown_links(text: str) -> dict:
     """Extract non-image markdown links, separated into internal and external."""
     links = {"internal": [], "external": []}
-    for m in MARKDOWN_LINK_RE.finditer(text):
-        label = m.group(1).strip()
-        target = m.group(2).strip()
+    for label, target in _iter_markdown_links(text):
         if target.startswith(("http://", "https://")):
             links["external"].append(target)
             continue
         path, fragment = split_link_fragment(target)
         links["internal"].append({
             "label": label,
-            "target": path,
+            "target": path or None,
             "fragment": fragment,
         })
     return links
+
+
+def _iter_markdown_links(text: str):
+    """Yield non-image inline markdown links with balanced parentheses."""
+    i = 0
+    while i < len(text):
+        if text[i] != "[" or (i > 0 and text[i - 1] == "!"):
+            i += 1
+            continue
+        label_end = text.find("]", i + 1)
+        if label_end == -1 or label_end + 1 >= len(text) or text[label_end + 1] != "(":
+            i += 1
+            continue
+        target_start = label_end + 2
+        target_end = _find_markdown_link_target_end(text, target_start)
+        if target_end is None:
+            i += 1
+            continue
+        label = text[i + 1:label_end].strip()
+        target = _extract_markdown_link_destination(text[target_start:target_end])
+        if target:
+            yield label, target
+        i = target_end + 1
+
+
+def _find_markdown_link_target_end(text: str, start: int) -> int | None:
+    depth = 0
+    quote = None
+    escaped = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in {"'", '"'}:
+            quote = ch
+            continue
+        if ch == "(":
+            depth += 1
+            continue
+        if ch == ")":
+            if depth == 0:
+                return i
+            depth -= 1
+    return None
+
+
+def _extract_markdown_link_destination(raw_target: str) -> str:
+    raw_target = raw_target.strip()
+    if not raw_target:
+        return ""
+    if raw_target.startswith("<"):
+        end = raw_target.find(">")
+        if end != -1:
+            return raw_target[1:end].strip()
+
+    depth = 0
+    for i, ch in enumerate(raw_target):
+        if ch == "(":
+            depth += 1
+        elif ch == ")" and depth > 0:
+            depth -= 1
+        elif ch.isspace() and depth == 0:
+            return raw_target[:i].strip()
+    return raw_target
 
 
 def extract_headings(text: str) -> list[dict]:
@@ -549,6 +623,7 @@ def parse_wiki(root: Path) -> dict:
 
     return {
         "format": "karpathy",
+        "profile": detection["profile"],
         "stats": stats,
         "categories": [{"name": c["name"], "count": len(c["articles"])} for c in categories],
         "logEntries": len(log_entries),
