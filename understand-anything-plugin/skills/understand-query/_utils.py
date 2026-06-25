@@ -127,6 +127,37 @@ def _format_business_features(data: dict) -> str:
 
 
 def _format_markdown(data: Any) -> str:
+    if isinstance(data, dict) and "coverage" in data and "requirement" in data:
+        req = data.get("requirement") or {}
+        title = req.get("name", req.get("id", data.get("service", "?")))
+        lines = [f"# Knowledge Coverage: {title}", ""]
+        coverage = data.get("coverage", [])
+        if coverage:
+            for node in coverage:
+                lines.append(f"- **{node.get('name', node.get('id', '?'))}** ({node.get('type', '?')})")
+        else:
+            lines.append("No deterministic testcase coverage found.")
+        return "\n".join(lines)
+
+    if isinstance(data, dict) and "results" in data and "service" in data and "query" in data:
+        lines = [f"# Knowledge Search: {data.get('query', '?')}", f"Service: {data.get('service', '?')}", ""]
+        for r in data["results"]:
+            metadata = r.get("metadata", {}) if isinstance(r.get("metadata"), dict) else {}
+            business = r.get("business", metadata.get("business"))
+            version = r.get("version", metadata.get("version"))
+            source_path = r.get("sourcePath", metadata.get("sourcePath"))
+            details = []
+            if business:
+                details.append(f"business={business}")
+            if version:
+                details.append(f"version={version}")
+            if source_path:
+                details.append(f"sourcePath={source_path}")
+            suffix = f" ({', '.join(details)})" if details else ""
+            summary = r.get("summary", r.get("match", ""))[:200]
+            lines.append(f"- **{r.get('name', r.get('id', '?'))}**{suffix}: {summary}")
+        return "\n".join(lines)
+
     if isinstance(data, dict) and "domains" in data and not data.get("question"):
         lines = ["# Business Domains", ""]
         for d in data["domains"]:
@@ -915,5 +946,4 @@ def _format_markdown(data: Any) -> str:
 
 def _short_type_name(name: str) -> str:
     return name.rsplit(".", 1)[-1]
-
 

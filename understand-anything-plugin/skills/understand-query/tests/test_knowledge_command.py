@@ -1,0 +1,181 @@
+import argparse
+from pathlib import Path
+from unittest.mock import patch
+import pytest
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from _commands import cmd_knowledge
+from _helpers import _resolve_knowledge_service
+from ua_query import parse_args
+
+
+def _args(**overrides):
+    defaults = {
+        "server": "http://localhost:3001",
+        "service": "amar-prd",
+        "search": None,
+        "node": None,
+        "neighbors": None,
+        "coverage": None,
+        "knowledge_action": "search",
+        "query": None,
+        "type": None,
+        "edge_type": None,
+        "direction": "both",
+        "depth": 1,
+        "limit": 20,
+        "offset": 0,
+        "format": "json",
+    }
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+def test_parse_knowledge_search_args():
+    args = parse_args([
+        "knowledge",
+        "search",
+        "跨房间 PK",
+        "--type",
+        "requirement",
+        "--service",
+        "amar-prd",
+    ])
+
+    assert args.command == "knowledge"
+    assert args.knowledge_action == "search"
+    assert args.query == "跨房间 PK"
+    assert args.type == "requirement"
+    assert args.service == "amar-prd"
+
+
+@patch("_commands._search_api")
+def test_knowledge_search_queries_kg_scope(mock_search):
+    mock_search.return_value = [{"id": "requirement:1", "name": "跨房间 PK"}]
+
+    result = cmd_knowledge(_args(query="跨房间 PK", type="requirement"))
+
+    mock_search.assert_called_once_with(
+        "http://localhost:3001",
+        "跨房间 PK",
+        service="amar-prd",
+        scope="kg",
+        limit=20,
+        type="requirement",
+        offset=0,
+    )
+    assert result == {
+        "service": "amar-prd",
+        "query": "跨房间 PK",
+        "results": [{"id": "requirement:1", "name": "跨房间 PK"}],
+    }
+
+
+@patch("_commands._resolve_knowledge_service")
+@patch("_commands._search_api")
+def test_knowledge_search_auto_resolves_single_service(mock_search, mock_resolve):
+    mock_resolve.return_value = "amar-prd"
+    mock_search.return_value = []
+
+    cmd_knowledge(_args(service=None, query="PK 测试"))
+
+    mock_resolve.assert_called_once_with("http://localhost:3001", None)
+    mock_search.assert_called_once_with(
+        "http://localhost:3001",
+        "PK 测试",
+        service="amar-prd",
+        scope="kg",
+        limit=20,
+        type=None,
+        offset=0,
+    )
+
+
+@patch("_commands._helpers.fetch_json")
+def test_knowledge_coverage_queries_outbound_tested_by_neighbors(mock_fetch):
+    mock_fetch.return_value = {
+        "center": {"id": "requirement:1", "name": "跨房间 PK"},
+        "neighbors": [
+            {
+                "node": {"id": "testcase:1", "name": "跨房间 PK 用例", "type": "testcase"},
+                "edge": {"type": "tested_by"},
+                "direction": "outbound",
+            }
+        ],
+    }
+
+    result = cmd_knowledge(_args(knowledge_action="coverage", node="requirement:1"))
+
+    mock_fetch.assert_called_once_with(
+        "http://localhost:3001",
+        "/api/graph-query/neighbors",
+        {
+            "service": "amar-prd",
+            "graph": "kg",
+            "node": "requirement:1",
+            "direction": "outbound",
+            "depth": "1",
+            "edgeType": "tested_by",
+        },
+    )
+    assert result["service"] == "amar-prd"
+    assert result["requirement"] == {"id": "requirement:1", "name": "跨房间 PK"}
+    assert result["coverage"] == [
+        {"id": "testcase:1", "name": "跨房间 PK 用例", "type": "testcase"}
+    ]
+    assert result["total"] == 1
+
+
+@patch("_helpers.fetch_json")
+def test_resolve_knowledge_service_exits_when_none_found(mock_fetch):
+    mock_fetch.return_value = {"services": []}
+
+    with pytest.raises(SystemExit, match="No knowledge service found"):
+        _resolve_knowledge_service("http://localhost:3001", None)
+
+
+@patch("_helpers.fetch_json")
+def test_resolve_knowledge_service_returns_single_available_kg_service(mock_fetch):
+    mock_fetch.return_value = {
+        "services": [
+            {
+                "name": "amar-prd",
+                "facet": "knowledge",
+                "dataLayers": {"kg": {"available": True}},
+            },
+            {
+                "name": "code-service",
+                "facet": "code",
+                "dataLayers": {"kg": {"available": True}},
+            },
+        ]
+    }
+
+    assert _resolve_knowledge_service("http://localhost:3001", None) == "amar-prd"
+
+
+@patch("_helpers.fetch_json")
+def test_resolve_knowledge_service_exits_with_candidates_when_ambiguous(mock_fetch):
+    mock_fetch.return_value = {
+        "services": [
+            {
+                "name": "amar-prd",
+                "facet": "knowledge",
+                "dataLayers": {"kg": {"available": True}},
+            },
+            {
+                "name": "other-prd",
+                "facet": "knowledge",
+                "dataLayers": {"kg": {"available": True}},
+            },
+        ]
+    }
+
+    with pytest.raises(SystemExit) as exc:
+        _resolve_knowledge_service("http://localhost:3001", None)
+
+    assert "Multiple knowledge services found" in str(exc.value)
+    assert "amar-prd" in str(exc.value)
+    assert "other-prd" in str(exc.value)

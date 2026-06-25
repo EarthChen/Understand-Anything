@@ -112,6 +112,29 @@ def _search_api(server: str, query: str, service: str | None = None, scope: str 
     return data.get("results", [])
 
 
+def _discover_knowledge_services(server: str) -> list[str]:
+    data = fetch_json(server, "/api/services", {})
+    services = []
+    for item in data.get("services", []):
+        if item.get("facet") != "knowledge":
+            continue
+        kg_layer = item.get("dataLayers", {}).get("kg", {})
+        if kg_layer.get("available") is True and item.get("name"):
+            services.append(item["name"])
+    return services
+
+
+def _resolve_knowledge_service(server: str, service: str | None) -> str:
+    if service:
+        return service
+    services = _discover_knowledge_services(server)
+    if len(services) == 1:
+        return services[0]
+    if not services:
+        raise SystemExit("No knowledge service found. Run system graph generation after /understand-knowledge.")
+    raise SystemExit("Multiple knowledge services found. Pass --service. Candidates: " + ", ".join(services))
+
+
 def _find_symbol_node(server: str, service: str, symbol: str) -> dict[str, Any]:
     """Search KG for a symbol and return the best-matching node.
 
@@ -544,5 +567,4 @@ def _kg_file_toc(args: argparse.Namespace, graph_data: dict[str, Any]) -> list[d
     ]
     symbols.sort(key=lambda s: (s.get("lineRange") or [9999])[0])
     return symbols
-
 

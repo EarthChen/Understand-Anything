@@ -58,6 +58,7 @@ Where `{skill_base_dir}` is the directory containing this SKILL.md file (the `Ba
 | Subcommand | Purpose | Detail Doc |
 |------------|---------|------------|
 | `ask` | **Start here for business questions.** Auto-discover → trace → wiki → domain → source-verify | This file |
+| `knowledge` | Knowledge wiki queries for product intent and deterministic QA coverage | This file |
 | `trace` | Search→neighbors→source in one call (with optional wiki/domain/verify/grouped) | [kg-trace.md](docs/kg-trace.md#trace--aggregated-searchneighborssource-recommended-for-agents) |
 | `kg` | Source-level KG: classes, calls, RPC, file annotations, file summary | [kg-trace.md](docs/kg-trace.md#kg--knowledge-graph-queries) |
 | `structure` | Code structure: signatures, annotations, types, cross-file symbol search + source (`--symbol`, **comma-separate for many symbols in one call**) | [structure-commands.md](docs/structure-commands.md) |
@@ -94,7 +95,23 @@ Where `{skill_base_dir}` is the directory containing this SKILL.md file (the `Ba
 | `/understand` | Knowledge graph (`kg` layer) + structural analysis |
 | `/understand-domain` | Domain graph (`domain` layer) |
 | `/understand-wiki` | Wiki + system graph (`wiki`, `services` layer) |
+| `/understand-knowledge` | Knowledge wiki graph (`knowledge` service facet, PRD/product intent, QA coverage) |
 | `/understand-business` | Business landscape (`business` layer) |
+
+---
+
+## Knowledge Wiki Queries
+
+Use `knowledge` for knowledge wiki graph queries, including PRD-derived product intent and deterministic QA coverage. PRD knowledge is **product intent / QA coverage context**; it does not change the `ask` command's code-source verified default behavior, and PRD content must not be treated as code fact.
+
+`--format` is a global flag, so place it before the subcommand name.
+
+```bash
+python ua_query.py --format md knowledge search "跨房间 PK" --service amar-prd --type requirement
+python ua_query.py knowledge search "PK 测试" --service amar-prd --type testcase
+python ua_query.py knowledge node "requirement:summaries/房间-2025-10-v2.25.0-跨房间PK" --service amar-prd
+python ua_query.py --format md knowledge coverage "requirement:summaries/房间-2025-10-v2.25.0-跨房间PK" --service amar-prd
+```
 
 ---
 

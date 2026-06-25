@@ -13,6 +13,7 @@ from _helpers import (
     _fetch_wiki_domain, _fetch_domain_flows, _score_node_relevance,
     _extract_code_keywords, _effective_service, _nodes_for_file,
     _is_test_path, _extract_symbol, _kg_file_toc, _cmd_structure_symbol,
+    _resolve_knowledge_service,
 )
 
 
@@ -165,6 +166,71 @@ def cmd_kg(args: argparse.Namespace) -> Any:
     elif args.type and args.type != "node":
         nodes = [n for n in nodes if n.get("type") == args.type]
     return {"nodes": nodes, "edges": data.get("edges", []) if args.verbose else None}
+
+
+def cmd_knowledge(args: argparse.Namespace) -> Any:
+    service = _resolve_knowledge_service(args.server, args.service)
+    action = args.knowledge_action
+
+    if action == "search":
+        results = _search_api(
+            args.server,
+            args.query,
+            service=service,
+            scope="kg",
+            limit=args.limit,
+            type=args.type,
+            offset=args.offset,
+        )
+        return {"service": service, "query": args.query, "results": results}
+
+    if action == "node":
+        data = _helpers.fetch_json(args.server, "/api/graph", {
+            "service": service,
+            "file": "knowledge-graph.json",
+        })
+        nodes = data.get("nodes", [])
+        exact = [n for n in nodes if n.get("id") == args.node or n.get("name") == args.node]
+        if exact:
+            matches = exact
+        else:
+            q = args.node.lower()
+            matches = [
+                n for n in nodes
+                if q in n.get("id", "").lower() or q in n.get("name", "").lower()
+            ]
+        return {"service": service, "nodes": matches, "total": len(matches)}
+
+    if action == "neighbors":
+        params: dict[str, str] = {
+            "service": service,
+            "graph": "kg",
+            "node": args.node,
+            "direction": args.direction,
+            "depth": str(args.depth),
+        }
+        if args.edge_type:
+            params["edgeType"] = args.edge_type
+        return _helpers.fetch_json(args.server, "/api/graph-query/neighbors", params)
+
+    if action == "coverage":
+        data = _helpers.fetch_json(args.server, "/api/graph-query/neighbors", {
+            "service": service,
+            "graph": "kg",
+            "node": args.node,
+            "direction": "outbound",
+            "depth": "1",
+            "edgeType": "tested_by",
+        })
+        coverage = [(n.get("node") or {}) for n in data.get("neighbors", [])]
+        return {
+            "service": service,
+            "requirement": data.get("center"),
+            "coverage": coverage,
+            "total": len(coverage),
+        }
+
+    raise SystemExit(f"Unknown knowledge action: {action}")
 
 
 def cmd_domain(args: argparse.Namespace) -> Any:
@@ -1272,5 +1338,4 @@ def cmd_source(args: argparse.Namespace) -> Any:
         return {"files": files_out}
 
     raise SystemExit("source requires --search or --file")
-
 
