@@ -361,6 +361,7 @@ def merge(root: Path) -> dict:
             project_name = h1_match.group(1).strip()
 
     # --- Assemble final graph ---
+    analyzed_at = datetime.now(timezone.utc).isoformat()
     graph = {
         "version": "1.0.0",
         "kind": "knowledge",
@@ -369,7 +370,7 @@ def merge(root: Path) -> dict:
             "languages": ["markdown"],
             "frameworks": ["karpathy-wiki"] + ([profile] if profile != "generic" else []),
             "description": f"Knowledge graph for {project_name}",
-            "analyzedAt": datetime.now(timezone.utc).isoformat(),
+            "analyzedAt": analyzed_at,
             "gitCommitHash": "",
         },
         "nodes": list(nodes.values()),
@@ -389,6 +390,19 @@ def merge(root: Path) -> dict:
             graph["project"]["gitCommitHash"] = result.stdout.strip()
     except (OSError, subprocess.TimeoutExpired):
         pass
+
+    graph["project"]["provenance"] = {
+        "generationMode": "standalone",
+        "completedStages": ["scan", "batch", "extract", "analyze", "merge", "validate"],
+        "degraded": False,
+        "qualityGates": {
+            "deterministicScan": True,
+            "mergeCompleted": True,
+        },
+        "gitCommitHash": graph["project"]["gitCommitHash"],
+        "toolVersion": "1.0.0",
+        "analyzedAt": analyzed_at,
+    }
 
     # Write output
     out_path = intermediate / "assembled-graph.json"

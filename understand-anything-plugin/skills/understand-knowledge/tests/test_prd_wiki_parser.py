@@ -432,6 +432,11 @@ class MergeFixtureTests(unittest.TestCase):
         self.assertIn("testcase", node_types)
         self.assertIn("prd-wiki", graph["project"]["frameworks"])
         self.assertEqual(graph["kind"], "knowledge")
+        self.assertEqual(
+            graph["project"]["provenance"]["completedStages"],
+            ["scan", "batch", "extract", "analyze", "merge", "validate"],
+        )
+        self.assertFalse(graph["project"]["provenance"]["degraded"])
 
     def test_merge_places_requirement_entity_children_in_requirement_layer(self):
         requirement_id = "requirement:summaries/房间-2025-10-v2.25.0-跨房间PK"
