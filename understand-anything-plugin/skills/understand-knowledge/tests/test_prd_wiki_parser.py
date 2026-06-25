@@ -1,10 +1,13 @@
 import importlib.util
+import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
 
 PARSER_PATH = Path(__file__).resolve().parents[1] / "parse-knowledge-base.py"
+MERGE_PATH = Path(__file__).resolve().parents[1] / "merge-knowledge-graph.py"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 spec = importlib.util.spec_from_file_location("parser", PARSER_PATH)
 parser = importlib.util.module_from_spec(spec)
@@ -389,6 +392,33 @@ sources: [raw/prd/房间/2025-10-v2.25.0-跨房间PK.md]
         emitted_types = {node["type"] for node in manifest["nodes"]}
         self.assertNotIn("requirement", emitted_types)
         self.assertNotIn("testcase", emitted_types)
+
+
+class MergeFixtureTests(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("merge_module", MERGE_PATH)
+        self.merge_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.merge_module)
+
+    def test_merge_preserves_requirement_testcase_nodes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            work = Path(temp_dir) / "prd-wiki"
+            shutil.copytree(FIXTURES / "prd-wiki", work)
+            manifest = parser.parse_wiki(work)
+            intermediate = work / ".understand-anything" / "intermediate"
+            intermediate.mkdir(parents=True, exist_ok=True)
+            (intermediate / "scan-manifest.json").write_text(
+                json.dumps(manifest, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            graph = self.merge_module.merge(work)
+
+        node_types = {node["type"] for node in graph["nodes"]}
+        self.assertIn("requirement", node_types)
+        self.assertIn("testcase", node_types)
+        self.assertIn("prd-wiki", graph["project"]["frameworks"])
+        self.assertEqual(graph["kind"], "knowledge")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 ---
 name: understand-knowledge
 description: Analyze a Karpathy-pattern LLM wiki knowledge base and generate an interactive knowledge graph with entity extraction, implicit relationships, and topic clustering. Supports --full to force regeneration and --clean to remove intermediate files after success.
-argument-hint: ["[wiki-directory] [--full] [--clean]"]
+argument-hint: ["[wiki-directory] [--full] [--clean] [--profile auto|generic|prd-wiki]"]
 ---
 
 # /understand-knowledge
@@ -19,11 +19,14 @@ The **Karpathy LLM wiki pattern** (see https://gist.github.com/karpathy/442a6bf5
 
 Detection signals: has `index.md` + multiple `.md` files with wikilinks. May have `raw/` directory and schema file.
 
+The **PRD wiki profile** detects product requirement knowledge bases with `wiki/summaries`, `wiki/testcases`, `raw/prd`, or `raw/testcase`. It emits `requirement` and `testcase` nodes, preserves raw PRD/testcase provenance, and links requirements to matching testcases with `tested_by` edges.
+
 ## Options
 
 - `$ARGUMENTS` may contain:
   - `--full` — Force full regeneration: delete `intermediate/` before processing and re-analyze all batches
   - `--clean` — Remove `intermediate/` after successful completion (preserved by default for checkpoint/resume)
+  - `--profile auto|generic|prd-wiki` — Select detection profile. `auto` is the default; `prd-wiki` emits `requirement`/`testcase` nodes and provenance for raw PRD and testcase files.
   - A wiki directory path — analyze the given directory instead of the current working directory
 
 Intermediate files are preserved by default for checkpoint/resume. Use `--clean` to remove them after successful completion.
@@ -45,6 +48,7 @@ Intermediate files are preserved by default for checkpoint/resume. Use `--clean`
 
 3. Read the scan-manifest.json and announce the results:
    - "Detected Karpathy wiki: N articles, N sources, N topics, N wikilinks (N unresolved)"
+   - "Profile: auto-detected profile from manifest (`generic` or `prd-wiki`)"
    - List the categories found from index.md
 
 ### Phase 2: SCAN (already done)
@@ -139,6 +143,8 @@ Dispatch `article-analyzer` subagents to extract implicit knowledge:
 
 6. Report summary to the user:
    - "Knowledge graph saved: N articles, N entities, N topics, N claims, N sources"
+   - "Profile: generic|prd-wiki"
+   - If profile is `prd-wiki`: "N requirements, N testcases, N raw PRDs, N raw testcase files"
    - "N edges (N wikilink, N categorized, N implicit)"
    - "N layers, N tour steps"
 

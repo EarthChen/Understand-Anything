@@ -28,6 +28,7 @@ from pathlib import Path
 
 VALID_NODE_TYPES = {
     "article", "entity", "topic", "claim", "source",
+    "requirement", "testcase",
     # Codebase types (for cross-compatibility)
     "file", "function", "class", "module", "concept",
     "config", "document", "service", "table", "endpoint",
@@ -53,6 +54,9 @@ NODE_TYPE_ALIASES = {
     "tag": "topic", "category": "topic", "theme": "topic",
     "assertion": "claim", "decision": "claim", "thesis": "claim",
     "reference": "source", "raw": "source", "paper": "source",
+    "req": "requirement", "prd": "requirement",
+    "requirement_summary": "requirement",
+    "test_case": "testcase", "qa_case": "testcase",
 }
 
 EDGE_TYPE_ALIASES = {
@@ -100,6 +104,7 @@ def merge(root: Path) -> dict:
 
     # Load scan manifest (deterministic base)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    profile = manifest.get("profile", "generic")
     nodes = {n["id"]: n for n in manifest["nodes"]}
     edges = list(manifest["edges"])
 
@@ -351,7 +356,7 @@ def merge(root: Path) -> dict:
         "project": {
             "name": project_name,
             "languages": ["markdown"],
-            "frameworks": ["karpathy-wiki"],
+            "frameworks": ["karpathy-wiki"] + ([profile] if profile != "generic" else []),
             "description": f"Knowledge graph for {project_name}",
             "analyzedAt": datetime.now(timezone.utc).isoformat(),
             "gitCommitHash": "",
