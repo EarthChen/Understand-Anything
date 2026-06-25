@@ -85,6 +85,48 @@ class BuildSystemGraphKnowledgeFacetTests(unittest.TestCase):
             self.assertTrue(any(edge["source"] == "facet:server" and edge["target"] == "microservice:svc" for edge in graph["edges"]))
             self.assertFalse(any(edge["source"] == "facet:knowledge" and edge["target"] == "microservice:svc" for edge in graph["edges"]))
 
+    def test_discovers_flat_knowledge_artifact_with_system_facets(self):
+        """Parent systems with code facets may also have root-level PRD wikis."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            system_dir = root / ".understand-anything"
+            system_dir.mkdir(parents=True)
+            (system_dir / "system.json").write_text(json.dumps({
+                "facets": [
+                    {
+                        "name": "Server",
+                        "type": "server",
+                        "path": "backend",
+                        "subPaths": ["svc"],
+                    }
+                ]
+            }), encoding="utf-8")
+
+            svc = root / "backend" / "svc" / ".understand-anything"
+            svc.mkdir(parents=True)
+            (svc / "knowledge-graph.json").write_text(json.dumps({
+                "version": "1.0.0",
+                "project": {"name": "svc", "frameworks": ["spring-boot"], "languages": ["java"]},
+                "nodes": [{"id": "file:service", "name": "Service.java", "type": "file"}],
+                "edges": [],
+            }), encoding="utf-8")
+
+            prd = root / "amar-prd" / ".understand-anything"
+            prd.mkdir(parents=True)
+            (prd / "knowledge-graph.json").write_text(json.dumps({
+                "version": "1.0.0",
+                "project": {"name": "amar-prd", "frameworks": ["prd-wiki"], "languages": []},
+                "nodes": [{"id": "requirement:room", "name": "跨房间 PK", "type": "requirement"}],
+                "edges": [],
+            }), encoding="utf-8")
+
+            graph = build_system_graph(str(root))
+
+            self.assertIn("svc", graph["serviceIndex"])
+            self.assertIn("amar-prd", graph["serviceIndex"])
+            self.assertEqual(graph["serviceIndex"]["amar-prd"]["facet"], "knowledge")
+            self.assertTrue(any(node["id"] == "facet:knowledge" for node in graph["nodes"]))
+
 
 if __name__ == "__main__":
     unittest.main()

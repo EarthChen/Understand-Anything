@@ -57,6 +57,23 @@ def _apply_system_metadata(
     return graph
 
 
+def _is_knowledge_artifact(kg: dict[str, Any]) -> bool:
+    project = kg.get("project", {})
+    frameworks = project.get("frameworks", [])
+    if "prd-wiki" in frameworks:
+        return True
+    nodes = kg.get("nodes", [])
+    return any(node.get("type") in {"requirement", "testcase"} for node in nodes)
+
+
+def _knowledge_profile(kg: dict[str, Any]) -> str:
+    project = kg.get("project", {})
+    frameworks = project.get("frameworks", [])
+    if "prd-wiki" in frameworks:
+        return "prd-wiki"
+    return "generic"
+
+
 def _discover_from_facets(
     root: Path,
     system_config: dict[str, Any],
@@ -85,6 +102,42 @@ def _discover_from_facets(
     return services
 
 
+def _discover_flat_knowledge_artifacts(
+    root: Path,
+    exclude_set: set[str],
+    seen: set[str],
+    include_patterns: list[str],
+) -> list[dict[str, Any]]:
+    services: list[dict[str, Any]] = []
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir():
+            continue
+        name = entry.name
+        if name.startswith(".") or name in SKIP_DIR_NAMES or name in seen:
+            continue
+        if include_patterns:
+            if not any(fnmatch.fnmatch(name, pattern) for pattern in include_patterns):
+                continue
+        elif any(fnmatch.fnmatch(name, pattern) for pattern in exclude_set):
+            continue
+
+        kg_path = entry / ".understand-anything" / "knowledge-graph.json"
+        if not kg_path.is_file():
+            continue
+        try:
+            kg = json.loads(kg_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if _is_knowledge_artifact(kg):
+            services.append({
+                "name": name,
+                "path": str(entry),
+                "kg_path": str(kg_path),
+                "basePath": name,
+            })
+    return services
+
+
 def discover_services(
     project_root: str,
     exclude: list[str] | None = None,
@@ -109,12 +162,6 @@ def discover_services(
 
     system_config = _load_system_config(root)
 
-    # Faceted layout: discover from system.json facets first
-    if system_config and system_config.get("facets"):
-        facet_services = _discover_from_facets(root, system_config)
-        if facet_services:
-            return facet_services
-
     if system_config:
         discovery = system_config.get("discovery", {})
         for pattern in discovery.get("exclude", []):
@@ -123,6 +170,19 @@ def discover_services(
     include_patterns: list[str] = []
     if system_config:
         include_patterns = system_config.get("discovery", {}).get("include", [])
+
+    # Faceted layout: discover from system.json facets first
+    if system_config and system_config.get("facets"):
+        facet_services = _discover_from_facets(root, system_config)
+        if facet_services:
+            seen = {svc["name"] for svc in facet_services}
+            flat_knowledge_services = _discover_flat_knowledge_artifacts(
+                root,
+                exclude_set,
+                seen,
+                include_patterns,
+            )
+            return facet_services + flat_knowledge_services
 
     services: list[dict[str, Any]] = []
     for entry in sorted(root.iterdir()):
@@ -146,23 +206,6 @@ def discover_services(
             })
 
     return services
-
-
-def _is_knowledge_artifact(kg: dict[str, Any]) -> bool:
-    project = kg.get("project", {})
-    frameworks = project.get("frameworks", [])
-    if "prd-wiki" in frameworks:
-        return True
-    nodes = kg.get("nodes", [])
-    return any(node.get("type") in {"requirement", "testcase"} for node in nodes)
-
-
-def _knowledge_profile(kg: dict[str, Any]) -> str:
-    project = kg.get("project", {})
-    frameworks = project.get("frameworks", [])
-    if "prd-wiki" in frameworks:
-        return "prd-wiki"
-    return "generic"
 
 
 def extract_service_info(service_name: str, kg: dict[str, Any]) -> dict[str, Any]:
