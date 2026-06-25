@@ -156,6 +156,31 @@ def _format_markdown(data: Any) -> str:
             suffix = f" ({', '.join(details)})" if details else ""
             summary = r.get("summary", r.get("match", ""))[:200]
             lines.append(f"- **{r.get('name', r.get('id', '?'))}**{suffix}: {summary}")
+            snippet = r.get("contentSnippet", "")
+            if snippet:
+                first_line = snippet.split("\n")[0][:120]
+                lines.append(f"  > {first_line}")
+        return "\n".join(lines)
+
+    if isinstance(data, dict) and data.get("kind") == "knowledge-read":
+        nodes = data.get("nodes", [])
+        lines = [f"## Knowledge Read ({len(nodes)} node(s))\n"]
+        for node in nodes:
+            name = node.get("name", node.get("id", "?"))
+            ntype = node.get("type", "")
+            meta = node.get("knowledgeMeta", {})
+            content = meta.get("content", "")
+            source_path = meta.get("sourcePath", "")
+            file_path = node.get("filePath", "")
+            lines.append(f"### {name} ({ntype})")
+            if file_path:
+                lines.append(f"**File:** `{file_path}`")
+            if source_path:
+                lines.append(f"**Source:** `{source_path}`")
+            if content:
+                lines.append("")
+                lines.append(content[:5000])
+            lines.append("")
         return "\n".join(lines)
 
     if isinstance(data, dict) and "domains" in data and not data.get("question"):
@@ -231,6 +256,17 @@ def _format_markdown(data: Any) -> str:
             lines.append(f"## Neighbors (center: {nbr.get('center', {}).get('name', '?')}, edges: {nbr.get('totalEdges', 0)})")
             for n in nbr["neighbors"][:15]:
                 lines.append(f"- [{n.get('direction', '?')}] **{n.get('name', '?')}** ({n.get('type', '?')}) via _{n.get('edgeType', '?')}_")
+            lines.append("")
+
+        # PRD Knowledge Context
+        prd = data.get("prdContext", [])
+        if prd:
+            lines.append(f"## PRD Context ({len(prd)} matches)")
+            for p in prd[:5]:
+                ptype = _short_type_name(p.get("type", "?"))
+                lines.append(f"- [{ptype}] **{p.get('name', p.get('id', '?'))}**")
+                if p.get("summary"):
+                    lines.append(f"  {p['summary'][:150]}")
             lines.append("")
 
         # Business context
