@@ -50,6 +50,11 @@ VALID_EDGE_TYPES = {
 
 ARTICLE_LIKE_NODE_TYPES = {"article", "requirement", "testcase"}
 
+
+def category_slug(name: str) -> str:
+    """Create category IDs that match parse-knowledge-base.py topic IDs."""
+    return re.sub(r"\s+", "-", name.strip().lower()).strip("-") or "unnamed"
+
 NODE_TYPE_ALIASES = {
     "note": "article", "page": "article", "wiki_page": "article",
     "person": "entity", "actor": "entity", "organization": "entity",
@@ -203,7 +208,7 @@ def merge(root: Path) -> dict:
 
     for cat in categories:
         cat_name = cat["name"]
-        cat_slug = re.sub(r"[^a-z0-9]+", "-", cat_name.lower()).strip("-") or "unnamed"
+        cat_slug = category_slug(cat_name)
         layer_id = f"layer:{cat_slug}"
         # Deduplicate layer IDs
         base_id = layer_id
@@ -307,7 +312,7 @@ def merge(root: Path) -> dict:
         cat_name = cat["name"]
         layer_id = cat_layer_map.get(cat_name)
         if not layer_id:
-            cat_slug = re.sub(r"[^a-z0-9]+", "-", cat_name.lower()).strip("-") or "unnamed"
+            cat_slug = category_slug(cat_name)
             layer_id = f"layer:{cat_slug}"
         members = list(dict.fromkeys(layer_members.get(layer_id, [])))  # Deduplicate preserving order
         layers.append({
@@ -333,7 +338,7 @@ def merge(root: Path) -> dict:
     # --- Build tour from index.md category ordering ---
     tour = []
     for i, cat in enumerate(categories):
-        cat_slug = re.sub(r"[^a-z0-9]+", "-", cat["name"].lower()).strip("-") or "unnamed"
+        cat_slug = category_slug(cat["name"])
         topic_id = f"topic:{cat_slug}"
         # Pick representative articles (up to 3 per category)
         members = [e["source"] for e in final_edges

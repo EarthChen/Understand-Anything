@@ -48,6 +48,8 @@ def detect_profile(root: Path, wiki_root: Path) -> str:
         return PROFILE_PRD_WIKI
     if (root / "raw" / "testcase").is_dir():
         return PROFILE_PRD_WIKI
+    if (wiki_root / "summaries").is_dir():
+        return PROFILE_PRD_WIKI
     if (wiki_root / "testcases").is_dir():
         return PROFILE_PRD_WIKI
 
@@ -438,7 +440,7 @@ def make_article_like_id(stem: str, frontmatter: dict, rel: Path, profile: str) 
     if profile == PROFILE_PRD_WIKI:
         if page_type == "testcase" or source_type == "testcase" or first_dir == "testcases":
             return f"testcase:{stem}", "testcase", "testcase_summary"
-        if page_type == "summary" or source_type == "prd":
+        if page_type == "summary" or source_type == "prd" or first_dir == "summaries":
             return f"requirement:{stem}", "requirement", "prd_summary"
 
     return f"article:{stem}", "article", None

@@ -99,6 +99,30 @@ sources: [raw/prd/房间/2025-10-v2.25.0-跨房间PK.md]
 
         self.assertEqual(detection["profile"], "prd-wiki")
 
+    def test_summaries_directory_auto_detects_prd_wiki_and_emits_requirements(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "wiki" / "summaries").mkdir(parents=True)
+            (root / "wiki" / "concepts").mkdir()
+            (root / "wiki" / "index.md").write_text(
+                "# Index\n\n## 需求\n\n- [活动需求](summaries/activity.md)\n",
+                encoding="utf-8",
+            )
+            (root / "wiki" / "summaries" / "activity.md").write_text(
+                "# 活动需求\n\n支持活动入口。\n",
+                encoding="utf-8",
+            )
+            (root / "wiki" / "concepts" / "room.md").write_text(
+                "# Room\n",
+                encoding="utf-8",
+            )
+
+            manifest = parser.parse_wiki(root)
+
+        nodes_by_id = {node["id"]: node for node in manifest["nodes"]}
+        self.assertEqual(manifest["profile"], "prd-wiki")
+        self.assertEqual(nodes_by_id["requirement:summaries/activity"]["type"], "requirement")
+
     def test_profile_ignores_raw_frontmatter_in_flat_wiki(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -437,6 +461,38 @@ class MergeFixtureTests(unittest.TestCase):
             ["scan", "batch", "extract", "analyze", "merge", "validate"],
         )
         self.assertFalse(graph["project"]["provenance"]["degraded"])
+
+    def test_merge_preserves_non_ascii_category_layers_and_tour(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            work = Path(temp_dir) / "prd-wiki"
+            shutil.copytree(FIXTURES / "prd-wiki", work)
+            (work / "wiki" / "index.md").write_text(
+                "# 中文 PRD\n\n## 需求\n\n- [跨房间 PK](summaries/房间-2025-10-v2.25.0-跨房间PK.md)\n\n## 测试\n\n- [PK优化 测试用例](testcases/房间-PK优化.md)\n",
+                encoding="utf-8",
+            )
+            manifest = parser.parse_wiki(work)
+            intermediate = work / ".understand-anything" / "intermediate"
+            intermediate.mkdir(parents=True, exist_ok=True)
+            (intermediate / "scan-manifest.json").write_text(
+                json.dumps(manifest, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            graph = self.merge_module.merge(work)
+
+        layers = {layer["name"]: layer for layer in graph["layers"]}
+        self.assertIn("需求", layers)
+        self.assertIn("测试", layers)
+        self.assertIn(
+            "requirement:summaries/房间-2025-10-v2.25.0-跨房间PK",
+            layers["需求"]["nodeIds"],
+        )
+        self.assertIn("topic:需求", layers["需求"]["nodeIds"])
+        self.assertNotIn(
+            "requirement:summaries/房间-2025-10-v2.25.0-跨房间PK",
+            next(layer["nodeIds"] for layer in graph["layers"] if layer["id"] == "layer:other"),
+        )
+        self.assertGreater(len(graph["tour"]), 0)
 
     def test_merge_places_requirement_entity_children_in_requirement_layer(self):
         requirement_id = "requirement:summaries/房间-2025-10-v2.25.0-跨房间PK"
