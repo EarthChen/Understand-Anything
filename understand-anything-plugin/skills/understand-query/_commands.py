@@ -182,7 +182,7 @@ def cmd_knowledge(args: argparse.Namespace) -> Any:
             type=args.type,
             offset=args.offset,
         )
-        return {"service": service, "query": args.query, "results": results}
+        return {"kind": "knowledge-search", "service": service, "query": args.query, "results": results}
 
     if action == "node":
         data = _helpers.fetch_json(args.server, "/api/graph", {
@@ -224,6 +224,7 @@ def cmd_knowledge(args: argparse.Namespace) -> Any:
         })
         coverage = [(n.get("node") or {}) for n in data.get("neighbors", [])]
         return {
+            "kind": "knowledge-coverage",
             "service": service,
             "requirement": data.get("center"),
             "coverage": coverage,
@@ -1338,4 +1339,3 @@ def cmd_source(args: argparse.Namespace) -> Any:
         return {"files": files_out}
 
     raise SystemExit("source requires --search or --file")
-

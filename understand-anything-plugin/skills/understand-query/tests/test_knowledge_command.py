@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from _commands import cmd_knowledge
 from _helpers import _resolve_knowledge_service
+from _utils import _format_markdown
 from ua_query import parse_args
 
 
@@ -67,10 +68,33 @@ def test_knowledge_search_queries_kg_scope(mock_search):
         offset=0,
     )
     assert result == {
+        "kind": "knowledge-search",
         "service": "amar-prd",
         "query": "跨房间 PK",
         "results": [{"id": "requirement:1", "name": "跨房间 PK"}],
     }
+
+
+def test_knowledge_search_markdown_uses_knowledge_heading():
+    rendered = _format_markdown({
+        "kind": "knowledge-search",
+        "service": "amar-prd",
+        "query": "跨房间 PK",
+        "results": [{"id": "requirement:1", "name": "跨房间 PK", "summary": "需求"}],
+    })
+
+    assert rendered.startswith("# Knowledge Search: 跨房间 PK")
+
+
+def test_source_like_search_result_does_not_render_as_knowledge_search():
+    rendered = _format_markdown({
+        "query": "Q",
+        "service": "svc",
+        "results": [{"file": "a.py", "snippet": "x"}],
+        "totalResults": 1,
+    })
+
+    assert not rendered.startswith("# Knowledge Search")
 
 
 @patch("_commands._resolve_knowledge_service")
@@ -120,6 +144,7 @@ def test_knowledge_coverage_queries_outbound_tested_by_neighbors(mock_fetch):
             "edgeType": "tested_by",
         },
     )
+    assert result["kind"] == "knowledge-coverage"
     assert result["service"] == "amar-prd"
     assert result["requirement"] == {"id": "requirement:1", "name": "跨房间 PK"}
     assert result["coverage"] == [

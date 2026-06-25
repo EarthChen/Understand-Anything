@@ -127,7 +127,7 @@ def _format_business_features(data: dict) -> str:
 
 
 def _format_markdown(data: Any) -> str:
-    if isinstance(data, dict) and "coverage" in data and "requirement" in data:
+    if isinstance(data, dict) and data.get("kind") == "knowledge-coverage":
         req = data.get("requirement") or {}
         title = req.get("name", req.get("id", data.get("service", "?")))
         lines = [f"# Knowledge Coverage: {title}", ""]
@@ -139,7 +139,7 @@ def _format_markdown(data: Any) -> str:
             lines.append("No deterministic testcase coverage found.")
         return "\n".join(lines)
 
-    if isinstance(data, dict) and "results" in data and "service" in data and "query" in data:
+    if isinstance(data, dict) and data.get("kind") == "knowledge-search":
         lines = [f"# Knowledge Search: {data.get('query', '?')}", f"Service: {data.get('service', '?')}", ""]
         for r in data["results"]:
             metadata = r.get("metadata", {}) if isinstance(r.get("metadata"), dict) else {}
@@ -946,4 +946,3 @@ def _format_markdown(data: Any) -> str:
 
 def _short_type_name(name: str) -> str:
     return name.rsplit(".", 1)[-1]
-
