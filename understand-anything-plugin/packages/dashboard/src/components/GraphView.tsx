@@ -24,11 +24,11 @@ import ContainerNode from "./ContainerNode";
 import type { ContainerFlowNode, ContainerNodeData } from "./ContainerNode";
 import Breadcrumb from "./Breadcrumb";
 import { useDashboardStore } from "../store";
+import type { NodeCategory, NodeType } from "../store";
 import type {
   GraphEdge,
   GraphNode,
   KnowledgeGraph,
-  NodeType,
 } from "@understand-anything/core/types";
 import { useTheme } from "../themes/index.ts";
 import {
@@ -61,13 +61,11 @@ const nodeTypes = {
   container: ContainerNode,
 };
 
-import type { NodeCategory } from "../store";
-
 /**
  * Maps each NodeType to a filter category. Must be kept in sync with core NodeType.
  * Unknown types default to "code" with a development warning.
  */
-const NODE_TYPE_TO_CATEGORY: Record<NodeType, NodeCategory> = {
+export const NODE_TYPE_TO_CATEGORY: Record<NodeType, NodeCategory> = {
   file: "code", function: "code", class: "code", module: "code", concept: "code",
   config: "config",
   document: "docs",
@@ -75,6 +73,7 @@ const NODE_TYPE_TO_CATEGORY: Record<NodeType, NodeCategory> = {
   table: "data", endpoint: "data", schema: "data",
   domain: "domain", flow: "domain", step: "domain",
   article: "knowledge", entity: "knowledge", topic: "knowledge", claim: "knowledge", source: "knowledge",
+  requirement: "knowledge", testcase: "knowledge",
 } as const;
 
 // ── Helper components that must live inside <ReactFlow> ────────────────

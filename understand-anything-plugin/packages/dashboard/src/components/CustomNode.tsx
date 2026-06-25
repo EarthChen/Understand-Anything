@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps, Node } from "@xyflow/react";
-import type { NodeType } from "@understand-anything/core/types";
+import type { NodeType } from "../store";
 import { useI18n } from "../contexts/I18nContext";
 
 // Color maps keyed by NodeType — must be kept in sync with core NodeType union.

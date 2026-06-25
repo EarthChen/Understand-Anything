@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useDashboardStore } from "../store";
 import { useI18n } from "../contexts/I18nContext";
-import type { NodeType, EdgeType, KnowledgeGraph, GraphNode } from "@understand-anything/core/types";
+import type { EdgeType, KnowledgeGraph, GraphNode } from "@understand-anything/core/types";
+import type { NodeType } from "../store";
 
 // Badge color classes keyed by NodeType — must be kept in sync with core NodeType union.
-const typeBadgeColors: Record<NodeType, string> = {
+export const typeBadgeColors: Record<NodeType, string> = {
   file: "text-node-file border border-node-file/30 bg-node-file/10",
   function: "text-node-function border border-node-function/30 bg-node-function/10",
   class: "text-node-class border border-node-class/30 bg-node-class/10",
@@ -26,7 +27,19 @@ const typeBadgeColors: Record<NodeType, string> = {
   topic: "text-node-topic border border-node-topic/30 bg-node-topic/10",
   claim: "text-node-claim border border-node-claim/30 bg-node-claim/10",
   source: "text-node-source border border-node-source/30 bg-node-source/10",
+  requirement: "text-node-requirement border border-node-requirement/30 bg-node-requirement/10",
+  testcase: "text-node-testcase border border-node-testcase/30 bg-node-testcase/10",
 };
+
+export function isKnowledgeNode(type: string): boolean {
+  return type === "article" ||
+    type === "entity" ||
+    type === "topic" ||
+    type === "claim" ||
+    type === "source" ||
+    type === "requirement" ||
+    type === "testcase";
+}
 
 const complexityBadgeColors: Record<string, string> = {
   simple: "text-node-function border border-node-function/30 bg-node-function/10",
@@ -454,7 +467,7 @@ export default function NodeInfo() {
       )}
 
       {/* Knowledge-specific details */}
-      {activeGraph && node && (node.type === "article" || node.type === "entity" || node.type === "topic" || node.type === "claim" || node.type === "source") && (
+      {activeGraph && node && isKnowledgeNode(node.type) && (
         <KnowledgeNodeDetails node={node} graph={activeGraph} />
       )}
 

@@ -20,6 +20,22 @@ const nodeTypes = {
   custom: CustomNode,
 };
 
+export const KNOWLEDGE_NODE_TYPES = [
+  "article",
+  "entity",
+  "topic",
+  "claim",
+  "source",
+  "requirement",
+  "testcase",
+] as const;
+
+const KNOWLEDGE_NODE_TYPE_SET = new Set<string>(KNOWLEDGE_NODE_TYPES);
+
+export function isKnowledgeGraphNodeType(type: string): boolean {
+  return KNOWLEDGE_NODE_TYPE_SET.has(type);
+}
+
 /** Edge style presets by knowledge edge type. */
 const EDGE_STYLES: Record<string, React.CSSProperties> = {
   related: { stroke: "var(--color-border-medium)", strokeWidth: 0.5, opacity: 0.12 },
@@ -122,7 +138,7 @@ function KnowledgeGraphViewInner() {
     if (!graph) return null;
 
     const filteredNodes = graph.nodes.filter((n) => {
-      if (["article", "entity", "topic", "claim", "source"].includes(n.type)) {
+      if (isKnowledgeGraphNodeType(n.type)) {
         return nodeTypeFilters.knowledge !== false;
       }
       return true;
@@ -272,6 +288,8 @@ function KnowledgeGraphViewInner() {
               topic: "var(--color-node-topic)",
               claim: "var(--color-node-claim)",
               source: "var(--color-node-source)",
+              requirement: "var(--color-node-requirement)",
+              testcase: "var(--color-node-testcase)",
             };
             return colorMap[type] ?? "var(--color-accent)";
           }}
