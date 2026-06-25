@@ -165,6 +165,9 @@ export async function handleWikiRequest(
       if (!serviceName) {
         return { statusCode: 400, body: { error: "service parameter required" } }
       }
+      if (serviceName.includes("\\") || serviceName.includes("..")) {
+        return { statusCode: 400, body: { error: "invalid service name" } }
+      }
 
       const graphDir = process.env.GRAPH_DIR
       const candidates: string[] = []

@@ -20,13 +20,13 @@ Server-side BFS traversal via `/api/graph-query/impact`. Finds all transitively 
 
 ```bash
 # Who is transitively affected if I change OrderService? (3 hops)
-python ua_query.py impact --service order-svc --symbol OrderService --depth 3 --direction inbound
+python3 ua_query.py impact --service order-svc --symbol OrderService --depth 3 --direction inbound
 
 # What does PaymentRpcClient transitively depend on?
-python ua_query.py impact --service order-svc --symbol PaymentRpcClient --depth 2 --direction outbound
+python3 ua_query.py impact --service order-svc --symbol PaymentRpcClient --depth 2 --direction outbound
 
 # Call-graph-only impact
-python ua_query.py impact --service order-svc --symbol OrderController --depth 3 --direction inbound --edge-type calls
+python3 ua_query.py impact --service order-svc --symbol OrderController --depth 3 --direction inbound --edge-type calls
 ```
 
 **Response shape:**
@@ -62,8 +62,8 @@ Shortcuts for call-graph traversal. Equivalent to `kg --neighbors` with `--edge-
 | `--depth N` | int | 1 | Traversal depth (1–3) |
 
 ```bash
-python ua_query.py callers --service order-svc --symbol OrderService --depth 1
-python ua_query.py callers --service order-svc --symbol createOrder --depth 2
+python3 ua_query.py callers --service order-svc --symbol OrderService --depth 1
+python3 ua_query.py callers --service order-svc --symbol createOrder --depth 2
 ```
 
 ### `callees` — What does this symbol call?
@@ -75,8 +75,8 @@ python ua_query.py callers --service order-svc --symbol createOrder --depth 2
 | `--depth N` | int | 1 | Traversal depth (1–3) |
 
 ```bash
-python ua_query.py callees --service order-svc --symbol OrderService --depth 1
-python ua_query.py callees --service order-svc --symbol OrderController --depth 2
+python3 ua_query.py callees --service order-svc --symbol OrderService --depth 1
+python3 ua_query.py callees --service order-svc --symbol OrderController --depth 2
 ```
 
 **Response shape:**
@@ -109,10 +109,10 @@ Server-side computation via `/api/graph-query/hotspots`. Computes fan-in/fan-out
 
 ```bash
 # Top 20 most critical nodes in the service
-python ua_query.py hotspots --service order-svc --limit 20
+python3 ua_query.py hotspots --service order-svc --limit 20
 
 # Most critical classes only
-python ua_query.py hotspots --service order-svc --limit 10 --type class
+python3 ua_query.py hotspots --service order-svc --limit 10 --type class
 ```
 
 **Response shape:**
@@ -144,8 +144,8 @@ Traces inbound KG dependencies from changed source files to find test files that
 **Examples:**
 
 ```bash
-python ua_query.py affected --service order-svc --files src/OrderService.java,src/PaymentRpc.java --depth 2
-python ua_query.py affected --service order-svc --files OrderServiceImpl.java --depth 3
+python3 ua_query.py affected --service order-svc --files src/OrderService.java,src/PaymentRpc.java --depth 2
+python3 ua_query.py affected --service order-svc --files OrderServiceImpl.java --depth 3
 ```
 
 **Response shape:**

@@ -172,8 +172,11 @@ export function KnowledgeWikiView({ serviceName }: { serviceName: string }) {
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeRaw]}
               urlTransform={(url) => {
-                if (url.startsWith("http://") || url.startsWith("https://")) return defaultUrlTransform(url)
-                return url
+                if (!url || url.startsWith("#")) return url
+                if (/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith("http://") && !url.startsWith("https://")) {
+                  return ""
+                }
+                return defaultUrlTransform(url)
               }}
               components={{
                 a: ({ href, children, ...props }) => (

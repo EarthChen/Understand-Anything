@@ -54,8 +54,8 @@ Complements the KG (which has names/summaries but not full type info).
 Find all functions/classes matching a name across all indexed files:
 
 ```bash
-python ua_query.py structure --service S --symbol createOrder
-python ua_query.py structure --service S --symbol OrderService --limit 10
+python3 ua_query.py structure --service S --symbol createOrder
+python3 ua_query.py structure --service S --symbol OrderService --limit 10
 ```
 
 Returns structural detail per match: `filePath`, `name`, `kind`, `lineRange`, `match`.
@@ -63,7 +63,7 @@ Returns structural detail per match: `filePath`, `name`, `kind`, `lineRange`, `m
 `--symbol` also accepts **comma-separated names** to look up multiple symbols in one call — returns `{symbols: [{symbol, matches}]}` instead of a flat list. Example:
 
 ```bash
-python ua_query.py structure --service S --symbol "GuildProfitSettlementStaticsService,GuildDomainRepo"
+python3 ua_query.py structure --service S --symbol "GuildProfitSettlementStaticsService,GuildDomainRepo"
 ```
 
 ### Symbol search with source code
@@ -71,8 +71,8 @@ python ua_query.py structure --service S --symbol "GuildProfitSettlementStaticsS
 Find the symbol AND read its implementation in one call:
 
 ```bash
-python ua_query.py structure --service S --symbol createOrder --source
-python ua_query.py structure --service S --symbol GiftHallDao --source --limit 3
+python3 ua_query.py structure --service S --symbol createOrder --source
+python3 ua_query.py structure --service S --symbol GiftHallDao --source --limit 3
 ```
 
 With `--source`, uses the server-side `/api/structure/symbol-source` endpoint to return both structural metadata and the actual source code for each matched symbol. This is the most efficient way to locate and read a specific method or class when you know its name.
@@ -86,9 +86,9 @@ With `--source`, uses the server-side `/api/structure/symbol-source` endpoint to
 Get full structural detail for a specific file:
 
 ```bash
-python ua_query.py structure --service S --file src/main/.../UserService.java
+python3 ua_query.py structure --service S --file src/main/.../UserService.java
 # Suffix match works:
-python ua_query.py structure --service S --file UserService.java
+python3 ua_query.py structure --service S --file UserService.java
 ```
 
 ### Annotation search
@@ -96,8 +96,8 @@ python ua_query.py structure --service S --file UserService.java
 Find classes/functions by annotation:
 
 ```bash
-python ua_query.py structure --service S --annotation MoaProvider
-python ua_query.py structure --service S --annotation MoaProvider --path order/
+python3 ua_query.py structure --service S --annotation MoaProvider
+python3 ua_query.py structure --service S --annotation MoaProvider --path order/
 ```
 
 ### Type-based search
@@ -105,8 +105,8 @@ python ua_query.py structure --service S --annotation MoaProvider --path order/
 Find functions by param or return type:
 
 ```bash
-python ua_query.py structure --service S --param-type OrderDTO
-python ua_query.py structure --service S --return-type UserDTO
+python3 ua_query.py structure --service S --param-type OrderDTO
+python3 ua_query.py structure --service S --return-type UserDTO
 ```
 
 ### Interface search
@@ -114,7 +114,7 @@ python ua_query.py structure --service S --return-type UserDTO
 Find implementing classes:
 
 ```bash
-python ua_query.py structure --service S --interface Serializable
+python3 ua_query.py structure --service S --interface Serializable
 ```
 
 ### Property type search
@@ -122,7 +122,7 @@ python ua_query.py structure --service S --interface Serializable
 Find classes with specific dependency types:
 
 ```bash
-python ua_query.py structure --service S --property-type UserRepository
+python3 ua_query.py structure --service S --property-type UserRepository
 ```
 
 ### Fuzzy search (new)
@@ -130,9 +130,9 @@ python ua_query.py structure --service S --property-type UserRepository
 Full-text fuzzy search across name, annotations, param types, return type:
 
 ```bash
-python ua_query.py structure --service S --q "getUser"
-python ua_query.py structure --service S --q "Service" --annotation @Service
-python ua_query.py structure --service S --q "Order" --path order/ --limit 10 --offset 20
+python3 ua_query.py structure --service S --q "getUser"
+python3 ua_query.py structure --service S --q "Service" --annotation @Service
+python3 ua_query.py structure --service S --q "Order" --path order/ --limit 10 --offset 20
 ```
 
 ### Section key/value filtering (new)
@@ -140,14 +140,14 @@ python ua_query.py structure --service S --q "Order" --path order/ --limit 10 --
 Filter by section name or content substring:
 
 ```bash
-python ua_query.py structure --service S --section-key "getUser"
-python ua_query.py structure --service S --section-value "UserService"
+python3 ua_query.py structure --service S --section-key "getUser"
+python3 ua_query.py structure --service S --section-value "UserService"
 ```
 
 ### List all indexed files
 
 ```bash
-python ua_query.py structure --service S --files
+python3 ua_query.py structure --service S --files
 ```
 
 ---
@@ -157,8 +157,8 @@ python ua_query.py structure --service S --files
 Trace superclass hierarchy (up) or all descendants (down):
 
 ```bash
-python ua_query.py structure --service S --chain VipUserEntity --direction up
-python ua_query.py structure --service S --chain BaseEntity --direction down
+python3 ua_query.py structure --service S --chain VipUserEntity --direction up
+python3 ua_query.py structure --service S --chain BaseEntity --direction down
 ```
 
 ### Interface implementors
@@ -166,7 +166,7 @@ python ua_query.py structure --service S --chain BaseEntity --direction down
 Find all classes implementing a given interface:
 
 ```bash
-python ua_query.py structure --service S --implementors IUserService
+python3 ua_query.py structure --service S --implementors IUserService
 ```
 
 ---

@@ -4,12 +4,12 @@ Detailed reference for business landscape, wiki, and domain graph queries using 
 
 > **Quick start:** For business questions, use `ask` (auto-discovers service, traces, verifies source):
 > ```bash
-> python ua_query.py --format md ask --query "关键词,keyword" --depth full
+> python3 ua_query.py --format md ask --query "关键词,keyword" --depth full
 > ```
 >
 > For manual business context, use `business --search`:
 > ```bash
-> python ua_query.py business --search "关键词,keyword"
+> python3 ua_query.py business --search "关键词,keyword"
 > ```
 
 ---
@@ -21,11 +21,11 @@ Detailed reference for business landscape, wiki, and domain graph queries using 
 **When:** "Client and server don't sync" or "cross-service flow is wrong"
 
 ```bash
-python ua_query.py business --panorama
-python ua_query.py business --domain X --type interactions
-python ua_query.py business --links --domain X
-python ua_query.py wiki --service server-svc --domain X
-python ua_query.py wiki --service client-svc --domain X
+python3 ua_query.py business --panorama
+python3 ua_query.py business --domain X --type interactions
+python3 ua_query.py business --links --domain X
+python3 ua_query.py wiki --service server-svc --domain X
+python3 ua_query.py wiki --service client-svc --domain X
 ```
 
 **Flow:** Panorama shows all facets → interactions list cross-service steps → links show facet wiring → compare server and client wiki for the same domain.
@@ -35,10 +35,10 @@ python ua_query.py wiki --service client-svc --domain X
 **When:** "How is the system structured?" or onboarding to a new repo
 
 ```bash
-python ua_query.py wiki --architecture
-python ua_query.py services --list
-python ua_query.py kg --service S --layers
-python ua_query.py kg --service S --tour
+python3 ua_query.py wiki --architecture
+python3 ua_query.py services --list
+python3 ua_query.py kg --service S --layers
+python3 ua_query.py kg --service S --tour
 ```
 
 **Flow:** Architecture wiki for high-level map → services list for per-service readiness → KG layers for package/module structure → tour for guided walkthrough.
@@ -53,53 +53,53 @@ Business/domain queries often reveal concepts you need to inspect at the code le
 
 ```bash
 # 1. Understand the business interactions
-python ua_query.py business --domain "order" --type interactions
+python3 ua_query.py business --domain "order" --type interactions
 # → Shows: "OrderService validates inventory, then calls PaymentService"
 
 # 2. Read wiki for implementation summary
-python ua_query.py wiki --service order-svc --domain order
+python3 ua_query.py wiki --service order-svc --domain order
 # → Wiki shows: key classes, RPC endpoints, data flows
 
 # 3. Trace to the actual code (switch to source-code layer)
-python ua_query.py trace --service order-svc --query "OrderService,createOrder" --source --business
+python3 ua_query.py trace --service order-svc --query "OrderService,createOrder" --source --business
 
 # 4. Need method signatures? Use structure
-python ua_query.py structure --service order-svc --file OrderServiceImpl.java
+python3 ua_query.py structure --service order-svc --file OrderServiceImpl.java
 ```
 
 ### Scenario B: Found a domain flow, need to trace its implementation
 
 ```bash
 # 1. List flows and inspect steps
-python ua_query.py domain --service order-svc --flows
-python ua_query.py domain --service order-svc --flow checkout-flow --steps
+python3 ua_query.py domain --service order-svc --flows
+python3 ua_query.py domain --service order-svc --flow checkout-flow --steps
 # → Steps show: "validate → lock-inventory → create-order → process-payment"
 
 # 2. Each step references code — trace the key step
-python ua_query.py trace --service order-svc --query "processPayment,PaymentProcessor" --source
+python3 ua_query.py trace --service order-svc --query "processPayment,PaymentProcessor" --source
 
 # 3. Check who else calls this class
-python ua_query.py kg --service order-svc --neighbors PaymentProcessor --direction inbound
+python3 ua_query.py kg --service order-svc --neighbors PaymentProcessor --direction inbound
 ```
 
 ### Scenario C: Cross-service flow investigation
 
 ```bash
 # 1. Business panorama → find cross-facet links
-python ua_query.py business --links --domain order
+python3 ua_query.py business --links --domain order
 # → Shows: order-service → payment-service via RPC
 
 # 2. Endpoint documentation for the RPC contract
-python ua_query.py wiki --endpoint-index --protocol rpc
+python3 ua_query.py wiki --endpoint-index --protocol rpc
 
 # 3. Trace provider side
-python ua_query.py trace --service payment-svc --query "PaymentService,processPayment" --source
+python3 ua_query.py trace --service payment-svc --query "PaymentService,processPayment" --source
 
 # 4. Trace consumer side
-python ua_query.py trace --service order-svc --query "PaymentRpcClient,PaymentClient" --source
+python3 ua_query.py trace --service order-svc --query "PaymentRpcClient,PaymentClient" --source
 
 # 5. Check annotations on the RPC interface
-python ua_query.py structure --service payment-svc --annotation MoaProvider
+python3 ua_query.py structure --service payment-svc --annotation MoaProvider
 ```
 
 **Key principle:** Business context tells you WHAT → Wiki tells you HOW (summary) → KG/trace tells you WHERE (code) → Structure tells you TYPE details (signatures).
@@ -128,13 +128,13 @@ Answers business questions end-to-end with a single command. Auto-discovers the 
 
 ```bash
 # Full verified answer (recommended for any factual question)
-python ua_query.py --format md ask --query "火箭,rocket,RocketReward" --depth full
+python3 ua_query.py --format md ask --query "火箭,rocket,RocketReward" --depth full
 
 # Quick domain check
-python ua_query.py ask --query "亲密度,intimacy" --depth quick
+python3 ua_query.py ask --query "亲密度,intimacy" --depth quick
 
 # Override service when you know which one
-python ua_query.py ask --query "家族,Family" --service ultron-relation --depth standard
+python3 ua_query.py ask --query "家族,Family" --service ultron-relation --depth standard
 ```
 
 **Auto-discovery strategy:**
@@ -177,43 +177,43 @@ Query cross-facet business-landscape data generated by `/understand-business`.
 
 ```bash
 # List all domains
-python ua_query.py business --list
+python3 ua_query.py business --list
 
 # Search for checkout-related domains (comma-separated for OR match)
-python ua_query.py business --search "checkout,下单"
+python3 ua_query.py business --search "checkout,下单"
 
 # Domain interactions (supports Chinese domain names directly)
-python ua_query.py business --domain order --type interactions
-python ua_query.py business --domain "挚友关系建立（端到端）" --type interactions
+python3 ua_query.py business --domain order --type interactions
+python3 ua_query.py business --domain "挚友关系建立（端到端）" --type interactions
 
 # Business rules only
-python ua_query.py business --domain payment --type rules
+python3 ua_query.py business --domain payment --type rules
 
 # Cross-facet links for a domain
-python ua_query.py business --links --domain order
+python3 ua_query.py business --links --domain order
 
 # System-wide panorama
-python ua_query.py business --panorama
+python3 ua_query.py business --panorama
 
 # Business layer metadata
-python ua_query.py business --meta
+python3 ua_query.py business --meta
 
 # Feature-centric business view (recommended for client-server projects)
-python ua_query.py business --features
-python ua_query.py --format md business --features
+python3 ua_query.py business --features
+python3 ua_query.py --format md business --features
 
 # Feature interactions (supports Chinese feature names directly)
-python ua_query.py business --domain "亲密关系" --type interactions
-python ua_query.py business --domain "语聊房" --type interactions
+python3 ua_query.py business --domain "亲密关系" --type interactions
+python3 ua_query.py business --domain "语聊房" --type interactions
 
 # One-step platform drill-down (standard platform names: android, ios, flutter)
-python ua_query.py business --domain "语聊房" --platform android
-python ua_query.py business --domain "语聊房" --platform ios
-python ua_query.py business --domain "语聊房" --platform flutter
+python3 ua_query.py business --domain "语聊房" --platform android
+python3 ua_query.py business --domain "语聊房" --platform ios
+python3 ua_query.py business --domain "语聊房" --platform flutter
 
 # Filter flows by keyword within platform domain (server-side filtering)
-python ua_query.py business --domain "语聊房" --platform android --flow "PK"
-python ua_query.py business --domain "语聊房" --platform android --flow "礼物"
+python3 ua_query.py business --domain "语聊房" --platform android --flow "PK"
+python3 ua_query.py business --domain "语聊房" --platform android --flow "礼物"
 ```
 
 > **Platform drill-down:** When `business-features.json` includes `platformMapping` (from `/understand-business` platform enrichment), `--platform` resolves standard names to repository paths and returns the wiki domain page for that platform's implementation. Requires `--domain` to identify the feature.
@@ -246,36 +246,36 @@ Query wiki pages generated by `/understand-wiki`. Some flags are global (no `--s
 
 ```bash
 # Service wiki index
-python ua_query.py wiki --service order-service
+python3 ua_query.py wiki --service order-service
 
 # Domain implementation page (supports Chinese domain names)
-python ua_query.py wiki --service order-service --domain order
-python ua_query.py wiki --service ultron-relation --domain "亲密度"
+python3 ua_query.py wiki --service order-service --domain order
+python3 ua_query.py wiki --service ultron-relation --domain "亲密度"
 
 # Endpoint documentation
-python ua_query.py wiki --service order-service --type endpoint
+python3 ua_query.py wiki --service order-service --type endpoint
 
 # Search wiki
-python ua_query.py wiki --service order-service --search "payment callback"
+python3 ua_query.py wiki --service order-service --search "payment callback"
 
 # Global architecture overview
-python ua_query.py wiki --architecture
+python3 ua_query.py wiki --architecture
 
 # Wiki overview and quality stats
-python ua_query.py wiki --overview
+python3 ua_query.py wiki --overview
 
 # Cross-domain page
-python ua_query.py wiki --cross-domain order-checkout
+python3 ua_query.py wiki --cross-domain order-checkout
 
 # All endpoints indexed by protocol
-python ua_query.py wiki --endpoint-index
-python ua_query.py wiki --endpoint-index --protocol grpc
+python3 ua_query.py wiki --endpoint-index
+python3 ua_query.py wiki --endpoint-index --protocol grpc
 
 # Flow page
-python ua_query.py wiki --service order-service --flow checkout-flow
+python3 ua_query.py wiki --service order-service --flow checkout-flow
 
 # Related domains (cross-service)
-python ua_query.py wiki --service order-service --domain order --related
+python3 ua_query.py wiki --service order-service --domain order --related
 ```
 
 ---
@@ -299,22 +299,22 @@ Query the domain graph generated by `/understand-domain`. Prefer targeted querie
 
 ```bash
 # List flows only (preferred over full graph)
-python ua_query.py domain --service order-service --flows
+python3 ua_query.py domain --service order-service --flows
 
 # Flow with ordered steps
-python ua_query.py domain --service order-service --flow checkout-flow --steps
+python3 ua_query.py domain --service order-service --flow checkout-flow --steps
 
 # Find domain nodes
-python ua_query.py domain --service order-service --domain order
+python3 ua_query.py domain --service order-service --domain order
 
 # Search domains
-python ua_query.py domain --service order-service --search "user"
+python3 ua_query.py domain --service order-service --search "user"
 
 # Cross-domain neighbors
-python ua_query.py domain --service order-service --neighbors payment-domain --edge-type cross_domain
+python3 ua_query.py domain --service order-service --neighbors payment-domain --edge-type cross_domain
 ```
 
-**Avoid:** `python ua_query.py domain --service S` with no filters — returns the entire domain graph.
+**Avoid:** `python3 ua_query.py domain --service S` with no filters — returns the entire domain graph.
 
 ---
 
@@ -324,22 +324,22 @@ For features spanning client + server (e.g., order creation, payment flow):
 
 ```bash
 # 0. Feature overview — shows ALL features with server dependencies
-python ua_query.py business --features
+python3 ua_query.py business --features
 
 # 1. Business context — shows feature interactions (client↔server steps)
-python ua_query.py business --domain "target-feature-name" --type interactions
+python3 ua_query.py business --domain "target-feature-name" --type interactions
 
 # 2. Server-side implementation (usually well-indexed)
-python ua_query.py trace --service backend-service --query "featureName,FeatureService" --source --business
+python3 ua_query.py trace --service backend-service --query "featureName,FeatureService" --source --business
 
 # 3. Client-side attempt — may return empty if client code not in KG
-python ua_query.py trace --service client-service --query "FeatureCreate,featureCreate" --source
+python3 ua_query.py trace --service client-service --query "FeatureCreate,featureCreate" --source
 
 # 4. If client trace is empty (hint provided), fall back to workspace grep
 
 # 5. API contract — use --toc to see all methods first, then read specific ones
-python ua_query.py kg --service backend-service --file "FeatureServiceImpl.java" --toc
-python ua_query.py kg --service backend-service --file "FeatureServiceImpl.java" --start 100 --end 150
+python3 ua_query.py kg --service backend-service --file "FeatureServiceImpl.java" --toc
+python3 ua_query.py kg --service backend-service --file "FeatureServiceImpl.java" --start 100 --end 150
 ```
 
 **Key insight:** Business `interactions` is the ONLY layer that consistently shows both client and server steps. When KG returns empty for a service, check if the code lives in a Flutter/React/mobile module not covered by that service's analysis.

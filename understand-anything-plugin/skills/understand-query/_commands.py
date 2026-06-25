@@ -233,6 +233,8 @@ def cmd_knowledge(args: argparse.Namespace) -> Any:
 
     if action == "read":
         node_ids = [n.strip() for n in args.node.split(",") if n.strip()]
+        if not node_ids:
+            raise SystemExit("knowledge read requires at least one node ID")
         node_ids = node_ids[:10]
         data = _helpers.fetch_json(args.server, "/api/graph", {
             "service": service,

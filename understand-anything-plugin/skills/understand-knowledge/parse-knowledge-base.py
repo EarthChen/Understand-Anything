@@ -839,7 +839,7 @@ def parse_wiki(root: Path, profile_override: str = PROFILE_AUTO) -> dict:
             "type": node_type,
             **({"subtype": subtype} if subtype else {}),
             "name": frontmatter.get("title") or h1 or basename,
-            "filePath": f"wiki/{rel}",
+            "filePath": f"wiki/{rel}" if wiki_root != root else str(rel),
             "summary": summary or f"Wiki article: {h1 or basename}",
             "tags": tags,
             "complexity": complexity,
