@@ -203,6 +203,7 @@ describe("unifiedSearch", () => {
               detail: "跨房间 PK 断线重连",
               business: "房间",
               sourcePath: "raw/prd/房间/pk.md",
+              content: "观众重新进入后需要恢复 PK 进度。",
             },
           },
         ],
@@ -214,7 +215,7 @@ describe("unifiedSearch", () => {
       mtimes: {},
     }
 
-    const result = unifiedSearch(state, "断线重连", 10, "kg", "none", "requirement", null, "amar-prd")
+    const result = unifiedSearch(state, "恢复 PK 进度", 10, "kg", "none", "requirement", null, "amar-prd")
 
     expect(result.results).toHaveLength(1)
     expect(result.results[0].service).toBe("amar-prd")

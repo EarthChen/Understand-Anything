@@ -278,6 +278,22 @@ describe("KgIndex", () => {
               content: "观众重新进入后需要恢复 PK 进度。",
             },
           },
+          {
+            id: "testcase:room-pk-reconnect",
+            name: "房间 PK 用例",
+            type: "testcase",
+            summary: "房间 PK 测试用例",
+            tags: ["prd"],
+            knowledgeMeta: {
+              profile: "prd-wiki",
+              sourceType: "testcase",
+              business: "房间",
+              version: "v2.25.0",
+              detail: "跨房间 PK 断线重连用例",
+              sourcePath: "raw/prd/房间/2025-10-v2.25.0-跨房间PK-testcase.md",
+              content: "验证断线重连后的用例状态。",
+            },
+          },
         ],
         edges: [],
       } as unknown as KnowledgeGraph
@@ -290,6 +306,37 @@ describe("KgIndex", () => {
       expect(results.results[0].service).toBe("amar-prd")
       expect(results.results[0].business).toBe("房间")
       expect(results.results[0].sourcePath).toContain("raw/prd")
+    })
+
+    it("finds requirements by PRD content text that is not in the node name", () => {
+      const prdGraph = {
+        nodes: [
+          {
+            id: "requirement:room-pk",
+            name: "房间玩法",
+            type: "requirement",
+            summary: "房间相关需求",
+            tags: ["prd"],
+            knowledgeMeta: {
+              profile: "prd-wiki",
+              sourceType: "prd",
+              business: "房间",
+              version: "v2.25.0",
+              detail: "跨房间 PK 断线重连",
+              sourcePath: "raw/prd/房间/2025-10-v2.25.0-跨房间PK.md",
+              content: "观众重新进入后需要恢复 PK 进度。",
+            },
+          },
+        ],
+        edges: [],
+      } as unknown as KnowledgeGraph
+
+      const index = KgIndex.create(prdGraph, "amar-prd")
+      const results = index.search({ q: "恢复 PK 进度", type: "requirement" })
+
+      expect(results.results).toHaveLength(1)
+      expect(results.results[0].id).toBe("requirement:room-pk")
+      expect(results.results[0].service).toBe("amar-prd")
     })
   })
 
