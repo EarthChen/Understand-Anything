@@ -253,7 +253,7 @@ const projectDescription = scanResult.projectDescription
 const languages = scanResult.languages
 const frameworks = scanResult.frameworks
 const importMap = scanResult.importMap
-const fileList = scanResult.fileList
+const _fileList = scanResult.fileList
 
 if (scanResult.filteredByIgnore > 0) {
   log(`Excluded ${scanResult.filteredByIgnore} files via .understandignore`)
@@ -314,7 +314,7 @@ log(`Phase 1.5 complete. ${structuralResult.filesExtracted || '?'} files extract
 phase('Analyze')
 
 // Compute batches
-const batchesResult = await agent(
+const _batchesResult = await agent(
   `Compute structural batches for analysis.
 
 Project root: ${preflight.projectRoot}
@@ -875,7 +875,7 @@ kg = {
   'tour': tour.get('steps',tour) if isinstance(tour, dict) else tour
 }
 json.dump(kg, open('...knowledge-graph.json','w'), indent=2, ensure_ascii=False)
-print(f'Written: {len(kg[\"nodes\"])} nodes, {len(kg[\"edges\"])} edges')
+print(f'Written: {len(kg["nodes"])} nodes, {len(kg["edges"])} edges')
 "
 \`\`\`
 (Replace ... with the actual paths.)
