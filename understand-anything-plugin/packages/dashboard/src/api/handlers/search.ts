@@ -323,7 +323,7 @@ function buildSearchIndex(projectRoot: string, serviceFilter: string | null): Se
           const fp = node.filePath
             ? normalizeGraphPath(node.filePath, projectRoot) ?? undefined
             : undefined
-          kgGraph.nodes.push({ ...node, filePath: fp })
+          kgGraph.nodes.push({ ...node, filePath: fp, service: serviceName } as typeof node)
         }
         if (Array.isArray(kg.edges)) {
           for (const edge of kg.edges) {
@@ -347,7 +347,7 @@ function buildSearchIndex(projectRoot: string, serviceFilter: string | null): Se
       if (domainGraph && Array.isArray(domainGraph.nodes)) {
         for (const node of domainGraph.nodes) {
           if (DOMAIN_NODE_TYPES.has(node.type)) {
-            kgGraph.nodes.push({ ...node, tags: [...(node.tags ?? []), "domain"] })
+            kgGraph.nodes.push({ ...node, tags: [...(node.tags ?? []), "domain"], service: serviceName } as typeof node)
           }
         }
       }

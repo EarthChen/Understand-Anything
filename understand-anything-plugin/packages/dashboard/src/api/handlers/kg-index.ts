@@ -132,6 +132,7 @@ export class KgIndex {
     return [...byId.values()]
       .map((node) => {
         const meta = node.knowledgeMeta
+        const nodeService = (node as { service?: unknown }).service
         const metaString = (key: keyof NonNullable<typeof meta>): string => {
           const value = meta?.[key]
           return typeof value === "string" ? value : ""
@@ -159,7 +160,7 @@ export class KgIndex {
           tags: (node.tags ?? []).join(" "),
           type: node.type ?? "",
           knowledgeText,
-          service: serviceName,
+          service: typeof nodeService === "string" && nodeService.length > 0 ? nodeService : serviceName,
           filePath: node.filePath ?? "",
           startLine: node.lineRange?.[0] ?? 0,
           endLine: node.lineRange?.[1] ?? 0,
