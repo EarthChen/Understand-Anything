@@ -3,7 +3,7 @@ import { useDashboardStore } from "../store";
 import type { WikiSearchResult } from "@understand-anything/core/types";
 import { useI18n } from "../contexts/I18nContext";
 
-const typeBadgeColors: Record<string, string> = {
+export const typeBadgeColors: Record<string, string> = {
   file: "text-node-file border border-node-file/30 bg-node-file/10",
   function: "text-node-function border border-node-function/30 bg-node-function/10",
   class: "text-node-class border border-node-class/30 bg-node-class/10",
@@ -20,6 +20,13 @@ const typeBadgeColors: Record<string, string> = {
   domain: "text-node-concept border border-node-concept/30 bg-node-concept/10",
   flow: "text-node-pipeline border border-node-pipeline/30 bg-node-pipeline/10",
   step: "text-node-function border border-node-function/30 bg-node-function/10",
+  article: "text-node-article border border-node-article/30 bg-node-article/10",
+  entity: "text-node-entity border border-node-entity/30 bg-node-entity/10",
+  topic: "text-node-topic border border-node-topic/30 bg-node-topic/10",
+  claim: "text-node-claim border border-node-claim/30 bg-node-claim/10",
+  source: "text-node-source border border-node-source/30 bg-node-source/10",
+  requirement: "text-node-requirement border border-node-requirement/30 bg-node-requirement/10",
+  testcase: "text-node-testcase border border-node-testcase/30 bg-node-testcase/10",
   overview: "text-amber-400 border border-amber-400/30 bg-amber-400/10",
   architecture: "text-amber-400 border border-amber-400/30 bg-amber-400/10",
 };

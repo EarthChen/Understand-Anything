@@ -117,13 +117,15 @@ describe("KnowledgeGraph types", () => {
 });
 
 describe("Extended types", () => {
-  it("accepts all 13 node types via NodeType alias", () => {
+  it("accepts all 23 node types via NodeType alias", () => {
     const nodeTypes: NodeType[] = [
       "file", "function", "class", "module", "concept",
       "config", "document", "service", "table", "endpoint",
       "pipeline", "schema", "resource",
+      "domain", "flow", "step",
+      "article", "entity", "topic", "claim", "source", "requirement", "testcase",
     ];
-    expect(nodeTypes).toHaveLength(13);
+    expect(nodeTypes).toHaveLength(23);
     // NodeType and GraphNode["type"] should be interchangeable
     const check: GraphNode["type"] = nodeTypes[0];
     expect(check).toBe("file");

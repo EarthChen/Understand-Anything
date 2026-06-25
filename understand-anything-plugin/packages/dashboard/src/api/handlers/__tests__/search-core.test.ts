@@ -134,6 +134,43 @@ describe("unifiedSearch", () => {
     expect(results.some((r) => r.service === "test-svc")).toBe(true)
   })
 
+  it("serviceFilter works when the merged KG index contains per-node services", () => {
+    const kg: KnowledgeGraph = makeKg(
+      [
+        {
+          id: "requirement:room-pk",
+          name: "跨房间 PK",
+          type: "requirement",
+          summary: "PRD requirement",
+          tags: ["prd"],
+          complexity: "simple",
+          service: "amar-prd",
+        } as KnowledgeGraph["nodes"][number],
+        {
+          id: "file:RoomPkModeEnum.java",
+          name: "RoomPkModeEnum.java",
+          type: "file",
+          summary: "Code enum for PK",
+          tags: ["pk"],
+          complexity: "simple",
+          service: "ultron-room-api",
+        } as KnowledgeGraph["nodes"][number],
+      ],
+      [],
+    )
+    const state = buildState({
+      kgIndex: KgIndex.create(kg, "all"),
+      wikiIndex: new WikiIndex({ entries: [] }),
+      edges: [],
+      adjacency: new Map(),
+    })
+
+    const { results } = unifiedSearch(state, "PK", 20, "kg", "none", null, null, "amar-prd")
+
+    expect(results.map((r) => r.id)).toEqual(["requirement:room-pk"])
+    expect(results[0].service).toBe("amar-prd")
+  })
+
   it("facets are merged from both indices", () => {
     const state = buildState()
     const { facets } = unifiedSearch(state, "auth", 20)
@@ -186,6 +223,40 @@ describe("unifiedSearch", () => {
     const r = results.find((x) => x.name === "UserService")
     expect(r?.filePath).toBe("src/UserService.java")
     expect(r?.lineRange).toEqual([1, 50])
+  })
+
+  it("searches PRD knowledge facets through the KG index", () => {
+    const state: SearchIndexState = {
+      kgIndex: KgIndex.create({
+        nodes: [
+          {
+            id: "requirement:room-pk",
+            name: "房间玩法",
+            type: "requirement",
+            summary: "房间相关需求",
+            tags: ["prd"],
+            knowledgeMeta: {
+              profile: "prd-wiki",
+              detail: "跨房间 PK 断线重连",
+              business: "房间",
+              sourcePath: "raw/prd/房间/pk.md",
+              content: "观众重新进入后需要恢复 PK 进度。",
+            },
+          },
+        ],
+        edges: [],
+      } as unknown as KnowledgeGraph, "amar-prd"),
+      wikiIndex: new WikiIndex({ entries: [] }),
+      edges: [],
+      adjacency: new Map(),
+      mtimes: {},
+    }
+
+    const result = unifiedSearch(state, "恢复 PK 进度", 10, "kg", "none", "requirement", null, "amar-prd")
+
+    expect(result.results).toHaveLength(1)
+    expect(result.results[0].service).toBe("amar-prd")
+    expect(result.facets.type.requirement).toBe(1)
   })
 })
 

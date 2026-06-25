@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps, Node } from "@xyflow/react";
-import type { NodeType } from "@understand-anything/core/types";
+import type { NodeType } from "../store";
 import { useI18n } from "../contexts/I18nContext";
 
 // Color maps keyed by NodeType — must be kept in sync with core NodeType union.
@@ -27,6 +27,8 @@ const typeColors: Record<NodeType, string> = {
   topic: "var(--color-node-topic)",
   claim: "var(--color-node-claim)",
   source: "var(--color-node-source)",
+  requirement: "var(--color-node-requirement)",
+  testcase: "var(--color-node-testcase)",
 };
 
 const typeTextColors: Record<NodeType, string> = {
@@ -51,6 +53,8 @@ const typeTextColors: Record<NodeType, string> = {
   topic: "text-node-topic",
   claim: "text-node-claim",
   source: "text-node-source",
+  requirement: "text-node-requirement",
+  testcase: "text-node-testcase",
 };
 
 const complexityColors: Record<string, string> = {

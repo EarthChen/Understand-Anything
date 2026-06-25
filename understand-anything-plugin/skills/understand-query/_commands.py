@@ -13,6 +13,7 @@ from _helpers import (
     _fetch_wiki_domain, _fetch_domain_flows, _score_node_relevance,
     _extract_code_keywords, _effective_service, _nodes_for_file,
     _is_test_path, _extract_symbol, _kg_file_toc, _cmd_structure_symbol,
+    _resolve_knowledge_service,
 )
 
 
@@ -165,6 +166,85 @@ def cmd_kg(args: argparse.Namespace) -> Any:
     elif args.type and args.type != "node":
         nodes = [n for n in nodes if n.get("type") == args.type]
     return {"nodes": nodes, "edges": data.get("edges", []) if args.verbose else None}
+
+
+def cmd_knowledge(args: argparse.Namespace) -> Any:
+    service = _resolve_knowledge_service(args.server, args.service)
+    action = args.knowledge_action
+
+    if action == "search":
+        results = _search_api(
+            args.server,
+            args.query,
+            service=service,
+            scope="kg",
+            limit=args.limit,
+            type=args.type,
+            offset=args.offset,
+        )
+        return {"kind": "knowledge-search", "service": service, "query": args.query, "results": results}
+
+    if action == "node":
+        data = _helpers.fetch_json(args.server, "/api/graph", {
+            "service": service,
+            "file": "knowledge-graph.json",
+        })
+        nodes = data.get("nodes", [])
+        exact = [n for n in nodes if n.get("id") == args.node or n.get("name") == args.node]
+        if exact:
+            matches = exact
+        else:
+            q = args.node.lower()
+            matches = [
+                n for n in nodes
+                if q in n.get("id", "").lower() or q in n.get("name", "").lower()
+            ]
+        return {"service": service, "nodes": matches, "total": len(matches)}
+
+    if action == "neighbors":
+        params: dict[str, str] = {
+            "service": service,
+            "graph": "kg",
+            "node": args.node,
+            "direction": args.direction,
+            "depth": str(args.depth),
+        }
+        if args.edge_type:
+            params["edgeType"] = args.edge_type
+        return _helpers.fetch_json(args.server, "/api/graph-query/neighbors", params)
+
+    if action == "coverage":
+        data = _helpers.fetch_json(args.server, "/api/graph-query/neighbors", {
+            "service": service,
+            "graph": "kg",
+            "node": args.node,
+            "direction": "outbound",
+            "depth": "1",
+            "edgeType": "tested_by",
+        })
+        coverage = [(n.get("node") or {}) for n in data.get("neighbors", [])]
+        return {
+            "kind": "knowledge-coverage",
+            "service": service,
+            "requirement": data.get("center"),
+            "coverage": coverage,
+            "total": len(coverage),
+        }
+
+    if action == "read":
+        node_ids = [n.strip() for n in args.node.split(",") if n.strip()]
+        if not node_ids:
+            raise SystemExit("knowledge read requires at least one node ID")
+        node_ids = node_ids[:10]
+        data = _helpers.fetch_json(args.server, "/api/graph", {
+            "service": service,
+            "file": "knowledge-graph.json",
+            "nodes": ",".join(node_ids),
+        })
+        nodes = data.get("nodes", [])
+        return {"kind": "knowledge-read", "service": service, "nodes": nodes, "total": len(nodes)}
+
+    raise SystemExit(f"Unknown knowledge action: {action}")
 
 
 def cmd_domain(args: argparse.Namespace) -> Any:
@@ -858,7 +938,7 @@ def _detect_and_follow_cross_service_rpc(
             "hint": (
                 f"检测到 '{current_service}' 消费 RPC 接口 '{target_interface}'，"
                 f"实现服务为 '{target_service}'，但追踪失败。建议手动执行: "
-                f"python ua_query.py trace --service {target_service} --query \"{target_interface}\" --source"
+                f"python3 ua_query.py trace --service {target_service} --query \"{target_interface}\" --source"
             ),
             "rpcInterfaces": rpc_interface_names[:5],
             "targetService": target_service,
@@ -912,6 +992,35 @@ def cmd_ask(args: argparse.Namespace) -> Any:
 
     if depth == "quick":
         return result
+
+    # Step 2b: PRD Knowledge Context
+    prd_context: list[dict] = []
+    try:
+        knowledge_svcs = _helpers._discover_knowledge_services(args.server)
+        if knowledge_svcs:
+            prd_parts = [p.strip() for p in query.split(",") if p.strip() and len(p.strip()) <= 20]
+            prd_q = " ".join(prd_parts[:3]) if prd_parts else query.split(",")[0][:20]
+            seen_ids: set[str] = set()
+            for ksvc in knowledge_svcs:
+                try:
+                    prd_hits = _search_api(
+                        args.server, prd_q, service=ksvc, scope="kg", limit=5, type=None,
+                    )
+                    for hit in prd_hits:
+                        nid = hit.get("id", "")
+                        if nid and nid in seen_ids:
+                            continue
+                        seen_ids.add(nid)
+                        prd_context.append(hit)
+                        if len(prd_context) >= 5:
+                            break
+                except RuntimeError:
+                    continue
+                if len(prd_context) >= 5:
+                    break
+    except RuntimeError:
+        pass
+    result["prdContext"] = prd_context
 
     # Step 3: Trace (KG search + neighbors + source)
     trace_args = _make_trace_args(
@@ -1272,5 +1381,3 @@ def cmd_source(args: argparse.Namespace) -> Any:
         return {"files": files_out}
 
     raise SystemExit("source requires --search or --file")
-
-

@@ -2,17 +2,30 @@ import MiniSearch from "minisearch"
 import { codeTokenize } from "./code-tokenizer"
 import type { KnowledgeGraph } from "@understand-anything/core"
 
+function stripFrontMatter(text: string): string {
+  const match = text.match(/^---[\s\S]*?---\s*/)
+  return match ? text.slice(match[0].length) : text
+}
+
 interface KgDoc {
   id: string
   name: string
   summary: string
   tags: string
   type: string
+  knowledgeText: string
   service: string
   filePath: string
   startLine: number
   endLine: number
   layer: string
+  business: string
+  version: string
+  detail: string
+  sourcePath: string
+  sourceType: string
+  profile: string
+  contentSnippet: string
 }
 
 export interface KgSearchResult {
@@ -26,6 +39,13 @@ export interface KgSearchResult {
   filePath?: string
   lineRange?: [number, number]
   tags?: string
+  business?: string
+  version?: string
+  detail?: string
+  sourcePath?: string
+  sourceType?: string
+  profile?: string
+  contentSnippet?: string
 }
 
 export interface KgSearchOptions {
@@ -48,8 +68,25 @@ export interface KgSearchResponse {
 }
 
 const MINI_SEARCH_OPTIONS = {
-  fields: ["name", "summary", "tags", "type"],
-  storeFields: ["name", "type", "service", "filePath", "startLine", "endLine", "summary", "tags", "layer"],
+  fields: ["name", "summary", "tags", "type", "knowledgeText"],
+  storeFields: [
+    "name",
+    "type",
+    "service",
+    "filePath",
+    "startLine",
+    "endLine",
+    "summary",
+    "tags",
+    "layer",
+    "business",
+    "version",
+    "detail",
+    "sourcePath",
+    "sourceType",
+    "profile",
+    "contentSnippet",
+  ],
   tokenize: codeTokenize,
 }
 
@@ -57,6 +94,7 @@ const SEARCH_BOOST = {
   name: 3,
   tags: 2.5,
   summary: 2,
+  knowledgeText: 1.8,
   type: 0.5,
 }
 
@@ -100,20 +138,53 @@ export class KgIndex {
       byId.set(node.id, node)
     }
     return [...byId.values()]
-      .map((node) => ({
-        id: node.id,
-        name: node.name ?? "",
-        summary: node.summary ?? "",
-        tags: (node.tags ?? []).join(" "),
-        type: node.type ?? "",
-        service: serviceName,
-        filePath: node.filePath ?? "",
-        startLine: node.lineRange?.[0] ?? 0,
-        endLine: node.lineRange?.[1] ?? 0,
-        layer: (node.tags ?? []).includes("business") ? "business"
-          : (node.tags ?? []).includes("domain") ? "domain"
-          : "kg",
-      }))
+      .map((node) => {
+        const meta = node.knowledgeMeta
+        const nodeService = (node as { service?: unknown }).service
+        const metaString = (key: keyof NonNullable<typeof meta>): string => {
+          const value = meta?.[key]
+          return typeof value === "string" ? value : ""
+        }
+        const business = metaString("business")
+        const version = metaString("version")
+        const detail = metaString("detail")
+        const sourcePath = metaString("sourcePath")
+        const sourceType = metaString("sourceType")
+        const profile = metaString("profile")
+        const knowledgeText = [
+          metaString("content"),
+          detail,
+          business,
+          metaString("month"),
+          version,
+          sourcePath,
+          sourceType,
+        ].filter(Boolean).join(" ")
+        const contentSnippet = stripFrontMatter(metaString("content")).slice(0, 500)
+
+        return {
+          id: node.id,
+          name: node.name ?? "",
+          summary: node.summary ?? "",
+          tags: (node.tags ?? []).join(" "),
+          type: node.type ?? "",
+          knowledgeText,
+          service: typeof nodeService === "string" && nodeService.length > 0 ? nodeService : serviceName,
+          filePath: node.filePath ?? "",
+          startLine: node.lineRange?.[0] ?? 0,
+          endLine: node.lineRange?.[1] ?? 0,
+          layer: (node.tags ?? []).includes("business") ? "business"
+            : (node.tags ?? []).includes("domain") ? "domain"
+            : "kg",
+          business,
+          version,
+          detail,
+          sourcePath,
+          sourceType,
+          profile,
+          contentSnippet,
+        }
+      })
   }
 
   isEmpty(): boolean { return this.docs.length === 0 }
@@ -160,6 +231,13 @@ export class KgIndex {
       filePath: r.filePath as string | undefined,
       lineRange: r.startLine ? [r.startLine as number, r.endLine as number] : undefined,
       tags: r.tags as string | undefined,
+      business: r.business as string | undefined,
+      version: r.version as string | undefined,
+      detail: r.detail as string | undefined,
+      sourcePath: r.sourcePath as string | undefined,
+      sourceType: r.sourceType as string | undefined,
+      profile: r.profile as string | undefined,
+      contentSnippet: r.contentSnippet as string | undefined,
     }))
 
     return {

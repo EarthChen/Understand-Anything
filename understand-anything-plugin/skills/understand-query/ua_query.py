@@ -22,7 +22,7 @@ from _commands import (
     _cmd_kg_file_summary, cmd_kg, cmd_domain, cmd_wiki, cmd_business,
     cmd_services, cmd_meta, cmd_trace, _detect_and_follow_cross_service_rpc,
     cmd_ask, cmd_impact, cmd_callers, cmd_callees, cmd_hotspots,
-    cmd_affected, cmd_structure, cmd_source,
+    cmd_affected, cmd_structure, cmd_source, cmd_knowledge,
 )
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -54,6 +54,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     kg.add_argument("--toc", action="store_true", help="Return file's method index (name+type+lineRange) instead of source")
     kg.add_argument("--summary", action="store_true", help="Return file-level overview with relationships")
     kg.add_argument("--verbose", action="store_true")
+
+    knowledge = sub.add_parser("knowledge", help="Knowledge wiki queries")
+    knowledge_sub = knowledge.add_subparsers(dest="knowledge_action", required=True)
+
+    knowledge_search = knowledge_sub.add_parser("search", help="Search knowledge graph")
+    knowledge_search.add_argument("query")
+    knowledge_search.add_argument("--service")
+    knowledge_search.add_argument("--type", choices=["requirement", "testcase", "source", "article", "topic", "entity", "claim"])
+    knowledge_search.add_argument("--limit", type=int, default=20)
+    knowledge_search.add_argument("--offset", type=int, default=0)
+
+    knowledge_node = knowledge_sub.add_parser("node", help="Find knowledge node by id or name")
+    knowledge_node.add_argument("node")
+    knowledge_node.add_argument("--service")
+
+    knowledge_neighbors = knowledge_sub.add_parser("neighbors", help="Fetch knowledge node neighbors")
+    knowledge_neighbors.add_argument("node")
+    knowledge_neighbors.add_argument("--service")
+    knowledge_neighbors.add_argument("--edge-type")
+    knowledge_neighbors.add_argument("--direction", choices=["inbound", "outbound", "both"], default="both")
+    knowledge_neighbors.add_argument("--depth", type=int, default=1)
+
+    knowledge_coverage = knowledge_sub.add_parser("coverage", help="Find deterministic testcase coverage for a requirement")
+    knowledge_coverage.add_argument("node")
+    knowledge_coverage.add_argument("--service")
+
+    knowledge_read = knowledge_sub.add_parser("read", help="Read full content of knowledge nodes")
+    knowledge_read.add_argument("--node", required=True, help="Node ID(s), comma-separated (max 10)")
+    knowledge_read.add_argument("--service")
 
     domain = sub.add_parser("domain", help="Domain graph queries")
     domain.add_argument("--service")
@@ -191,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
         handlers = {
             "kg": cmd_kg, "domain": cmd_domain, "wiki": cmd_wiki, "business": cmd_business,
             "services": cmd_services, "meta": cmd_meta, "trace": cmd_trace, "structure": cmd_structure,
-            "source": cmd_source,
+            "source": cmd_source, "knowledge": cmd_knowledge,
             "ask": cmd_ask, "impact": cmd_impact, "callers": cmd_callers, "callees": cmd_callees,
             "hotspots": cmd_hotspots, "affected": cmd_affected,
         }

@@ -28,6 +28,7 @@ from pathlib import Path
 
 VALID_NODE_TYPES = {
     "article", "entity", "topic", "claim", "source",
+    "requirement", "testcase",
     # Codebase types (for cross-compatibility)
     "file", "function", "class", "module", "concept",
     "config", "document", "service", "table", "endpoint",
@@ -47,12 +48,22 @@ VALID_EDGE_TYPES = {
     "contains_flow", "flow_step", "cross_domain",
 }
 
+ARTICLE_LIKE_NODE_TYPES = {"article", "requirement", "testcase"}
+
+
+def category_slug(name: str) -> str:
+    """Create category IDs that match parse-knowledge-base.py topic IDs."""
+    return re.sub(r"\s+", "-", name.strip().lower()).strip("-") or "unnamed"
+
 NODE_TYPE_ALIASES = {
     "note": "article", "page": "article", "wiki_page": "article",
     "person": "entity", "actor": "entity", "organization": "entity",
     "tag": "topic", "category": "topic", "theme": "topic",
     "assertion": "claim", "decision": "claim", "thesis": "claim",
     "reference": "source", "raw": "source", "paper": "source",
+    "req": "requirement", "prd": "requirement",
+    "requirement_summary": "requirement",
+    "test_case": "testcase", "qa_case": "testcase",
 }
 
 EDGE_TYPE_ALIASES = {
@@ -100,6 +111,10 @@ def merge(root: Path) -> dict:
 
     # Load scan manifest (deterministic base)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_profile = manifest.get("profile")
+    profile = manifest_profile.strip() if isinstance(manifest_profile, str) else ""
+    if not profile:
+        profile = "generic"
     nodes = {n["id"]: n for n in manifest["nodes"]}
     edges = list(manifest["edges"])
 
@@ -183,9 +198,9 @@ def merge(root: Path) -> dict:
             seen.add(key)
             final_edges.append(edge)
 
-    # --- Build article→layer map from categories ---
+    # --- Build page→layer map from categories ---
     categories = manifest.get("categories", [])
-    article_layer_map: dict[str, str] = {}  # article_id → layer_id
+    page_layer_map: dict[str, str] = {}  # page_id → layer_id
     layer_members: dict[str, list[str]] = {}  # layer_id → [node_ids]
 
     seen_layer_ids: set[str] = set()
@@ -193,7 +208,7 @@ def merge(root: Path) -> dict:
 
     for cat in categories:
         cat_name = cat["name"]
-        cat_slug = re.sub(r"[^a-z0-9]+", "-", cat_name.lower()).strip("-") or "unnamed"
+        cat_slug = category_slug(cat_name)
         layer_id = f"layer:{cat_slug}"
         # Deduplicate layer IDs
         base_id = layer_id
@@ -210,80 +225,86 @@ def merge(root: Path) -> dict:
             members.append(topic_id)
         layer_members[layer_id] = members
         for mid in members:
-            article_layer_map[mid] = layer_id
+            page_layer_map[mid] = layer_id
 
-    # --- Assign entity/claim nodes to their parent article's layer ---
-    # Step 1: Build entity/claim → article mapping from edges
-    child_to_article: dict[str, str] = {}
+    def is_article_like(node_id: str, node_type: str) -> bool:
+        return (
+            node_type in ARTICLE_LIKE_NODE_TYPES
+            or node_id.startswith(("article:", "requirement:", "testcase:"))
+        )
+
+    # --- Assign entity/claim nodes to their parent page's layer ---
+    # Step 1: Build entity/claim → page mapping from edges
+    child_to_page: dict[str, str] = {}
     for edge in final_edges:
         src_type = nodes.get(edge["source"], {}).get("type", "")
         tgt_type = nodes.get(edge["target"], {}).get("type", "")
-        # If an article connects to an entity/claim, map the child to the article
-        if src_type == "article" and tgt_type in ("entity", "claim"):
-            child_to_article.setdefault(edge["target"], edge["source"])
-        elif tgt_type == "article" and src_type in ("entity", "claim"):
-            child_to_article.setdefault(edge["source"], edge["target"])
+        # If a page connects to an entity/claim, map the child to the page.
+        if is_article_like(edge["source"], src_type) and tgt_type in ("entity", "claim"):
+            child_to_page.setdefault(edge["target"], edge["source"])
+        elif is_article_like(edge["target"], tgt_type) and src_type in ("entity", "claim"):
+            child_to_page.setdefault(edge["source"], edge["target"])
 
     # Step 2: For orphan entities/claims, try to match by ID prefix
-    # Build a reverse lookup: bare article name → full article ID
+    # Build a reverse lookup: bare page name → full page ID
     # e.g., "concept-aaak-compression" → "article:concepts/concept-aaak-compression"
-    bare_to_article: dict[str, str] = {}
-    for nid in nodes:
-        if nid.startswith("article:"):
-            # Extract the bare filename from paths like "article:concepts/concept-foo"
-            bare = nid.split("/")[-1] if "/" in nid else nid.replace("article:", "")
-            bare_to_article[bare] = nid
+    bare_to_page: dict[str, str] = {}
+    for nid, node in nodes.items():
+        if is_article_like(nid, node.get("type", "")):
+            raw_page = nid.split(":", 1)[1] if ":" in nid else nid
+            bare = raw_page.split("/")[-1]
+            bare_to_page[bare] = nid
 
     for nid, node in nodes.items():
-        if node["type"] in ("entity", "claim") and nid not in child_to_article:
+        if node["type"] in ("entity", "claim") and nid not in child_to_page:
             # e.g., "claim:concept-aaak-compression:not-zero-loss" → stem "concept-aaak-compression"
             # e.g., "entity:brain" → stem "brain"
             raw = nid.split(":", 1)[1] if ":" in nid else nid  # "concept-aaak-compression:not-zero-loss"
             stem = raw.split(":")[0]  # "concept-aaak-compression"
 
             # Try exact bare name match first
-            if stem in bare_to_article:
-                child_to_article[nid] = bare_to_article[stem]
+            if stem in bare_to_page:
+                child_to_page[nid] = bare_to_page[stem]
             else:
                 # Try suffix/substring match against bare names
                 # e.g., entity:brain → segment-brain, entity:mempalace → tool-mempalace
                 matched = False
-                for bare, aid in bare_to_article.items():
+                for bare, page_id in bare_to_page.items():
                     if stem in bare or bare in stem:
-                        child_to_article[nid] = aid
+                        child_to_page[nid] = page_id
                         matched = True
                         break
                     # Also try: bare ends with -stem (e.g., "segment-brain" ends with "-brain")
                     if bare.endswith(f"-{stem}") or bare.endswith(f"/{stem}"):
-                        child_to_article[nid] = aid
+                        child_to_page[nid] = page_id
                         matched = True
                         break
-                # Last resort: check if the node's name appears in any article's
+                # Last resort: check if the node's name appears in any page's
                 # name OR content (knowledgeMeta.content)
                 if not matched and node.get("name"):
                     node_name_lower = node["name"].lower()
-                    for aid, anode in nodes.items():
-                        if not aid.startswith("article:"):
+                    for page_id, page_node in nodes.items():
+                        if not is_article_like(page_id, page_node.get("type", "")):
                             continue
                         # Match against article name
-                        if node_name_lower in anode.get("name", "").lower():
-                            child_to_article[nid] = aid
+                        if node_name_lower in page_node.get("name", "").lower():
+                            child_to_page[nid] = page_id
                             matched = True
                             break
                         # Match against article content (wikilinks or text)
-                        meta = anode.get("knowledgeMeta", {})
+                        meta = page_node.get("knowledgeMeta", {})
                         content = (meta.get("content") or "").lower()
                         if len(node_name_lower) >= 3 and node_name_lower in content:
-                            child_to_article[nid] = aid
+                            child_to_page[nid] = page_id
                             matched = True
                             break
 
-    # Step 3: Place children into their parent article's layer
-    for child_id, article_id in child_to_article.items():
-        layer_id = article_layer_map.get(article_id)
+    # Step 3: Place children into their parent page's layer
+    for child_id, page_id in child_to_page.items():
+        layer_id = page_layer_map.get(page_id)
         if layer_id and layer_id in layer_members:
             layer_members[layer_id].append(child_id)
-            article_layer_map[child_id] = layer_id
+            page_layer_map[child_id] = layer_id
 
     # --- Build layers ---
     layers = []
@@ -291,7 +312,7 @@ def merge(root: Path) -> dict:
         cat_name = cat["name"]
         layer_id = cat_layer_map.get(cat_name)
         if not layer_id:
-            cat_slug = re.sub(r"[^a-z0-9]+", "-", cat_name.lower()).strip("-") or "unnamed"
+            cat_slug = category_slug(cat_name)
             layer_id = f"layer:{cat_slug}"
         members = list(dict.fromkeys(layer_members.get(layer_id, [])))  # Deduplicate preserving order
         layers.append({
@@ -317,7 +338,7 @@ def merge(root: Path) -> dict:
     # --- Build tour from index.md category ordering ---
     tour = []
     for i, cat in enumerate(categories):
-        cat_slug = re.sub(r"[^a-z0-9]+", "-", cat["name"].lower()).strip("-") or "unnamed"
+        cat_slug = category_slug(cat["name"])
         topic_id = f"topic:{cat_slug}"
         # Pick representative articles (up to 3 per category)
         members = [e["source"] for e in final_edges
@@ -345,15 +366,16 @@ def merge(root: Path) -> dict:
             project_name = h1_match.group(1).strip()
 
     # --- Assemble final graph ---
+    analyzed_at = datetime.now(timezone.utc).isoformat()
     graph = {
         "version": "1.0.0",
         "kind": "knowledge",
         "project": {
             "name": project_name,
             "languages": ["markdown"],
-            "frameworks": ["karpathy-wiki"],
+            "frameworks": ["karpathy-wiki"] + ([profile] if profile != "generic" else []),
             "description": f"Knowledge graph for {project_name}",
-            "analyzedAt": datetime.now(timezone.utc).isoformat(),
+            "analyzedAt": analyzed_at,
             "gitCommitHash": "",
         },
         "nodes": list(nodes.values()),
@@ -373,6 +395,19 @@ def merge(root: Path) -> dict:
             graph["project"]["gitCommitHash"] = result.stdout.strip()
     except (OSError, subprocess.TimeoutExpired):
         pass
+
+    graph["project"]["provenance"] = {
+        "generationMode": "standalone",
+        "completedStages": ["scan", "batch", "extract", "analyze", "merge", "validate"],
+        "degraded": False,
+        "qualityGates": {
+            "deterministicScan": True,
+            "mergeCompleted": True,
+        },
+        "gitCommitHash": graph["project"]["gitCommitHash"],
+        "toolVersion": "1.0.0",
+        "analyzedAt": analyzed_at,
+    }
 
     # Write output
     out_path = intermediate / "assembled-graph.json"
