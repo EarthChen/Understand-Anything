@@ -80,6 +80,11 @@ export const NODE_TYPE_ALIASES: Record<string, string> = {
   reference: "source",
   raw: "source",
   paper: "source",
+  req: "requirement",
+  prd: "requirement",
+  requirement_summary: "requirement",
+  test_case: "testcase",
+  qa_case: "testcase",
 };
 
 // Aliases that LLMs commonly generate instead of canonical edge types
@@ -404,7 +409,7 @@ export const GraphNodeSchema = z.object({
     "config", "document", "service", "table", "endpoint",
     "pipeline", "schema", "resource",
     "domain", "flow", "step",
-    "article", "entity", "topic", "claim", "source",
+    "article", "entity", "topic", "claim", "source", "requirement", "testcase",
   ]),
   name: z.string(),
   filePath: z.string().optional(),

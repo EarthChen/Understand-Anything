@@ -1,10 +1,10 @@
-// Node types (21 total: 5 code + 8 non-code + 3 domain + 5 knowledge)
+// Node types (23 total: 5 code + 8 non-code + 3 domain + 7 knowledge)
 export type NodeType =
   | "file" | "function" | "class" | "module" | "concept"
   | "config" | "document" | "service" | "table" | "endpoint"
   | "pipeline" | "schema" | "resource"
   | "domain" | "flow" | "step"
-  | "article" | "entity" | "topic" | "claim" | "source";
+  | "article" | "entity" | "topic" | "claim" | "source" | "requirement" | "testcase";
 
 // Edge types (43 total in 8 categories: Structural, Behavioral, Data flow, Dependencies, Semantic, Infrastructure/Schema, Domain, Knowledge)
 export type EdgeType =
@@ -28,13 +28,34 @@ export interface ApiCallMeta {
   path: string;     // "/api/orders" or "/api/orders/{id}"
 }
 
-// Optional knowledge metadata for article/entity/topic/claim/source nodes
+// Optional knowledge metadata for article/entity/topic/claim/source/requirement/testcase nodes
 export interface KnowledgeMeta {
   wikilinks?: string[];
   backlinks?: string[];
   category?: string;
   content?: string;
   service?: string;
+  profile?: "generic" | "prd-wiki" | string;
+  subtype?: string;
+  sourceType?: "prd" | "testcase" | string;
+  sourcePath?: string;
+  sourceSubtype?: "raw_prd" | "raw_testcase" | string;
+  business?: string;
+  month?: string;
+  version?: string;
+  detail?: string;
+  markdownLinks?: Array<{
+    label: string;
+    target: string;
+    resolvedId?: string;
+    fragment?: string | null;
+  }>;
+  externalLinks?: string[];
+  testcaseCandidates?: Array<{
+    id: string;
+    reason: string;
+    score: number;
+  }>;
 }
 
 // Wiki output file schemas
@@ -381,7 +402,7 @@ export interface DomainMeta {
   entryType?: "http" | "cli" | "event" | "cron" | "manual";
 }
 
-// GraphNode with 21 types: 5 code + 8 non-code + 3 domain + 5 knowledge
+// GraphNode with 23 types: 5 code + 8 non-code + 3 domain + 7 knowledge
 export interface GraphNode {
   id: string;
   type: NodeType;

@@ -44,6 +44,8 @@
   --color-node-topic: #c9b06c;
   --color-node-claim: #6fb07a;
   --color-node-source: #8a8a8a;
+  --color-node-requirement: #d99058;
+  --color-node-testcase: #8dbf73;
 
   /* Diff */
   --color-diff-changed: #e05252;

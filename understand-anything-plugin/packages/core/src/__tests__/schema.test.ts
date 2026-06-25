@@ -67,6 +67,68 @@ describe("schema validation", () => {
     expect(result.issues).toEqual([]);
   });
 
+  it("accepts requirement and testcase knowledge nodes", () => {
+    const graph = {
+      ...validGraph,
+      kind: "knowledge",
+      nodes: [
+        {
+          id: "requirement:checkout-payment",
+          type: "requirement",
+          name: "Checkout payment requirement",
+          summary: "Checkout must support payment confirmation.",
+          tags: ["checkout", "payment"],
+          complexity: "moderate",
+          knowledgeMeta: {
+            profile: "prd-wiki",
+            subtype: "functional_requirement",
+            sourceType: "prd",
+            sourcePath: "raw/prd/checkout.md",
+            sourceSubtype: "raw_prd",
+            business: "checkout",
+            month: "2026-06",
+            version: "v1",
+            detail: "Payment confirmation is required before order completion.",
+          },
+        },
+        {
+          id: "testcase:checkout-payment-confirmation",
+          type: "testcase",
+          name: "Checkout payment confirmation testcase",
+          summary: "Verifies checkout payment confirmation before completion.",
+          tags: ["checkout", "payment", "tested"],
+          complexity: "simple",
+          knowledgeMeta: {
+            profile: "prd-wiki",
+            subtype: "acceptance_testcase",
+            sourceType: "testcase",
+            sourcePath: "raw/testcases/checkout.md",
+            sourceSubtype: "raw_testcase",
+            business: "checkout",
+            month: "2026-06",
+            version: "v1",
+            detail: "Submit payment and assert the order reaches confirmed state.",
+          },
+        },
+      ],
+      edges: [
+        {
+          source: "requirement:checkout-payment",
+          target: "testcase:checkout-payment-confirmation",
+          type: "tested_by",
+          direction: "forward",
+          weight: 1,
+        },
+      ],
+      layers: [],
+      tour: [],
+    } as unknown as KnowledgeGraph;
+
+    const result = validateGraph(graph);
+    expect(result.success).toBe(true);
+    expect(result.data!.nodes.map((node) => node.type)).toEqual(["requirement", "testcase"]);
+  });
+
   it("rejects graph with missing required fields", () => {
     const incomplete = { version: "1.0.0" };
     const result = validateGraph(incomplete);
