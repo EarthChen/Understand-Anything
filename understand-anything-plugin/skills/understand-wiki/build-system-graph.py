@@ -292,7 +292,8 @@ def build_system_graph(
             print(f"  Warning: skipping {svc['name']}: {exc}", file=sys.stderr)
             continue
         info = extract_service_info(svc["name"], kg)
-        if _is_knowledge_artifact(kg):
+        explicit_facet = svc.get("facet")
+        if not explicit_facet and _is_knowledge_artifact(kg):
             info["facet"] = "knowledge"
             info["profile"] = _knowledge_profile(kg)
         service_infos.append(info)
@@ -351,7 +352,7 @@ def build_system_graph(
         })
 
         # Add facet → service contains edge
-        svc_facet = info.get("facet") or meta.get("facet", "")
+        svc_facet = meta.get("facet") or info.get("facet", "")
         if svc_facet and svc_facet in facet_ids:
             edges.append({
                 "source": facet_ids[svc_facet],
@@ -386,7 +387,7 @@ def build_system_graph(
             "kgCommit": info["kg_commit"],
             "basePath": base_path,
         }
-        svc_facet_val = info.get("facet") or meta.get("facet")
+        svc_facet_val = meta.get("facet") or info.get("facet")
         if svc_facet_val:
             idx_entry["facet"] = svc_facet_val
         if info.get("profile"):

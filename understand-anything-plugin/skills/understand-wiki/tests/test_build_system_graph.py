@@ -50,6 +50,41 @@ class BuildSystemGraphKnowledgeFacetTests(unittest.TestCase):
             self.assertTrue(any(node["id"] == "facet:knowledge" for node in graph["nodes"]))
             self.assertTrue(any(edge["source"] == "facet:knowledge" and edge["target"] == "microservice:amar-prd" for edge in graph["edges"]))
 
+    def test_explicit_system_facet_overrides_requirement_detection(self):
+        """Code services may contain requirements without becoming knowledge facets."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            system_dir = root / ".understand-anything"
+            system_dir.mkdir(parents=True)
+            (system_dir / "system.json").write_text(json.dumps({
+                "facets": [
+                    {
+                        "name": "Server",
+                        "type": "server",
+                        "path": "backend",
+                        "subPaths": ["svc"],
+                    }
+                ]
+            }), encoding="utf-8")
+
+            svc = root / "backend" / "svc" / ".understand-anything"
+            svc.mkdir(parents=True)
+            (svc / "knowledge-graph.json").write_text(json.dumps({
+                "version": "1.0.0",
+                "project": {"name": "svc", "frameworks": ["spring-boot"], "languages": ["java"]},
+                "nodes": [
+                    {"id": "file:service", "name": "Service.java", "type": "file"},
+                    {"id": "requirement:room", "name": "跨房间 PK", "type": "requirement"},
+                ],
+                "edges": [],
+            }), encoding="utf-8")
+
+            graph = build_system_graph(str(root))
+
+            self.assertEqual(graph["serviceIndex"]["svc"]["facet"], "server")
+            self.assertTrue(any(edge["source"] == "facet:server" and edge["target"] == "microservice:svc" for edge in graph["edges"]))
+            self.assertFalse(any(edge["source"] == "facet:knowledge" and edge["target"] == "microservice:svc" for edge in graph["edges"]))
+
 
 if __name__ == "__main__":
     unittest.main()
