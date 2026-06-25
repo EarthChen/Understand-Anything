@@ -6,7 +6,7 @@
 
 ## Summaries
 
-- [跨房间 PK](summaries/房间-2025-10-v2.25.0-跨房间PK.md)
+- [跨房间 PK](summaries/房间-2025-10-v2.25.0-跨房间PK.md) ([Raw](../raw/prd/房间/2025-10-v2.25.0-跨房间PK.md))
 
 ## Test Cases
 

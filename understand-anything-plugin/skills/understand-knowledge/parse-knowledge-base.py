@@ -342,7 +342,7 @@ def parse_index(index_path: Path) -> list[dict]:
             for wl in WIKILINK_RE.finditer(line):
                 current_category["articles"].append(wl.group(1).strip())
             for ml in extract_markdown_links(line)["internal"]:
-                if ml["target"]:
+                if ml["target"] and not is_raw_markdown_target(ml["target"]):
                     current_category["articles"].append(ml["target"].strip())
 
     return categories
@@ -471,6 +471,37 @@ def normalize_match_text(text: str) -> str:
     return re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(text or "")).lower()
 
 
+def is_raw_markdown_target(target: str) -> bool:
+    """Return true when a local markdown link points at raw source material."""
+    parts = Path(str(target or "").lstrip("/")).parts
+    return "raw" in parts
+
+
+def derive_business_from_pathish(value: str) -> str:
+    """Derive business segment from raw/testcase paths or testcases filenames."""
+    path = Path(str(value or ""))
+    parts = path.parts
+    if "raw" in parts:
+        raw_idx = parts.index("raw")
+        if len(parts) > raw_idx + 2 and parts[raw_idx + 1] in {"prd", "testcase"}:
+            return parts[raw_idx + 2]
+    if len(parts) >= 2 and parts[-2] == "testcases":
+        stem = Path(parts[-1]).stem
+        return re.split(r"[-_]", stem, maxsplit=1)[0]
+    return ""
+
+
+def derive_page_business(frontmatter: dict, rel: Path) -> str:
+    """Prefer explicit frontmatter business, then derive from source_path or file path."""
+    explicit = str(frontmatter.get("filename_business", "")).strip()
+    if explicit:
+        return explicit
+    source_business = derive_business_from_pathish(str(frontmatter.get("source_path", "")))
+    if source_business:
+        return source_business
+    return derive_business_from_pathish(rel.as_posix())
+
+
 def _safe_relative_to(path: Path, parent: Path) -> Path | None:
     try:
         return path.relative_to(parent)
@@ -559,6 +590,30 @@ def frontmatter_tags(frontmatter: dict) -> list[str]:
     if isinstance(fm_tags, list):
         return [t.strip() for t in fm_tags if t.strip()]
     return [t.strip() for t in str(fm_tags).split(",") if t.strip()]
+
+
+def requirement_testcase_match(requirement: dict, testcase: dict) -> bool:
+    """Conservatively infer coverage when business matches and titles/details overlap."""
+    req_meta = requirement.get("knowledgeMeta", {})
+    case_meta = testcase.get("knowledgeMeta", {})
+    req_business = normalize_match_text(req_meta.get("business", ""))
+    case_business = normalize_match_text(case_meta.get("business", ""))
+    if not req_business or req_business != case_business:
+        return False
+
+    req_needles = [
+        normalize_match_text(req_meta.get("detail", "")),
+        normalize_match_text(requirement.get("name", "")),
+    ]
+    case_haystack = normalize_match_text(" ".join([
+        testcase.get("name", ""),
+        testcase.get("filePath", ""),
+        case_meta.get("sourcePath", ""),
+    ]))
+    for needle in req_needles:
+        if needle and needle in case_haystack:
+            return True
+    return False
 
 
 def parse_wiki(root: Path) -> dict:
@@ -716,7 +771,7 @@ def parse_wiki(root: Path) -> dict:
 
         source_type = frontmatter.get("source_type", "")
         source_path = frontmatter.get("source_path", "")
-        business = frontmatter.get("filename_business", "")
+        business = derive_page_business(frontmatter, rel)
         month = frontmatter.get("filename_month", "")
         version = frontmatter.get("filename_version", "")
         detail = frontmatter.get("filename_detail", "")
@@ -773,6 +828,9 @@ def parse_wiki(root: Path) -> dict:
                 node_ids,
             )
             if not target_id:
+                if ml["target"]:
+                    warnings.append(f"Unresolved markdown link: {ml['target']} in {rel}")
+                    stats["unresolved"] += 1
                 continue
             if target_id.startswith("source:"):
                 add_edge(node_id, target_id, "cites", 0.8)
@@ -826,6 +884,13 @@ def parse_wiki(root: Path) -> dict:
             add_edge(edge["source"], edge["target"], "tested_by", 0.9)
         elif source_type == "testcase" and target_type == "requirement":
             add_edge(edge["target"], edge["source"], "tested_by", 0.9)
+
+    requirements = [node for node in nodes if node["type"] == "requirement"]
+    testcases = [node for node in nodes if node["type"] == "testcase"]
+    for requirement in requirements:
+        for testcase in testcases:
+            if requirement_testcase_match(requirement, testcase):
+                add_edge(requirement["id"], testcase["id"], "tested_by", 0.85)
 
     # --- Compute backlinks ---
     backlink_map: dict[str, list[str]] = {}

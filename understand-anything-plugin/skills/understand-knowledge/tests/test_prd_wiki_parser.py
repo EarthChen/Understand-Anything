@@ -200,6 +200,120 @@ sources: [raw/prd/房间/2025-10-v2.25.0-跨房间PK.md]
             edges,
         )
 
+    def test_prd_wiki_infers_tested_by_from_business_and_normalized_titles(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "wiki" / "summaries").mkdir(parents=True)
+            (root / "wiki" / "testcases").mkdir(parents=True)
+            (root / "raw" / "prd" / "房间").mkdir(parents=True)
+            (root / "raw" / "testcase" / "房间").mkdir(parents=True)
+            (root / "raw" / "testcase" / "聊天").mkdir(parents=True)
+            (root / "wiki" / "index.md").write_text("# Index\n", encoding="utf-8")
+            (root / "wiki" / "summaries" / "房间-PK优化.md").write_text(
+                "---\n"
+                "title: PK优化\n"
+                "type: summary\n"
+                "source_type: prd\n"
+                "source_path: raw/prd/房间/PK优化.md\n"
+                "filename_business: 房间\n"
+                "filename_detail: PK优化\n"
+                "---\n"
+                "# PK优化\n",
+                encoding="utf-8",
+            )
+            (root / "wiki" / "testcases" / "房间-PK优化.md").write_text(
+                "---\n"
+                "title: PK优化 测试用例\n"
+                "type: testcase\n"
+                "source_type: testcase\n"
+                "source_path: raw/testcase/房间/PK优化.md\n"
+                "---\n"
+                "# PK优化 测试用例\n",
+                encoding="utf-8",
+            )
+            (root / "wiki" / "testcases" / "聊天-PK优化.md").write_text(
+                "---\n"
+                "title: PK优化 测试用例\n"
+                "type: testcase\n"
+                "source_type: testcase\n"
+                "source_path: raw/testcase/聊天/PK优化.md\n"
+                "---\n"
+                "# PK优化 测试用例\n",
+                encoding="utf-8",
+            )
+            (root / "raw" / "prd" / "房间" / "PK优化.md").write_text("# PRD\n", encoding="utf-8")
+            (root / "raw" / "testcase" / "房间" / "PK优化.md").write_text("# Case\n", encoding="utf-8")
+            (root / "raw" / "testcase" / "聊天" / "PK优化.md").write_text("# Case\n", encoding="utf-8")
+
+            manifest = parser.parse_wiki(root)
+
+        nodes_by_id = {node["id"]: node for node in manifest["nodes"]}
+        self.assertEqual(
+            nodes_by_id["testcase:testcases/房间-PK优化"]["knowledgeMeta"]["business"],
+            "房间",
+        )
+        edges = {
+            (edge["source"], edge["target"], edge["type"])
+            for edge in manifest["edges"]
+        }
+        self.assertIn(
+            (
+                "requirement:summaries/房间-PK优化",
+                "testcase:testcases/房间-PK优化",
+                "tested_by",
+            ),
+            edges,
+        )
+        self.assertNotIn(
+            (
+                "requirement:summaries/房间-PK优化",
+                "testcase:testcases/聊天-PK优化",
+                "tested_by",
+            ),
+            edges,
+        )
+
+    def test_index_raw_links_do_not_become_category_members(self):
+        manifest = parser.parse_wiki(FIXTURES / "prd-wiki")
+
+        categories = {category["name"]: category["count"] for category in manifest["categories"]}
+        self.assertEqual(categories["Summaries"], 1)
+        self.assertNotIn(
+            (
+                "source:prd/房间/2025-10-v2.25.0-跨房间PK",
+                "topic:summaries",
+                "categorized_under",
+            ),
+            {
+                (edge["source"], edge["target"], edge["type"])
+                for edge in manifest["edges"]
+            },
+        )
+
+    def test_unresolved_markdown_links_warn_but_fragment_only_does_not(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "wiki").mkdir()
+            (root / "wiki" / "index.md").write_text("# Index\n", encoding="utf-8")
+            (root / "wiki" / "page.md").write_text(
+                "# Page\n\n"
+                "[Missing Page](missing.md)\n"
+                "[Missing Raw](../raw/prd/missing.md)\n"
+                "[Fragment](#local-section)\n",
+                encoding="utf-8",
+            )
+
+            manifest = parser.parse_wiki(root)
+
+        self.assertEqual(manifest["stats"]["unresolved"], 2)
+        self.assertTrue(
+            any("Unresolved markdown link: missing.md in page.md" in warning for warning in manifest["warnings"])
+        )
+        self.assertTrue(
+            any("../raw/prd/missing.md in page.md" in warning for warning in manifest["warnings"])
+        )
+        self.assertFalse(any("#local-section" in warning for warning in manifest["warnings"]))
+
     def test_generic_wiki_does_not_emit_prd_node_types(self):
         manifest = parser.parse_wiki(FIXTURES / "generic-wiki")
 
