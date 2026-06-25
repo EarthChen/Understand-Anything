@@ -616,6 +616,33 @@ def requirement_testcase_match(requirement: dict, testcase: dict) -> bool:
     return False
 
 
+def requirement_match_key(requirement: dict) -> str:
+    """Return the normalized requirement detail/name used for coverage specificity."""
+    meta = requirement.get("knowledgeMeta", {})
+    detail = normalize_match_text(meta.get("detail", ""))
+    if detail:
+        return detail
+    return normalize_match_text(requirement.get("name", ""))
+
+
+def filter_specific_requirement_matches(requirements: list[dict]) -> list[dict]:
+    """Drop shorter requirement candidates when a longer candidate contains them."""
+    keyed = [(requirement, requirement_match_key(requirement)) for requirement in requirements]
+    filtered = []
+    for requirement, key in keyed:
+        if not key:
+            filtered.append(requirement)
+            continue
+        is_less_specific = any(
+            key != other_key and key in other_key
+            for _other_requirement, other_key in keyed
+            if other_key
+        )
+        if not is_less_specific:
+            filtered.append(requirement)
+    return filtered
+
+
 def parse_wiki(root: Path) -> dict:
     """Parse a Karpathy-pattern wiki and produce the scan manifest."""
     root = Path(root).resolve()
@@ -887,10 +914,14 @@ def parse_wiki(root: Path) -> dict:
 
     requirements = [node for node in nodes if node["type"] == "requirement"]
     testcases = [node for node in nodes if node["type"] == "testcase"]
-    for requirement in requirements:
-        for testcase in testcases:
-            if requirement_testcase_match(requirement, testcase):
-                add_edge(requirement["id"], testcase["id"], "tested_by", 0.85)
+    for testcase in testcases:
+        matched_requirements = [
+            requirement
+            for requirement in requirements
+            if requirement_testcase_match(requirement, testcase)
+        ]
+        for requirement in filter_specific_requirement_matches(matched_requirements):
+            add_edge(requirement["id"], testcase["id"], "tested_by", 0.85)
 
     # --- Compute backlinks ---
     backlink_map: dict[str, list[str]] = {}

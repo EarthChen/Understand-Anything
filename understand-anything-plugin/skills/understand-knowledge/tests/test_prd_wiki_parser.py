@@ -273,6 +273,72 @@ sources: [raw/prd/房间/2025-10-v2.25.0-跨房间PK.md]
             edges,
         )
 
+    def test_prd_wiki_prefers_specific_tested_by_matches_per_testcase(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "wiki" / "summaries").mkdir(parents=True)
+            (root / "wiki" / "testcases").mkdir(parents=True)
+            (root / "raw" / "prd" / "房间").mkdir(parents=True)
+            (root / "raw" / "testcase" / "房间").mkdir(parents=True)
+            (root / "wiki" / "index.md").write_text("# Index\n", encoding="utf-8")
+
+            requirements = {
+                "房间红包": "房间红包",
+                "古尔邦节房间红包换皮": "古尔邦节房间红包换皮",
+                "会员等级": "会员等级",
+            }
+            for file_stem, detail in requirements.items():
+                (root / "wiki" / "summaries" / f"{file_stem}.md").write_text(
+                    "---\n"
+                    f"title: {detail}\n"
+                    "type: summary\n"
+                    "source_type: prd\n"
+                    f"source_path: raw/prd/房间/{file_stem}.md\n"
+                    "filename_business: 房间\n"
+                    f"filename_detail: {detail}\n"
+                    "---\n"
+                    f"# {detail}\n",
+                    encoding="utf-8",
+                )
+                (root / "raw" / "prd" / "房间" / f"{file_stem}.md").write_text("# PRD\n", encoding="utf-8")
+
+            testcases = {
+                "古尔邦节-房间红包换皮": "古尔邦节-房间红包换皮 测试用例",
+                "房间红包-会员等级": "房间红包 会员等级 测试用例",
+            }
+            for file_stem, title in testcases.items():
+                (root / "wiki" / "testcases" / f"{file_stem}.md").write_text(
+                    "---\n"
+                    f"title: {title}\n"
+                    "type: testcase\n"
+                    "source_type: testcase\n"
+                    f"source_path: raw/testcase/房间/{file_stem}.md\n"
+                    "---\n"
+                    f"# {title}\n",
+                    encoding="utf-8",
+                )
+                (root / "raw" / "testcase" / "房间" / f"{file_stem}.md").write_text("# Case\n", encoding="utf-8")
+
+            manifest = parser.parse_wiki(root)
+
+        edges = {
+            (edge["source"], edge["target"], edge["type"])
+            for edge in manifest["edges"]
+        }
+        specific_case = "testcase:testcases/古尔邦节-房间红包换皮"
+        self.assertIn(
+            ("requirement:summaries/古尔邦节房间红包换皮", specific_case, "tested_by"),
+            edges,
+        )
+        self.assertNotIn(
+            ("requirement:summaries/房间红包", specific_case, "tested_by"),
+            edges,
+        )
+
+        combo_case = "testcase:testcases/房间红包-会员等级"
+        self.assertIn(("requirement:summaries/房间红包", combo_case, "tested_by"), edges)
+        self.assertIn(("requirement:summaries/会员等级", combo_case, "tested_by"), edges)
+
     def test_index_raw_links_do_not_become_category_members(self):
         manifest = parser.parse_wiki(FIXTURES / "prd-wiki")
 
