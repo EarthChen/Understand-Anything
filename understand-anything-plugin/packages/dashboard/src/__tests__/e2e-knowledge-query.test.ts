@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
+import { existsSync } from "fs"
 import { execFile, spawn } from "child_process"
 import type { ChildProcess } from "child_process"
 import path from "path"
 import http from "http"
 
 const KB_TEST_ROOT = "/Users/earthchen/ai-work/kb-test"
+const HAS_TEST_DATA = existsSync(KB_TEST_ROOT)
 const SKILL_DIR = path.resolve(
   import.meta.dirname,
   "../../../../skills/understand-query",
@@ -63,6 +65,7 @@ function runQuery(...args: string[]): Promise<Record<string, unknown>> {
 }
 
 beforeAll(async () => {
+  if (!HAS_TEST_DATA) return
   const port = 30000 + Math.floor(Math.random() * 10000)
   serverUrl = `http://127.0.0.1:${port}`
 
@@ -86,7 +89,7 @@ afterAll(() => {
   }
 })
 
-describe("E2E: knowledge search", () => {
+describe.skipIf(!HAS_TEST_DATA)("E2E: knowledge search", () => {
   it("searches PRD knowledge by keyword", async () => {
     const result = await runQuery("knowledge", "search", "VIP", "--service", "amar-prd")
     expect(result.kind).toBe("knowledge-search")
@@ -114,7 +117,7 @@ describe("E2E: knowledge search", () => {
   }, 15_000)
 })
 
-describe("E2E: knowledge node lookup", () => {
+describe.skipIf(!HAS_TEST_DATA)("E2E: knowledge node lookup", () => {
   it("finds a node by exact ID", async () => {
     const searchResult = await runQuery("knowledge", "search", "VIP", "--service", "amar-prd", "--limit", "1")
     const results = searchResult.results as Array<{ id: string }>
@@ -135,7 +138,7 @@ describe("E2E: knowledge node lookup", () => {
   }, 15_000)
 })
 
-describe("E2E: knowledge neighbors", () => {
+describe.skipIf(!HAS_TEST_DATA)("E2E: knowledge neighbors", () => {
   it("fetches neighbors for a knowledge node", async () => {
     const searchResult = await runQuery("knowledge", "search", "VIP", "--service", "amar-prd", "--limit", "1")
     const results = searchResult.results as Array<{ id: string }>
@@ -148,7 +151,7 @@ describe("E2E: knowledge neighbors", () => {
   }, 15_000)
 })
 
-describe("E2E: knowledge coverage", () => {
+describe.skipIf(!HAS_TEST_DATA)("E2E: knowledge coverage", () => {
   it("finds testcase coverage for a requirement node", async () => {
     const searchResult = await runQuery(
       "knowledge", "search", "VIP", "--service", "amar-prd", "--type", "requirement", "--limit", "5",
@@ -166,7 +169,7 @@ describe("E2E: knowledge coverage", () => {
   }, 15_000)
 })
 
-describe("E2E: services listing includes knowledge facet", () => {
+describe.skipIf(!HAS_TEST_DATA)("E2E: services listing includes knowledge facet", () => {
   it("lists services and finds amar-prd with knowledge facet", async () => {
     const result = await runQuery("services", "--name", "amar-prd")
     const services = result.services as Array<{ name: string; facet?: string }>
@@ -176,7 +179,7 @@ describe("E2E: services listing includes knowledge facet", () => {
   }, 15_000)
 })
 
-describe("E2E: KG queries against knowledge service", () => {
+describe.skipIf(!HAS_TEST_DATA)("E2E: KG queries against knowledge service", () => {
   it("loads knowledge graph nodes for amar-prd", async () => {
     const result = await runQuery("kg", "--service", "amar-prd", "--type", "requirement")
     const nodes = result.nodes as Array<{ type: string }>

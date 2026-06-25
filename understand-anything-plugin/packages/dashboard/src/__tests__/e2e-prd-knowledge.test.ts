@@ -1,23 +1,27 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
+import { existsSync } from "fs"
 import request from "supertest"
 import type { Express } from "express"
 import { createApp } from "../../server"
 
 const KB_TEST_ROOT = "/Users/earthchen/ai-work/kb-test"
+const HAS_TEST_DATA = existsSync(KB_TEST_ROOT)
+
 let app: Express
 let originalCwd: string
 
 beforeAll(() => {
+  if (!HAS_TEST_DATA) return
   originalCwd = process.cwd()
   process.chdir(KB_TEST_ROOT)
   app = createApp({ projectRoot: KB_TEST_ROOT })
 })
 
 afterAll(() => {
-  process.chdir(originalCwd)
+  if (originalCwd) process.chdir(originalCwd)
 })
 
-describe("E2E: system graph", () => {
+describe.skipIf(!HAS_TEST_DATA)("E2E: system graph", () => {
   it("serves system-graph.json with facets and services", async () => {
     const res = await request(app).get("/system-graph.json")
     expect(res.status).toBe(200)
@@ -46,7 +50,7 @@ describe("E2E: system graph", () => {
   })
 })
 
-describe("E2E: services API", () => {
+describe.skipIf(!HAS_TEST_DATA)("E2E: services API", () => {
   it("lists all services including amar-prd", async () => {
     const res = await request(app).get("/api/services")
     expect(res.status).toBe(200)
@@ -67,7 +71,7 @@ describe("E2E: services API", () => {
   })
 })
 
-describe("E2E: PRD knowledge graph via graph API", () => {
+describe.skipIf(!HAS_TEST_DATA)("E2E: PRD knowledge graph via graph API", () => {
   it("loads amar-prd knowledge-graph.json", async () => {
     const res = await request(app)
       .get("/api/graph")
@@ -98,7 +102,7 @@ describe("E2E: PRD knowledge graph via graph API", () => {
   })
 })
 
-describe("E2E: unified search with PRD knowledge", () => {
+describe.skipIf(!HAS_TEST_DATA)("E2E: unified search with PRD knowledge", () => {
   it("returns results for a PRD-related query", async () => {
     const res = await request(app).get("/api/search").query({ q: "VIP", limit: "10" })
     expect(res.status).toBe(200)
@@ -142,7 +146,7 @@ describe("E2E: unified search with PRD knowledge", () => {
   })
 })
 
-describe("E2E: graph-query endpoints", () => {
+describe.skipIf(!HAS_TEST_DATA)("E2E: graph-query endpoints", () => {
   it("lists layers for amar-prd service", async () => {
     const res = await request(app)
       .get("/api/graph-query/layers")
@@ -176,7 +180,7 @@ describe("E2E: graph-query endpoints", () => {
   })
 })
 
-describe("E2E: config and metadata", () => {
+describe.skipIf(!HAS_TEST_DATA)("E2E: config and metadata", () => {
   it("serves config.json", async () => {
     const res = await request(app).get("/config.json")
     expect(res.status).toBe(200)
