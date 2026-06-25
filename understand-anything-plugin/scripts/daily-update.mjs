@@ -31,7 +31,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, unlinkSync } from 'node:fs';
-import { resolve, dirname, basename, join } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
