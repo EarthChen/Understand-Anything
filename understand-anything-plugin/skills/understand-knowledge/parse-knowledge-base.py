@@ -24,6 +24,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
 MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)]+)\)")
+URI_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 CODE_BLOCK_RE = re.compile(r"```(\w*)")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
@@ -163,7 +164,7 @@ def extract_markdown_links(text: str) -> dict:
     """Extract non-image markdown links, separated into internal and external."""
     links = {"internal": [], "external": []}
     for label, target in _iter_markdown_links(text):
-        if target.startswith(("http://", "https://")):
+        if URI_SCHEME_RE.match(target):
             links["external"].append(target)
             continue
         path, fragment = split_link_fragment(target)

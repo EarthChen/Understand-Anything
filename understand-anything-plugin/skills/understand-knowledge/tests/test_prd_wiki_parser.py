@@ -47,12 +47,15 @@ sources: [raw/prd/房间/2025-10-v2.25.0-跨房间PK.md]
         self.assertEqual(links["internal"][1]["fragment"], "section")
         self.assertEqual(links["external"], ["https://example.com/doc"])
 
-    def test_markdown_links_handle_fragments_titles_parentheses_and_non_http_schemes(self):
+    def test_markdown_links_handle_fragments_titles_parentheses_and_uri_schemes(self):
         text = (
             "[Section](#section) "
             '[Titled](docs/a.md "title") '
             "[Paren](docs/foo_(bar).md) "
-            "[Mail](mailto:team@example.com)"
+            "[Absolute](/docs/root.md) "
+            "[Mail](mailto:team@example.com) "
+            "[Ftp](ftp://example.com/file.md) "
+            "[Obsidian](obsidian://open?vault=kb)"
         )
 
         links = parser.extract_markdown_links(text)
@@ -63,10 +66,17 @@ sources: [raw/prd/房间/2025-10-v2.25.0-跨房间PK.md]
                 {"label": "Section", "target": None, "fragment": "section"},
                 {"label": "Titled", "target": "docs/a.md", "fragment": None},
                 {"label": "Paren", "target": "docs/foo_(bar).md", "fragment": None},
-                {"label": "Mail", "target": "mailto:team@example.com", "fragment": None},
+                {"label": "Absolute", "target": "/docs/root.md", "fragment": None},
             ],
         )
-        self.assertEqual(links["external"], [])
+        self.assertEqual(
+            links["external"],
+            [
+                "mailto:team@example.com",
+                "ftp://example.com/file.md",
+                "obsidian://open?vault=kb",
+            ],
+        )
 
     def test_profile_auto_detects_prd_wiki_signals(self):
         with tempfile.TemporaryDirectory() as temp_dir:
