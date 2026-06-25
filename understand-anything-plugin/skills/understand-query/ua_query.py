@@ -80,6 +80,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     knowledge_coverage.add_argument("node")
     knowledge_coverage.add_argument("--service")
 
+    knowledge_read = knowledge_sub.add_parser("read", help="Read full content of knowledge nodes")
+    knowledge_read.add_argument("--node", required=True, help="Node ID(s), comma-separated (max 10)")
+    knowledge_read.add_argument("--service")
+
     domain = sub.add_parser("domain", help="Domain graph queries")
     domain.add_argument("--service")
     domain.add_argument("--domain")

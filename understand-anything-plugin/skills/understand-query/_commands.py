@@ -231,6 +231,17 @@ def cmd_knowledge(args: argparse.Namespace) -> Any:
             "total": len(coverage),
         }
 
+    if action == "read":
+        node_ids = [n.strip() for n in args.node.split(",") if n.strip()]
+        node_ids = node_ids[:10]
+        data = _helpers.fetch_json(args.server, "/api/graph", {
+            "service": service,
+            "file": "knowledge-graph.json",
+            "nodes": ",".join(node_ids),
+        })
+        nodes = data.get("nodes", [])
+        return {"kind": "knowledge-read", "service": service, "nodes": nodes, "total": len(nodes)}
+
     raise SystemExit(f"Unknown knowledge action: {action}")
 
 
@@ -925,7 +936,7 @@ def _detect_and_follow_cross_service_rpc(
             "hint": (
                 f"检测到 '{current_service}' 消费 RPC 接口 '{target_interface}'，"
                 f"实现服务为 '{target_service}'，但追踪失败。建议手动执行: "
-                f"python ua_query.py trace --service {target_service} --query \"{target_interface}\" --source"
+                f"python3 ua_query.py trace --service {target_service} --query \"{target_interface}\" --source"
             ),
             "rpcInterfaces": rpc_interface_names[:5],
             "targetService": target_service,
@@ -979,6 +990,35 @@ def cmd_ask(args: argparse.Namespace) -> Any:
 
     if depth == "quick":
         return result
+
+    # Step 2b: PRD Knowledge Context
+    prd_context: list[dict] = []
+    try:
+        knowledge_svcs = _helpers._discover_knowledge_services(args.server)
+        if knowledge_svcs:
+            prd_parts = [p.strip() for p in query.split(",") if p.strip() and len(p.strip()) <= 20]
+            prd_q = " ".join(prd_parts[:3]) if prd_parts else query.split(",")[0][:20]
+            seen_ids: set[str] = set()
+            for ksvc in knowledge_svcs:
+                try:
+                    prd_hits = _search_api(
+                        args.server, prd_q, service=ksvc, scope="kg", limit=5, type=None,
+                    )
+                    for hit in prd_hits:
+                        nid = hit.get("id", "")
+                        if nid and nid in seen_ids:
+                            continue
+                        seen_ids.add(nid)
+                        prd_context.append(hit)
+                        if len(prd_context) >= 5:
+                            break
+                except RuntimeError:
+                    continue
+                if len(prd_context) >= 5:
+                    break
+    except RuntimeError:
+        pass
+    result["prdContext"] = prd_context
 
     # Step 3: Trace (KG search + neighbors + source)
     trace_args = _make_trace_args(
