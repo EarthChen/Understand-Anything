@@ -1,0 +1,5 @@
+# Generic Wiki
+
+## Topics
+
+- [[Topic]]

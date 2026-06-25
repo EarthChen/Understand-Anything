@@ -94,8 +94,8 @@ def detect_format(root: Path) -> dict:
     signals["md_count"] = len(md_files)
     signals["wiki_root"] = str(wiki_root)
 
-    # Primary signal: has index.md + meaningful number of markdown files
-    if signals["has_index"] and signals["md_count"] >= 3:
+    # Primary signal: has index.md + content markdown files
+    if signals["has_index"] and signals["md_count"] >= 2:
         signals["detected"] = True
         signals["format"] = "karpathy"
     else:
@@ -341,6 +341,9 @@ def parse_index(index_path: Path) -> list[dict]:
         if current_category:
             for wl in WIKILINK_RE.finditer(line):
                 current_category["articles"].append(wl.group(1).strip())
+            for ml in extract_markdown_links(line)["internal"]:
+                if ml["target"]:
+                    current_category["articles"].append(ml["target"].strip())
 
     return categories
 
@@ -426,14 +429,148 @@ def resolve_wikilink(target: str, name_map: dict[str, str], node_ids: set[str] |
     return None
 
 
+def make_article_like_id(stem: str, frontmatter: dict, rel: Path, profile: str) -> tuple[str, str, str | None]:
+    """Return node id, node type, and subtype for a wiki markdown page."""
+    page_type = str(frontmatter.get("type", "")).strip().lower()
+    source_type = str(frontmatter.get("source_type", "")).strip().lower()
+    first_dir = rel.parts[0].lower() if len(rel.parts) > 1 else ""
+
+    if profile == PROFILE_PRD_WIKI:
+        if page_type == "testcase" or source_type == "testcase" or first_dir == "testcases":
+            return f"testcase:{stem}", "testcase", "testcase_summary"
+        if page_type == "summary" or source_type == "prd":
+            return f"requirement:{stem}", "requirement", "prd_summary"
+
+    return f"article:{stem}", "article", None
+
+
+def make_source_id(raw_root: Path, raw_file: Path) -> str:
+    """Build a stable source node ID from a raw file path."""
+    return f"source:{raw_file.relative_to(raw_root).with_suffix('').as_posix()}"
+
+
+def source_subtype_for_raw(raw_root: Path, raw_file: Path) -> str:
+    """Classify raw source files by their first raw/ path segment."""
+    rel = raw_file.relative_to(raw_root)
+    return rel.parts[0] if rel.parts else "raw"
+
+
+def source_id_from_source_path(source_path: str) -> str | None:
+    """Build a source ID from frontmatter source_path."""
+    source_path = str(source_path or "").strip()
+    if not source_path:
+        return None
+    path = Path(source_path)
+    if path.parts and path.parts[0] == "raw":
+        path = Path(*path.parts[1:])
+    return f"source:{path.with_suffix('').as_posix()}"
+
+
+def normalize_match_text(text: str) -> str:
+    """Normalize text for conservative business/detail matching."""
+    return re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(text or "")).lower()
+
+
+def _safe_relative_to(path: Path, parent: Path) -> Path | None:
+    try:
+        return path.relative_to(parent)
+    except ValueError:
+        return None
+
+
+def _node_id_for_stem(stem: str, node_ids: set[str]) -> str | None:
+    for prefix in ["requirement", "testcase", "article"]:
+        node_id = f"{prefix}:{stem}"
+        if node_id in node_ids:
+            return node_id
+    return None
+
+
+def resolve_wikilink_to_node(target: str, name_map: dict[str, str], node_ids: set[str]) -> str | None:
+    """Resolve a wikilink target to any known page-like node ID."""
+    key = target.lower().strip()
+    if key.startswith("-"):
+        return None
+    stem = name_map.get(key)
+    if stem:
+        return _node_id_for_stem(stem, node_ids)
+    for stored_key, stored_stem in name_map.items():
+        if stored_key.endswith("/" + key) or stored_key == key:
+            return _node_id_for_stem(stored_stem, node_ids)
+    return None
+
+
+def resolve_markdown_target(
+    current_rel: Path,
+    target: str | None,
+    wiki_root: Path,
+    root: Path,
+    name_map: dict[str, str],
+    node_ids: set[str],
+) -> str | None:
+    """Resolve local markdown links to wiki page nodes or raw source nodes."""
+    if not target or URI_SCHEME_RE.match(target):
+        return None
+
+    target_path, _fragment = split_link_fragment(target)
+    if not target_path:
+        return None
+
+    direct_source_id = source_id_from_source_path(target_path)
+    if target_path.startswith("raw/") and direct_source_id in node_ids:
+        return direct_source_id
+
+    raw_root = root / "raw"
+    candidate_paths: list[Path]
+    if target_path.startswith("/"):
+        stripped = target_path.lstrip("/")
+        candidate_paths = [wiki_root / stripped, root / stripped]
+    else:
+        candidate_paths = [
+            wiki_root / current_rel.parent / target_path,
+            root / target_path,
+        ]
+
+    for candidate in candidate_paths:
+        resolved = candidate.resolve()
+        raw_rel = _safe_relative_to(resolved, raw_root.resolve())
+        if raw_rel is not None:
+            source_id = f"source:{raw_rel.with_suffix('').as_posix()}"
+            if source_id in node_ids:
+                return source_id
+
+        wiki_rel = _safe_relative_to(resolved, wiki_root.resolve())
+        if wiki_rel is not None:
+            stem = wiki_rel.with_suffix("").as_posix()
+            node_id = _node_id_for_stem(stem, node_ids)
+            if node_id:
+                return node_id
+
+    key = Path(target_path).with_suffix("").as_posix().lower()
+    stem = name_map.get(key) or name_map.get(Path(key).name)
+    if stem:
+        return _node_id_for_stem(stem, node_ids)
+    return None
+
+
+def frontmatter_tags(frontmatter: dict) -> list[str]:
+    """Normalize frontmatter tags from comma strings or inline arrays."""
+    fm_tags = frontmatter.get("tags", "")
+    if isinstance(fm_tags, list):
+        return [t.strip() for t in fm_tags if t.strip()]
+    return [t.strip() for t in str(fm_tags).split(",") if t.strip()]
+
+
 def parse_wiki(root: Path) -> dict:
     """Parse a Karpathy-pattern wiki and produce the scan manifest."""
+    root = Path(root).resolve()
     detection = detect_format(root)
     if not detection["detected"]:
         print(json.dumps({"error": "Not a Karpathy-pattern wiki", "detection": detection}),
               file=sys.stderr)
         sys.exit(1)
 
+    profile = detection.get("profile", PROFILE_GENERIC)
     wiki_root = Path(detection["wiki_root"])
     raw_root = root / "raw"
 
@@ -457,38 +594,96 @@ def parse_wiki(root: Path) -> dict:
     for cat in categories:
         for article_target in cat["articles"]:
             category_lookup[article_target.lower()] = cat["name"]
+            target_stem = Path(article_target).with_suffix("").as_posix()
+            category_lookup[target_stem.lower()] = cat["name"]
+            category_lookup[Path(target_stem).name.lower()] = cat["name"]
 
-    # --- Pre-compute article IDs (for edge resolution validation) ---
-    # Only skip infra files at the wiki root level, not in subdirectories
-    # (e.g., wiki/index.md is infra, but wiki/concepts/index.md is content)
-    article_ids: set[str] = set()
-    for md_file in sorted(wiki_root.rglob("*.md")):
-        rel = md_file.relative_to(wiki_root)
-        stem = rel.with_suffix("").as_posix()
-        # Only filter infra files at root level (no parent directory)
-        if rel.parent == Path(".") and rel.name.lower() in INFRA_FILES:
-            continue
-        article_ids.add(f"article:{stem}")
-
-    # --- Build article nodes ---
+    # --- Build source nodes first so wiki pages can cite raw files ---
     nodes = []
     edges = []
     warnings = []
     stats = {"articles": 0, "sources": 0, "topics": 0, "wikilinks": 0, "unresolved": 0}
+    source_ids: set[str] = set()
+
+    if raw_root.is_dir():
+        for raw_file in sorted(raw_root.rglob("*")):
+            if raw_file.is_file() and not raw_file.name.startswith("."):
+                rel_raw = raw_file.relative_to(root)
+                ext = raw_file.suffix.lower()
+                size_kb = raw_file.stat().st_size / 1024
+                source_id = make_source_id(raw_root, raw_file)
+                source_ids.add(source_id)
+                source_subtype = source_subtype_for_raw(raw_root, raw_file)
+                nodes.append({
+                    "id": source_id,
+                    "type": "source",
+                    "subtype": source_subtype,
+                    "name": raw_file.name,
+                    "filePath": str(rel_raw),
+                    "summary": f"Raw source ({ext or 'unknown'}, {size_kb:.0f} KB)",
+                    "tags": ["raw", source_subtype, ext.lstrip(".") or "unknown"],
+                    "complexity": "simple",
+                    "knowledgeMeta": {
+                        "profile": profile,
+                        "subtype": source_subtype,
+                    },
+                })
+                stats["sources"] += 1
+
+    # --- Pre-compute page IDs (for cross-link resolution validation) ---
+    page_infos = []
+    page_node_ids: set[str] = set()
 
     for md_file in sorted(wiki_root.rglob("*.md")):
         rel = md_file.relative_to(wiki_root)
         stem = rel.with_suffix("").as_posix()
-        basename = md_file.stem
 
         # Skip infrastructure files only at wiki root level
         if rel.parent == Path(".") and rel.name.lower() in INFRA_FILES:
             continue
 
         text = md_file.read_text(encoding="utf-8", errors="replace")
-        h1 = extract_h1(text)
         frontmatter = extract_frontmatter(text)
+        node_id, node_type, subtype = make_article_like_id(stem, frontmatter, rel, profile)
+        page_node_ids.add(node_id)
+        page_infos.append({
+            "md_file": md_file,
+            "rel": rel,
+            "stem": stem,
+            "basename": md_file.stem,
+            "text": text,
+            "frontmatter": frontmatter,
+            "node_id": node_id,
+            "node_type": node_type,
+            "subtype": subtype,
+        })
+
+    node_ids = source_ids | page_node_ids
+
+    def add_edge(source: str, target: str | None, edge_type: str, weight: float) -> None:
+        if target and source != target:
+            edges.append({
+                "source": source,
+                "target": target,
+                "type": edge_type,
+                "direction": "forward",
+                "weight": weight,
+            })
+
+    # --- Build page nodes and deterministic edges ---
+    for info in page_infos:
+        rel = info["rel"]
+        stem = info["stem"]
+        basename = info["basename"]
+        text = info["text"]
+        frontmatter = info["frontmatter"]
+        node_id = info["node_id"]
+        node_type = info["node_type"]
+        subtype = info["subtype"]
+
+        h1 = extract_h1(text)
         wikilinks = extract_wikilinks(text)
+        markdown_links = extract_markdown_links(text)
         headings = extract_headings(text)
         code_langs = extract_code_blocks(text)
         summary = extract_first_paragraph(text)
@@ -507,55 +702,90 @@ def parse_wiki(root: Path) -> dict:
             tag_set.add(category.lower())
         if rel.parent != Path("."):
             tag_set.add(str(rel.parent))
-        fm_tags = frontmatter.get("tags", "")
-        if fm_tags:
-            if isinstance(fm_tags, list):
-                tag_set.update(t.strip() for t in fm_tags if t.strip())
-            else:
-                tag_set.update(t.strip() for t in fm_tags.split(",") if t.strip())
+        tag_set.update(frontmatter_tags(frontmatter))
         tags = sorted(tag_set)
 
         # Complexity from wikilink density
-        wl_count = len(wikilinks)
-        if wl_count > 15:
+        link_count = len(wikilinks) + len(markdown_links["internal"])
+        if link_count > 15:
             complexity = "complex"
-        elif wl_count > 5:
+        elif link_count > 5:
             complexity = "moderate"
         else:
             complexity = "simple"
 
-        node_id = f"article:{stem}"
+        source_type = frontmatter.get("source_type", "")
+        source_path = frontmatter.get("source_path", "")
+        business = frontmatter.get("filename_business", "")
+        month = frontmatter.get("filename_month", "")
+        version = frontmatter.get("filename_version", "")
+        detail = frontmatter.get("filename_detail", "")
+
+        knowledge_meta = {
+            "profile": profile,
+            "wikilinks": [wl["target"] for wl in wikilinks],
+            "markdownLinks": markdown_links["internal"],
+            "externalLinks": markdown_links["external"],
+            "sourceType": source_type,
+            "sourcePath": source_path,
+            "business": business,
+            "month": month,
+            "version": version,
+            "detail": detail,
+            "content": text[:3000],  # First 3000 chars for LLM analysis
+        }
+        if subtype:
+            knowledge_meta["subtype"] = subtype
+        if category:
+            knowledge_meta["category"] = category
+
         nodes.append({
             "id": node_id,
-            "type": "article",
-            "name": h1 or basename,
+            "type": node_type,
+            **({"subtype": subtype} if subtype else {}),
+            "name": frontmatter.get("title") or h1 or basename,
             "filePath": str(rel),
             "summary": summary or f"Wiki article: {h1 or basename}",
             "tags": tags,
             "complexity": complexity,
-            "knowledgeMeta": {
-                "wikilinks": [wl["target"] for wl in wikilinks],
-                **({"category": category} if category else {}),
-                "content": text[:3000],  # First 3000 chars for LLM analysis
-            },
+            "knowledgeMeta": knowledge_meta,
         })
         stats["articles"] += 1
-        stats["wikilinks"] += wl_count
+        stats["wikilinks"] += len(wikilinks)
 
         # Build edges from wikilinks (resolve against known article IDs)
         for wl in wikilinks:
-            target_id = resolve_wikilink(wl["target"], name_map, article_ids)
-            if target_id and target_id != node_id:
-                edges.append({
-                    "source": node_id,
-                    "target": target_id,
-                    "type": "related",
-                    "direction": "forward",
-                    "weight": 0.7,
-                })
+            target_id = resolve_wikilink_to_node(wl["target"], name_map, node_ids)
+            if target_id:
+                add_edge(node_id, target_id, "related", 0.7)
             elif not target_id:
                 warnings.append(f"Unresolved wikilink: [[{wl['target']}]] in {rel}")
                 stats["unresolved"] += 1
+
+        # Build edges from local markdown links.
+        for ml in markdown_links["internal"]:
+            target_id = resolve_markdown_target(
+                rel,
+                ml["target"],
+                wiki_root,
+                root,
+                name_map,
+                node_ids,
+            )
+            if not target_id:
+                continue
+            if target_id.startswith("source:"):
+                add_edge(node_id, target_id, "cites", 0.8)
+            else:
+                add_edge(node_id, target_id, "related", 0.7)
+
+        # Frontmatter source_path is an explicit citation.
+        if source_path:
+            source_id = source_id_from_source_path(source_path)
+            if source_id in node_ids:
+                add_edge(node_id, source_id, "cites", 0.9)
+            else:
+                warnings.append(f"Missing source_path target: {source_path} in {rel}")
 
     # --- Build topic nodes from index.md categories ---
     for cat in categories:
@@ -572,34 +802,30 @@ def parse_wiki(root: Path) -> dict:
 
         # categorized_under edges (only resolve to known article nodes)
         for article_target in cat["articles"]:
-            article_id = resolve_wikilink(article_target, name_map, article_ids)
+            article_id = resolve_wikilink_to_node(article_target, name_map, node_ids)
+            if not article_id:
+                article_id = resolve_markdown_target(
+                    Path("index.md"),
+                    article_target,
+                    wiki_root,
+                    root,
+                    name_map,
+                    node_ids,
+                )
             if article_id:
-                edges.append({
-                    "source": article_id,
-                    "target": topic_id,
-                    "type": "categorized_under",
-                    "direction": "forward",
-                    "weight": 0.6,
-                })
+                add_edge(article_id, topic_id, "categorized_under", 0.6)
 
-    # --- Build source nodes from raw/ ---
-    if raw_root.is_dir():
-        for raw_file in sorted(raw_root.rglob("*")):
-            if raw_file.is_file() and not raw_file.name.startswith("."):
-                rel_raw = raw_file.relative_to(root)
-                ext = raw_file.suffix.lower()
-                size_kb = raw_file.stat().st_size / 1024
-                source_id = f"source:{raw_file.relative_to(raw_root).with_suffix('')}"
-                nodes.append({
-                    "id": source_id,
-                    "type": "source",
-                    "name": raw_file.name,
-                    "filePath": str(rel_raw),
-                    "summary": f"Raw source ({ext or 'unknown'}, {size_kb:.0f} KB)",
-                    "tags": ["raw", ext.lstrip(".") or "unknown"],
-                    "complexity": "simple",
-                })
-                stats["sources"] += 1
+    # --- Build explicit requirement -> testcase coverage edges ---
+    node_type_by_id = {node["id"]: node["type"] for node in nodes}
+    for edge in list(edges):
+        if edge["type"] != "related":
+            continue
+        source_type = node_type_by_id.get(edge["source"])
+        target_type = node_type_by_id.get(edge["target"])
+        if source_type == "requirement" and target_type == "testcase":
+            add_edge(edge["source"], edge["target"], "tested_by", 0.9)
+        elif source_type == "testcase" and target_type == "requirement":
+            add_edge(edge["target"], edge["source"], "tested_by", 0.9)
 
     # --- Compute backlinks ---
     backlink_map: dict[str, list[str]] = {}
@@ -609,7 +835,7 @@ def parse_wiki(root: Path) -> dict:
             source = edge["source"]
             backlink_map.setdefault(target, []).append(source)
     for node in nodes:
-        if node["type"] == "article" and "knowledgeMeta" in node:
+        if node["type"] in {"article", "requirement", "testcase"} and "knowledgeMeta" in node:
             bl = backlink_map.get(node["id"], [])
             node["knowledgeMeta"]["backlinks"] = bl
 

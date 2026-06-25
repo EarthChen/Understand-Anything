@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 PARSER_PATH = Path(__file__).resolve().parents[1] / "parse-knowledge-base.py"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 spec = importlib.util.spec_from_file_location("parser", PARSER_PATH)
 parser = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(parser)
@@ -149,6 +150,65 @@ sources: [raw/prd/房间/2025-10-v2.25.0-跨房间PK.md]
         }
         self.assertEqual(nodes_by_path["string-tags.md"]["tags"], ["alpha", "beta"])
         self.assertEqual(nodes_by_path["array-tags.md"]["tags"], ["delta", "gamma"])
+
+    def test_prd_wiki_scan_emits_requirement_testcase_sources_and_edges(self):
+        manifest = parser.parse_wiki(FIXTURES / "prd-wiki")
+
+        self.assertEqual(manifest["profile"], "prd-wiki")
+        nodes_by_id = {node["id"]: node for node in manifest["nodes"]}
+        required_ids = {
+            "requirement:summaries/房间-2025-10-v2.25.0-跨房间PK",
+            "testcase:testcases/房间-PK优化",
+            "source:prd/房间/2025-10-v2.25.0-跨房间PK",
+            "source:testcase/房间/PK优化",
+        }
+        self.assertTrue(required_ids.issubset(nodes_by_id))
+
+        requirement = nodes_by_id["requirement:summaries/房间-2025-10-v2.25.0-跨房间PK"]
+        testcase = nodes_by_id["testcase:testcases/房间-PK优化"]
+        self.assertEqual(requirement["type"], "requirement")
+        self.assertEqual(testcase["type"], "testcase")
+        self.assertEqual(requirement["knowledgeMeta"]["business"], "房间")
+        self.assertEqual(requirement["knowledgeMeta"]["version"], "v2.25.0")
+
+        edges = {
+            (edge["source"], edge["target"], edge["type"])
+            for edge in manifest["edges"]
+        }
+        self.assertIn(
+            (
+                "requirement:summaries/房间-2025-10-v2.25.0-跨房间PK",
+                "source:prd/房间/2025-10-v2.25.0-跨房间PK",
+                "cites",
+            ),
+            edges,
+        )
+        self.assertIn(
+            (
+                "testcase:testcases/房间-PK优化",
+                "source:testcase/房间/PK优化",
+                "cites",
+            ),
+            edges,
+        )
+        self.assertIn(
+            (
+                "requirement:summaries/房间-2025-10-v2.25.0-跨房间PK",
+                "testcase:testcases/房间-PK优化",
+                "tested_by",
+            ),
+            edges,
+        )
+
+    def test_generic_wiki_does_not_emit_prd_node_types(self):
+        manifest = parser.parse_wiki(FIXTURES / "generic-wiki")
+
+        self.assertEqual(manifest["profile"], "generic")
+        nodes_by_id = {node["id"]: node for node in manifest["nodes"]}
+        self.assertEqual(nodes_by_id["article:concepts/Topic"]["type"], "article")
+        emitted_types = {node["type"] for node in manifest["nodes"]}
+        self.assertNotIn("requirement", emitted_types)
+        self.assertNotIn("testcase", emitted_types)
 
 
 if __name__ == "__main__":
