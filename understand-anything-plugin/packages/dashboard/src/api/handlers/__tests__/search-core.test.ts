@@ -187,6 +187,39 @@ describe("unifiedSearch", () => {
     expect(r?.filePath).toBe("src/UserService.java")
     expect(r?.lineRange).toEqual([1, 50])
   })
+
+  it("searches PRD knowledge facets through the KG index", () => {
+    const state: SearchIndexState = {
+      kgIndex: KgIndex.create({
+        nodes: [
+          {
+            id: "requirement:room-pk",
+            name: "房间玩法",
+            type: "requirement",
+            summary: "房间相关需求",
+            tags: ["prd"],
+            knowledgeMeta: {
+              profile: "prd-wiki",
+              detail: "跨房间 PK 断线重连",
+              business: "房间",
+              sourcePath: "raw/prd/房间/pk.md",
+            },
+          },
+        ],
+        edges: [],
+      } as unknown as KnowledgeGraph, "amar-prd"),
+      wikiIndex: new WikiIndex({ entries: [] }),
+      edges: [],
+      adjacency: new Map(),
+      mtimes: {},
+    }
+
+    const result = unifiedSearch(state, "断线重连", 10, "kg", "none", "requirement", null, "amar-prd")
+
+    expect(result.results).toHaveLength(1)
+    expect(result.results[0].service).toBe("amar-prd")
+    expect(result.facets.type.requirement).toBe(1)
+  })
 })
 
 describe("kgGraphExpansion", () => {

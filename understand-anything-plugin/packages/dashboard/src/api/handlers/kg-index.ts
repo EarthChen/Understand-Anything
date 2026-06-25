@@ -8,11 +8,18 @@ interface KgDoc {
   summary: string
   tags: string
   type: string
+  knowledgeText: string
   service: string
   filePath: string
   startLine: number
   endLine: number
   layer: string
+  business: string
+  version: string
+  detail: string
+  sourcePath: string
+  sourceType: string
+  profile: string
 }
 
 export interface KgSearchResult {
@@ -26,6 +33,12 @@ export interface KgSearchResult {
   filePath?: string
   lineRange?: [number, number]
   tags?: string
+  business?: string
+  version?: string
+  detail?: string
+  sourcePath?: string
+  sourceType?: string
+  profile?: string
 }
 
 export interface KgSearchOptions {
@@ -48,8 +61,24 @@ export interface KgSearchResponse {
 }
 
 const MINI_SEARCH_OPTIONS = {
-  fields: ["name", "summary", "tags", "type"],
-  storeFields: ["name", "type", "service", "filePath", "startLine", "endLine", "summary", "tags", "layer"],
+  fields: ["name", "summary", "tags", "type", "knowledgeText"],
+  storeFields: [
+    "name",
+    "type",
+    "service",
+    "filePath",
+    "startLine",
+    "endLine",
+    "summary",
+    "tags",
+    "layer",
+    "business",
+    "version",
+    "detail",
+    "sourcePath",
+    "sourceType",
+    "profile",
+  ],
   tokenize: codeTokenize,
 }
 
@@ -57,6 +86,7 @@ const SEARCH_BOOST = {
   name: 3,
   tags: 2.5,
   summary: 2,
+  knowledgeText: 1.8,
   type: 0.5,
 }
 
@@ -100,20 +130,50 @@ export class KgIndex {
       byId.set(node.id, node)
     }
     return [...byId.values()]
-      .map((node) => ({
-        id: node.id,
-        name: node.name ?? "",
-        summary: node.summary ?? "",
-        tags: (node.tags ?? []).join(" "),
-        type: node.type ?? "",
-        service: serviceName,
-        filePath: node.filePath ?? "",
-        startLine: node.lineRange?.[0] ?? 0,
-        endLine: node.lineRange?.[1] ?? 0,
-        layer: (node.tags ?? []).includes("business") ? "business"
-          : (node.tags ?? []).includes("domain") ? "domain"
-          : "kg",
-      }))
+      .map((node) => {
+        const meta = node.knowledgeMeta
+        const metaString = (key: keyof NonNullable<typeof meta>): string => {
+          const value = meta?.[key]
+          return typeof value === "string" ? value : ""
+        }
+        const business = metaString("business")
+        const version = metaString("version")
+        const detail = metaString("detail")
+        const sourcePath = metaString("sourcePath")
+        const sourceType = metaString("sourceType")
+        const profile = metaString("profile")
+        const knowledgeText = [
+          metaString("content"),
+          detail,
+          business,
+          metaString("month"),
+          version,
+          sourcePath,
+          sourceType,
+        ].filter(Boolean).join(" ")
+
+        return {
+          id: node.id,
+          name: node.name ?? "",
+          summary: node.summary ?? "",
+          tags: (node.tags ?? []).join(" "),
+          type: node.type ?? "",
+          knowledgeText,
+          service: serviceName,
+          filePath: node.filePath ?? "",
+          startLine: node.lineRange?.[0] ?? 0,
+          endLine: node.lineRange?.[1] ?? 0,
+          layer: (node.tags ?? []).includes("business") ? "business"
+            : (node.tags ?? []).includes("domain") ? "domain"
+            : "kg",
+          business,
+          version,
+          detail,
+          sourcePath,
+          sourceType,
+          profile,
+        }
+      })
   }
 
   isEmpty(): boolean { return this.docs.length === 0 }
@@ -160,6 +220,12 @@ export class KgIndex {
       filePath: r.filePath as string | undefined,
       lineRange: r.startLine ? [r.startLine as number, r.endLine as number] : undefined,
       tags: r.tags as string | undefined,
+      business: r.business as string | undefined,
+      version: r.version as string | undefined,
+      detail: r.detail as string | undefined,
+      sourcePath: r.sourcePath as string | undefined,
+      sourceType: r.sourceType as string | undefined,
+      profile: r.profile as string | undefined,
     }))
 
     return {
