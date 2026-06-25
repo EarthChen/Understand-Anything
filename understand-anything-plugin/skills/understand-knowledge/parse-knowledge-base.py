@@ -23,10 +23,15 @@ from pathlib import Path
 # Regex patterns
 # ---------------------------------------------------------------------------
 WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
+MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)]+)\)")
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 CODE_BLOCK_RE = re.compile(r"```(\w*)")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 INDEX_SECTION_RE = re.compile(r"^##\s+(.+)$", re.MULTILINE)
+
+PROFILE_GENERIC = "generic"
+PROFILE_PRD_WIKI = "prd-wiki"
+PROFILE_AUTO = "auto"
 
 # Files that are part of wiki infrastructure, not content articles
 INFRA_FILES = {"index.md", "log.md", "claude.md", "agents.md", "soul.md"}
@@ -34,6 +39,31 @@ INFRA_FILES = {"index.md", "log.md", "claude.md", "agents.md", "soul.md"}
 # ---------------------------------------------------------------------------
 # Detection: is this a Karpathy-pattern wiki?
 # ---------------------------------------------------------------------------
+
+def detect_profile(root: Path, wiki_root: Path) -> str:
+    """Detect specialized wiki profile signals."""
+    if (root / "raw" / "prd").is_dir():
+        return PROFILE_PRD_WIKI
+    if (root / "raw" / "testcase").is_dir():
+        return PROFILE_PRD_WIKI
+    if (wiki_root / "testcases").is_dir():
+        return PROFILE_PRD_WIKI
+
+    for schema_name in ["CLAUDE.md", "AGENTS.md"]:
+        for schema_path in [root / schema_name, wiki_root / schema_name]:
+            if not schema_path.is_file():
+                continue
+            text = schema_path.read_text(encoding="utf-8", errors="replace").lower()
+            if "prd" in text or "testcase" in text or "测试用例" in text:
+                return PROFILE_PRD_WIKI
+
+    for md_file in wiki_root.rglob("*.md"):
+        frontmatter = extract_frontmatter(md_file.read_text(encoding="utf-8", errors="replace"))
+        if frontmatter.get("source_type") == "prd":
+            return PROFILE_PRD_WIKI
+
+    return PROFILE_GENERIC
+
 
 def detect_format(root: Path) -> dict:
     """Detect if directory follows the Karpathy LLM wiki three-layer pattern."""
@@ -52,6 +82,7 @@ def detect_format(root: Path) -> dict:
         wiki_root = root / "wiki"
     else:
         wiki_root = root
+    signals["profile"] = detect_profile(root, wiki_root)
 
     # Count markdown files in the wiki root
     md_files = list(wiki_root.rglob("*.md"))
@@ -74,7 +105,7 @@ def detect_format(root: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 def extract_frontmatter(text: str) -> dict:
-    """Extract YAML frontmatter as a simple key-value dict."""
+    """Extract YAML-ish frontmatter as a simple key-value dict."""
     m = FRONTMATTER_RE.match(text)
     if not m:
         return {}
@@ -82,8 +113,27 @@ def extract_frontmatter(text: str) -> dict:
     for line in m.group(1).split("\n"):
         if ":" in line:
             key, _, val = line.partition(":")
-            fm[key.strip()] = val.strip().strip('"').strip("'")
+            val = val.strip()
+            if val.startswith("[") and val.endswith("]"):
+                fm[key.strip()] = _parse_inline_array(val)
+            else:
+                fm[key.strip()] = _strip_quotes(val)
     return fm
+
+
+def _strip_quotes(value: str) -> str:
+    """Remove matching single or double quotes from a scalar value."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def _parse_inline_array(value: str) -> list[str]:
+    """Parse a small YAML-ish inline array into string values."""
+    inner = value[1:-1].strip()
+    if not inner:
+        return []
+    return [_strip_quotes(part.strip()) for part in inner.split(",") if part.strip()]
 
 
 def extract_wikilinks(text: str) -> list[dict]:
@@ -93,6 +143,32 @@ def extract_wikilinks(text: str) -> list[dict]:
         links.append({
             "target": m.group(1).strip(),
             "display": m.group(2).strip() if m.group(2) else None,
+        })
+    return links
+
+
+def split_link_fragment(target: str) -> tuple[str, str | None]:
+    """Split a markdown link target into path and optional fragment."""
+    path, sep, fragment = target.partition("#")
+    if not sep:
+        return target, None
+    return path, fragment
+
+
+def extract_markdown_links(text: str) -> dict:
+    """Extract non-image markdown links, separated into internal and external."""
+    links = {"internal": [], "external": []}
+    for m in MARKDOWN_LINK_RE.finditer(text):
+        label = m.group(1).strip()
+        target = m.group(2).strip()
+        if target.startswith(("http://", "https://")):
+            links["external"].append(target)
+            continue
+        path, fragment = split_link_fragment(target)
+        links["internal"].append({
+            "label": label,
+            "target": path,
+            "fragment": fragment,
         })
     return links
 
@@ -358,7 +434,10 @@ def parse_wiki(root: Path) -> dict:
             tag_set.add(str(rel.parent))
         fm_tags = frontmatter.get("tags", "")
         if fm_tags:
-            tag_set.update(t.strip() for t in fm_tags.split(",") if t.strip())
+            if isinstance(fm_tags, list):
+                tag_set.update(t.strip() for t in fm_tags if t.strip())
+            else:
+                tag_set.update(t.strip() for t in fm_tags.split(",") if t.strip())
         tags = sorted(tag_set)
 
         # Complexity from wikilink density
