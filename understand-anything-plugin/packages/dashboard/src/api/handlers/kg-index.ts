@@ -2,6 +2,11 @@ import MiniSearch from "minisearch"
 import { codeTokenize } from "./code-tokenizer"
 import type { KnowledgeGraph } from "@understand-anything/core"
 
+function stripFrontMatter(text: string): string {
+  const match = text.match(/^---[\s\S]*?---\s*/)
+  return match ? text.slice(match[0].length) : text
+}
+
 interface KgDoc {
   id: string
   name: string
@@ -20,6 +25,7 @@ interface KgDoc {
   sourcePath: string
   sourceType: string
   profile: string
+  contentSnippet: string
 }
 
 export interface KgSearchResult {
@@ -39,6 +45,7 @@ export interface KgSearchResult {
   sourcePath?: string
   sourceType?: string
   profile?: string
+  contentSnippet?: string
 }
 
 export interface KgSearchOptions {
@@ -78,6 +85,7 @@ const MINI_SEARCH_OPTIONS = {
     "sourcePath",
     "sourceType",
     "profile",
+    "contentSnippet",
   ],
   tokenize: codeTokenize,
 }
@@ -152,6 +160,7 @@ export class KgIndex {
           sourcePath,
           sourceType,
         ].filter(Boolean).join(" ")
+        const contentSnippet = stripFrontMatter(metaString("content")).slice(0, 500)
 
         return {
           id: node.id,
@@ -173,6 +182,7 @@ export class KgIndex {
           sourcePath,
           sourceType,
           profile,
+          contentSnippet,
         }
       })
   }
@@ -227,6 +237,7 @@ export class KgIndex {
       sourcePath: r.sourcePath as string | undefined,
       sourceType: r.sourceType as string | undefined,
       profile: r.profile as string | undefined,
+      contentSnippet: r.contentSnippet as string | undefined,
     }))
 
     return {
