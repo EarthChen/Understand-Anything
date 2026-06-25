@@ -13,6 +13,7 @@ Output:
     Writes scan-manifest.json to <wiki-directory>/.understand-anything/intermediate/
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -37,6 +38,14 @@ PROFILE_AUTO = "auto"
 # Files that are part of wiki infrastructure, not content articles
 INFRA_FILES = {"index.md", "log.md", "claude.md", "agents.md", "soul.md"}
 NON_WIKI_CONTENT_DIRS = {".understand-anything", ".git", "raw"}
+
+
+def load_merge_module():
+    merge_path = Path(__file__).with_name("merge-knowledge-graph.py")
+    spec = importlib.util.spec_from_file_location("merge_knowledge_graph", merge_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 # ---------------------------------------------------------------------------
 # Detection: is this a Karpathy-pattern wiki?
@@ -1008,6 +1017,13 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "scan-manifest.json"
     out_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    assembled_graph = load_merge_module().merge(root)
+    output_dir = root / ".understand-anything"
+    final_graph_path = output_dir / "knowledge-graph.json"
+    final_graph_path.write_text(
+        json.dumps(assembled_graph, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     # Report to stderr
     s = manifest["stats"]
@@ -1015,6 +1031,7 @@ def main():
           f"{s['topics']} topics, {s['wikilinks']} wikilinks "
           f"({s['unresolved']} unresolved)", file=sys.stderr)
     print(f"[parse] Output: {out_path}", file=sys.stderr)
+    print(f"[parse] Final graph: {final_graph_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":
