@@ -37,9 +37,10 @@ export function isKnowledgeGraphNodeType(type: string): boolean {
 }
 
 /** Edge style presets by knowledge edge type. */
-const EDGE_STYLES: Record<string, React.CSSProperties> = {
+export const EDGE_STYLES: Record<string, React.CSSProperties> = {
   related: { stroke: "var(--color-border-medium)", strokeWidth: 0.5, opacity: 0.12 },
   cites: { stroke: "var(--color-node-source)", strokeWidth: 1.5, strokeDasharray: "6 3" },
+  tested_by: { stroke: "var(--color-node-testcase)", strokeWidth: 2, strokeDasharray: "2 4" },
   contradicts: { stroke: "#c97070", strokeWidth: 2 },
   builds_on: { stroke: "var(--color-node-claim)", strokeWidth: 1.5 },
   exemplifies: { stroke: "var(--color-node-entity)", strokeWidth: 1, strokeDasharray: "3 3" },

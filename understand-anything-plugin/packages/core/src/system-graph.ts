@@ -1,5 +1,7 @@
 // System Graph types — for multi-service topology visualization
 
+export type SystemGraphFacetType = "server" | "mobile" | "frontend" | "knowledge";
+
 export interface SystemGraphProject {
   name: string;
   description?: string;
@@ -20,7 +22,7 @@ export interface SystemGraphNode {
   name: string;
   summary: string;
   // Facet-specific fields
-  facetType?: "server" | "mobile" | "frontend";
+  facetType?: SystemGraphFacetType;
   // Microservice-specific fields
   languages?: string[];
   frameworks?: string[];
@@ -58,7 +60,9 @@ export interface SystemGraphServiceIndex {
   /** Relative path from project root to this service directory (for nested facet layouts). */
   basePath?: string;
   /** Which facet this service belongs to. */
-  facet?: "server" | "mobile" | "frontend";
+  facet?: SystemGraphFacetType;
+  /** Knowledge graph profile, for non-code facets such as PRD wikis. */
+  profile?: "generic" | "prd-wiki" | string;
 }
 
 export interface SystemGraph {

@@ -17,6 +17,7 @@ import {
 } from "../utils/wikiToMarkdown";
 import { WikiLinkRenderer, type WikiLinkNavigation } from "./WikiLinkRenderer";
 import { WikiSourcePanel } from "./WikiSourcePanel";
+import { KnowledgeWikiView } from "./KnowledgeWikiView";
 import { useI18n } from "../contexts/I18nContext";
 import { flowFragmentFromId, isSameWikiPage, isSameWikiTarget, type WikiPageType } from "../utils/wikiFlowNav";
 
@@ -683,9 +684,11 @@ export default function WikiView() {
   const setWikiLoading = useDashboardStore((s) => s.setWikiLoading);
   const setWikiTopology = useDashboardStore((s) => s.setWikiTopology);
   const setWikiBreadcrumb = useDashboardStore((s) => s.setWikiBreadcrumb);
+  const activeService = useDashboardStore((s) => s.activeService);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<NavEntry[]>([]);
+  const [hasKnowledgeNodes, setHasKnowledgeNodes] = useState(false);
   const [sourcePanel, setSourcePanel] = useState<{ path: string; lineRange?: [number, number]; service?: string } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => typeof window !== "undefined" && window.innerWidth < 900,
@@ -709,6 +712,22 @@ export default function WikiView() {
       })
       .catch(() => {});
   }, [apiUrl, wikiIndex, setWikiIndex, setWikiTopology]);
+
+  useEffect(() => {
+    if (!wikiIndex || wikiIndex.entries.length > 0) {
+      setHasKnowledgeNodes(false);
+      return;
+    }
+    const currentService = activeService;
+    if (!currentService) {
+      setHasKnowledgeNodes(false);
+      return;
+    }
+    fetch(`/api/wiki/knowledge-tree?service=${encodeURIComponent(currentService)}`)
+      .then((r) => r.json())
+      .then((data) => setHasKnowledgeNodes((data.totalNodes ?? 0) > 0))
+      .catch(() => setHasKnowledgeNodes(false));
+  }, [wikiIndex, activeService]);
 
   // Fetch page content when active page changes (type/id/service only, not fragment)
   const fetchPageType = wikiActivePage?.type;
@@ -922,6 +941,10 @@ export default function WikiView() {
         Loading Wiki index...
       </div>
     );
+  }
+
+  if (hasKnowledgeNodes && activeService) {
+    return <KnowledgeWikiView serviceName={activeService} />;
   }
 
   return (

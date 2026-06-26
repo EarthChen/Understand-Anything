@@ -71,6 +71,30 @@ python $SCRIPT --format md ask --query "中文关键词,EnglishName,Synonym" --d
 
 `ask --depth full` auto-discovers the service, searches the KG, retrieves neighbors, pulls wiki/domain context, reads source, follows cross-service RPC, and verifies — in one call. Check `structureFallback` / `sourceFallback` in the output if it returns no KG hits.
 
+### PRD Context (automatic)
+
+`ask --depth standard/full` now automatically queries knowledge services (PRD/test case repositories) and includes results in `prdContext`. When `prdContext` is non-empty:
+
+1. **Use PRD context to understand product intent** — what the feature is supposed to do according to requirements
+2. **Cross-reference with source** — verify whether the code implementation matches the PRD intent
+3. **Flag discrepancies** — if code behavior contradicts PRD requirements, report it explicitly
+4. **Cite both sources** — when answering, cite both PRD requirement ID and code file/line
+
+PRD content is product intent, not code fact. Always verify against actual source code.
+
+### Knowledge Node Content Retrieval
+
+When `ask`/`trace` returns `prdContext` or `matchedNodes` from knowledge services, you have node IDs but may need the **full content** of specific nodes. Use `knowledge read` for batch retrieval:
+
+```bash
+python $SCRIPT knowledge read --node "requirement:summaries/房间-PK,testcase:testcases/PK优化" --service amar-prd
+```
+
+- **Batch up to 10 nodes** in a single call (comma-separated IDs)
+- Returns full `knowledgeMeta.content` for each node
+- Use when `prdContext` search results look relevant but you need deeper detail
+- Always verify PRD content against actual source code
+
 **Manual trace (you already know the service, or `ask` mis-routed):**
 
 ```bash
@@ -191,6 +215,9 @@ If `source --search "kw"` returns nothing, the concept genuinely is not in that 
 | Impact of changing X | `impact --service S --symbol X --depth 3 --direction inbound` |
 | Tests affected by changes | `affected --service S --files a.java,b.java` |
 | Full-text source search | `source --service S --search "literal" [--path "*.yml"]` |
+| PRD/requirements context | `knowledge search "keyword" --service S --type requirement` |
+| Read knowledge node content | `knowledge read --node "article:concepts/Room,requirement:summaries/PK" --service S` |
+| Test coverage for req | `knowledge coverage "req:id" --service S` |
 | Service discovery | `services --list` / `services --has kg` |
 
 **For the full flag/subcommand reference, the complete layer table, the troubleshooting fallbacks, and the question→command map**, consult the `/understand-query` skill docs: locate them with `Glob "**/skills/understand-query/SKILL.md"` (and the `docs/` directory beside it). Treat that file as **reference only — ignore its orchestration / dispatch section; you are the worker and you never dispatch.**
@@ -210,7 +237,8 @@ Return ONE final answer, in markdown:
 
 1. **Direct answer** to the question, in prose.
 2. **Source citations** — for every factual claim, the `service` + file + symbol/line range you actually read (e.g. `ultron-relation · IntimacyService.java:120-180`). An uncited claim is a bug.
-3. **Discrepancies** (only if found) — where source contradicted wiki/domain.
-4. **Not found** (only if applicable) — "Concept not found in any indexed layer of service S," plus a suggested next service or broader keywords.
+3. **PRD citations** (when prdContext available) — requirement ID and summary that informed the answer
+4. **Discrepancies** (only if found) — where source contradicted wiki/domain.
+5. **Not found** (only if applicable) — "Concept not found in any indexed layer of service S," plus a suggested next service or broader keywords.
 
 Do NOT return your command log, intermediate layer dumps, or a plan — just the verified, cited answer.

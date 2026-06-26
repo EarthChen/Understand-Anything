@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,16 @@ spec.loader.exec_module(parser)
 
 
 class ParserHelperTests(unittest.TestCase):
+    fixture_root = FIXTURES
+
+    def run_parser(self, fixture: Path, *args: str):
+        return subprocess.run(
+            ["python3", str(PARSER_PATH), str(fixture), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
     def test_frontmatter_parser_handles_inline_arrays_and_quotes(self):
         text = """---
 title: "跨房间 PK"
@@ -175,8 +186,8 @@ sources: [raw/prd/房间/2025-10-v2.25.0-跨房间PK.md]
             for node in manifest["nodes"]
             if node["type"] == "article"
         }
-        self.assertEqual(nodes_by_path["string-tags.md"]["tags"], ["alpha", "beta"])
-        self.assertEqual(nodes_by_path["array-tags.md"]["tags"], ["delta", "gamma"])
+        self.assertEqual(nodes_by_path["wiki/string-tags.md"]["tags"], ["alpha", "beta"])
+        self.assertEqual(nodes_by_path["wiki/array-tags.md"]["tags"], ["delta", "gamma"])
 
     def test_prd_wiki_scan_emits_requirement_testcase_sources_and_edges(self):
         manifest = parser.parse_wiki(FIXTURES / "prd-wiki")
@@ -429,6 +440,25 @@ sources: [raw/prd/房间/2025-10-v2.25.0-跨房间PK.md]
         manifest = parser.parse_wiki(FIXTURES / "generic-wiki", profile_override="prd-wiki")
 
         self.assertEqual(manifest["profile"], "prd-wiki")
+
+    def test_parse_writes_standard_knowledge_graph_artifact(self):
+        """Dashboard/query integration depends on the standard knowledge-graph.json path."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture = Path(temp_dir) / "prd-wiki"
+            shutil.copytree(self.fixture_root / "prd-wiki", fixture)
+            output_dir = fixture / ".understand-anything"
+            final_graph = output_dir / "knowledge-graph.json"
+
+            result = self.run_parser(fixture, "--profile", "prd-wiki")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(final_graph.is_file())
+            graph = json.loads(final_graph.read_text(encoding="utf-8"))
+
+        node_types = {node["type"] for node in graph["nodes"]}
+        self.assertIn("requirement", node_types)
+        self.assertIn("testcase", node_types)
+        self.assertIn("prd-wiki", graph["project"].get("frameworks", []))
 
 
 class MergeFixtureTests(unittest.TestCase):

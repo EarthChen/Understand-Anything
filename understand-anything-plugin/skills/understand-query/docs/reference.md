@@ -17,10 +17,10 @@ List services from `system-graph.json` with per-layer readiness (kg, domain, wik
 **Examples:**
 
 ```bash
-python ua_query.py services --list
-python ua_query.py services --name order-service
-python ua_query.py services --has wiki,kg
-python ua_query.py --format md services --list
+python3 ua_query.py services --list
+python3 ua_query.py services --name order-service
+python3 ua_query.py services --has wiki,kg
+python3 ua_query.py --format md services --list
 ```
 
 **Response shape:** `{ "services": [...], "totalServices": N }` — each service includes `name`, `basePath`, `facet`, and `dataLayers`.
@@ -38,8 +38,8 @@ Check project-wide layer availability and git freshness across kg, domain, wiki,
 **Examples:**
 
 ```bash
-python ua_query.py meta
-python ua_query.py meta --stale
+python3 ua_query.py meta
+python3 ua_query.py meta --stale
 ```
 
 **Response includes:** `project`, `layers` (availability, counts, timestamps), `freshness.currentCommit`, `freshness.stale`.
@@ -178,10 +178,10 @@ trace --query "非英文关键词"
 
 ```bash
 # Step 1: Fuzzy search to find candidate names
-python ua_query.py kg --service S --search "intimacy" --type class
+python3 ua_query.py kg --service S --search "intimacy" --type class
 
 # Step 2: Use exact name from results for neighbors
-python ua_query.py kg --service S --neighbors UserIntimacyService --direction both
+python3 ua_query.py kg --service S --neighbors UserIntimacyService --direction both
 ```
 
 ---
@@ -193,9 +193,9 @@ python ua_query.py kg --service S --neighbors UserIntimacyService --direction bo
 Standard JSON with `indent=2`, suitable for piping to `jq` or programmatic consumption:
 
 ```bash
-python ua_query.py business --list | jq '.domains[].name'
-python ua_query.py meta --stale | jq '.stale[]'
-python ua_query.py services --has kg | jq '.services[].name'
+python3 ua_query.py business --list | jq '.domains[].name'
+python3 ua_query.py meta --stale | jq '.stale[]'
+python3 ua_query.py services --has kg | jq '.services[].name'
 ```
 
 ### Markdown (`--format md`)
@@ -207,8 +207,8 @@ Human-readable markdown for embedding in agent responses:
 - Other data → fenced JSON code block
 
 ```bash
-python ua_query.py --format md business --list
-python ua_query.py --format md business --search "order"
+python3 ua_query.py --format md business --list
+python3 ua_query.py --format md business --search "order"
 ```
 
 ---

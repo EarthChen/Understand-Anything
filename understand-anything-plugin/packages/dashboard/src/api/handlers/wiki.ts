@@ -2,6 +2,7 @@ import fs from "fs"
 import path from "path"
 import type { ApiRequest, ApiContext, ApiResponse } from "../types"
 import { graphFileCandidates } from "../utils"
+import { resolveServiceBasePath } from "../service-resolver"
 import { resolvePathWithinRoot, sanitizeSlug } from "../../utils/sanitize"
 import { handleUnifiedSearch } from "./search"
 
@@ -156,6 +157,70 @@ export async function handleWikiRequest(
         return { statusCode: 200, body: data }
       } catch {
         return { statusCode: 400, body: { error: "Invalid URL encoding" } }
+      }
+    }
+
+    if (apiPath === "/knowledge-tree") {
+      const serviceName = searchParams.get("service")
+      if (!serviceName) {
+        return { statusCode: 400, body: { error: "service parameter required" } }
+      }
+      if (serviceName.includes("\\") || serviceName.includes("..")) {
+        return { statusCode: 400, body: { error: "invalid service name" } }
+      }
+
+      const graphDir = process.env.GRAPH_DIR
+      const candidates: string[] = []
+      const resolvedBasePath = resolveServiceBasePath(serviceName)
+      if (resolvedBasePath) {
+        if (graphDir) candidates.push(path.resolve(graphDir, resolvedBasePath, ".understand-anything", "knowledge-graph.json"))
+        candidates.push(path.resolve(process.cwd(), resolvedBasePath, ".understand-anything", "knowledge-graph.json"))
+      }
+      if (graphDir) candidates.push(path.resolve(graphDir, serviceName, ".understand-anything", "knowledge-graph.json"))
+      candidates.push(path.resolve(process.cwd(), serviceName, ".understand-anything", "knowledge-graph.json"))
+      candidates.push(path.resolve(process.cwd(), "../../..", serviceName, ".understand-anything", "knowledge-graph.json"))
+
+      let graphData: Record<string, unknown> | null = null
+      for (const candidate of candidates) {
+        if (!fs.existsSync(candidate)) continue
+        try {
+          graphData = JSON.parse(fs.readFileSync(candidate, "utf-8"))
+          break
+        } catch {
+          continue
+        }
+      }
+
+      if (!graphData || !Array.isArray(graphData.nodes)) {
+        return { statusCode: 404, body: { error: "Knowledge graph not found for service" } }
+      }
+
+      const KNOWLEDGE_TYPES = new Set(["article", "requirement", "testcase", "entity", "topic", "source"])
+      const knowledgeNodes = (graphData.nodes as Array<Record<string, unknown>>).filter(
+        (n) => KNOWLEDGE_TYPES.has(n.type as string),
+      )
+
+      const tree: Record<string, Array<{ id: string; name: string; type: string; filePath: string; summary: string }>> = {}
+      for (const node of knowledgeNodes) {
+        const filePath = (node.filePath as string) || ""
+        const dir = filePath.includes("/") ? filePath.slice(0, filePath.lastIndexOf("/")) : "(root)"
+        if (!tree[dir]) tree[dir] = []
+        tree[dir].push({
+          id: node.id as string,
+          name: (node.name as string) || "",
+          type: (node.type as string) || "",
+          filePath,
+          summary: (node.summary as string) || "",
+        })
+      }
+
+      for (const entries of Object.values(tree)) {
+        entries.sort((a, b) => a.name.localeCompare(b.name))
+      }
+
+      return {
+        statusCode: 200,
+        body: { service: serviceName, tree, totalNodes: knowledgeNodes.length },
       }
     }
 

@@ -47,6 +47,12 @@ const complexityBadgeColors: Record<string, string> = {
   complex: "text-[#c97070] border border-[#c97070]/30 bg-[#c97070]/10",
 };
 
+function formatKnowledgeSourceType(sourceType: string): string {
+  if (sourceType === "prd") return "原始 PRD";
+  if (sourceType === "testcase") return "测试用例";
+  return sourceType;
+}
+
 function getDirectionalLabel(edgeType: string, isSource: boolean, t: ReturnType<typeof useI18n>["t"]): string {
   const labels = t.edgeLabels[edgeType as EdgeType];
   if (!labels) {
@@ -61,6 +67,15 @@ function KnowledgeNodeDetails({ node, graph }: { node: GraphNode; graph: Knowled
   const { t } = useI18n();
   const meta = node.knowledgeMeta;
 
+  const prdMetadataRows = [
+    ["Business", meta?.business],
+    ["Version", meta?.version],
+    ["Month", meta?.month],
+    ["Detail", meta?.detail],
+    ["Source Type", meta?.sourceType ? formatKnowledgeSourceType(meta.sourceType) : undefined],
+    ["Source Path", meta?.sourcePath],
+  ].filter((row): row is [string, string] => Boolean(row[1]));
+
   // Wikilinks (outgoing related edges)
   const wikilinks = graph.edges
     .filter((e) => e.type === "related" && e.source === node.id)
@@ -71,6 +86,16 @@ function KnowledgeNodeDetails({ node, graph }: { node: GraphNode; graph: Knowled
   const backlinks = graph.edges
     .filter((e) => e.type === "related" && e.target === node.id)
     .map((e) => graph.nodes.find((n) => n.id === e.source))
+    .filter((n): n is GraphNode => n !== undefined);
+
+  const citedSources = graph.edges
+    .filter((e) => e.type === "cites" && e.source === node.id)
+    .map((e) => graph.nodes.find((n) => n.id === e.target))
+    .filter((n): n is GraphNode => n !== undefined);
+
+  const testedBy = graph.edges
+    .filter((e) => e.type === "tested_by" && e.source === node.id)
+    .map((e) => graph.nodes.find((n) => n.id === e.target))
     .filter((n): n is GraphNode => n !== undefined);
 
   // Category
@@ -121,6 +146,59 @@ function KnowledgeNodeDetails({ node, graph }: { node: GraphNode; graph: Knowled
           </h4>
           <div className="space-y-1 max-h-[200px] overflow-auto">
             {backlinks.map((n) => (
+              <button
+                key={n.id}
+                type="button"
+                onClick={() => navigateToNode(n.id)}
+                className="block w-full text-left px-2 py-1.5 rounded bg-elevated hover:bg-accent/10 text-[11px] text-text-secondary hover:text-accent transition-colors truncate"
+              >
+                {n.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {prdMetadataRows.length > 0 && (
+        <div>
+          <h4 className="text-[10px] uppercase tracking-wider text-text-muted mb-1">
+            PRD Metadata
+          </h4>
+          <dl className="text-[11px] bg-elevated rounded-lg p-3 space-y-1.5">
+            {prdMetadataRows.map(([label, value]) => (
+              <div key={label} className="grid grid-cols-[80px_1fr] gap-2">
+                <dt className="text-text-muted">{label}</dt>
+                <dd className="text-text-secondary break-words font-mono">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+      {testedBy.length > 0 && (
+        <div>
+          <h4 className="text-[10px] uppercase tracking-wider text-text-muted mb-1">
+            Test Coverage ({testedBy.length})
+          </h4>
+          <div className="space-y-1 max-h-[200px] overflow-auto">
+            {testedBy.map((n) => (
+              <button
+                key={n.id}
+                type="button"
+                onClick={() => navigateToNode(n.id)}
+                className="block w-full text-left px-2 py-1.5 rounded bg-elevated hover:bg-accent/10 text-[11px] text-text-secondary hover:text-accent transition-colors truncate"
+              >
+                {n.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {citedSources.length > 0 && (
+        <div>
+          <h4 className="text-[10px] uppercase tracking-wider text-text-muted mb-1">
+            Cited Sources ({citedSources.length})
+          </h4>
+          <div className="space-y-1 max-h-[200px] overflow-auto">
+            {citedSources.map((n) => (
               <button
                 key={n.id}
                 type="button"

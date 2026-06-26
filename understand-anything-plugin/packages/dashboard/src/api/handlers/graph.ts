@@ -67,7 +67,16 @@ export async function handleGraphRequest(
     for (const candidate of candidates) {
       if (!fs.existsSync(candidate)) continue
       try {
-        return { statusCode: 200, body: JSON.parse(fs.readFileSync(candidate, "utf-8")) }
+        const raw = JSON.parse(fs.readFileSync(candidate, "utf-8")) as Record<string, unknown>
+        const nodesParam = searchParams.get("nodes")
+        if (nodesParam && Array.isArray(raw.nodes)) {
+          const requestedIds = new Set(nodesParam.split(",").map(id => id.trim()).filter(Boolean))
+          raw.nodes = (raw.nodes as Array<Record<string, unknown>>).filter(
+            (n) => requestedIds.has(n.id as string)
+          )
+          raw.edges = []
+        }
+        return { statusCode: 200, body: raw }
       } catch {
         return { statusCode: 500, body: { error: "Failed to read graph file" } }
       }

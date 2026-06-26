@@ -58,6 +58,7 @@ Where `{skill_base_dir}` is the directory containing this SKILL.md file (the `Ba
 | Subcommand | Purpose | Detail Doc |
 |------------|---------|------------|
 | `ask` | **Start here for business questions.** Auto-discover → trace → wiki → domain → source-verify | This file |
+| `knowledge` | Knowledge wiki queries for product intent and deterministic QA coverage | This file |
 | `trace` | Search→neighbors→source in one call (with optional wiki/domain/verify/grouped) | [kg-trace.md](docs/kg-trace.md#trace--aggregated-searchneighborssource-recommended-for-agents) |
 | `kg` | Source-level KG: classes, calls, RPC, file annotations, file summary | [kg-trace.md](docs/kg-trace.md#kg--knowledge-graph-queries) |
 | `structure` | Code structure: signatures, annotations, types, cross-file symbol search + source (`--symbol`, **comma-separate for many symbols in one call**) | [structure-commands.md](docs/structure-commands.md) |
@@ -94,7 +95,34 @@ Where `{skill_base_dir}` is the directory containing this SKILL.md file (the `Ba
 | `/understand` | Knowledge graph (`kg` layer) + structural analysis |
 | `/understand-domain` | Domain graph (`domain` layer) |
 | `/understand-wiki` | Wiki + system graph (`wiki`, `services` layer) |
+| `/understand-knowledge` | Knowledge wiki graph (`knowledge` service facet, PRD/product intent, QA coverage) |
 | `/understand-business` | Business landscape (`business` layer) |
+
+---
+
+## Knowledge Wiki Queries
+
+Use `knowledge` for knowledge wiki graph queries, including PRD-derived product intent and deterministic QA coverage. PRD knowledge is **product intent / QA coverage context**; it does not change the `ask` command's code-source verified default behavior, and PRD content must not be treated as code fact.
+
+`--format` is a global flag, so place it before the subcommand name.
+
+```bash
+python3 ua_query.py --format md knowledge search "跨房间 PK" --service amar-prd --type requirement
+python3 ua_query.py knowledge search "PK 测试" --service amar-prd --type testcase
+python3 ua_query.py knowledge node "requirement:summaries/房间-2025-10-v2.25.0-跨房间PK" --service amar-prd
+python3 ua_query.py --format md knowledge coverage "requirement:summaries/房间-2025-10-v2.25.0-跨房间PK" --service amar-prd
+python3 ua_query.py knowledge read --node "requirement:summaries/房间-2025-10-v2.25.0-跨房间PK" --service amar-prd
+python3 ua_query.py --format md knowledge read --node "article:concepts/Room,requirement:summaries/PK优化" --service amar-prd
+```
+
+### `knowledge read` — Read full content of knowledge nodes
+
+Retrieve the full content of one or more knowledge graph nodes. Returns `knowledgeMeta.content` (complete wiki article text), `filePath`, and `sourcePath` for each node. Batch up to 10 nodes in one call.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--node IDS` | string | required | Comma-separated node IDs (max 10) |
+| `--service S` | string | auto | Override auto-discovery |
 
 ---
 
@@ -121,6 +149,8 @@ Where `{skill_base_dir}` is the directory containing this SKILL.md file (the `Ba
 
 > **Verification scope (read this):** `ask --depth full` reads source only for the nodes it returns (`--limit`, default 5) — it verifies *those*, not every claim you might make. Anything beyond the returned `sourceReads` still needs its own `source --file` / `trace --source` read before you present it as fact.
 
+**PRD Knowledge Context (depth=standard/full):** `ask` automatically discovers knowledge services (e.g. `amar-prd`) and searches for matching PRD requirements and test cases. Results appear in `prdContext` — use them to understand product intent, but always verify against source code.
+
 **Cross-service RPC follow (depth=full):** When the traced service has outbound `consumes_rpc` edges, `ask` automatically identifies the provider service and runs a follow-up trace there. The output includes a `crossServiceTrace` section with the target service's implementation details. This solves the "found the reporter, not the implementer" problem.
 
 **Fallback chain (depth=full):** When KG trace returns no `matchedNodes`, `ask` escalates automatically:
@@ -134,7 +164,7 @@ Where `{skill_base_dir}` is the directory containing this SKILL.md file (the `Ba
 
 ```bash
 # Batch-fetch source for multiple methods in ONE call
-python ua_query.py structure --service S --symbol "methodA,methodB,methodC" --source
+python3 ua_query.py structure --service S --symbol "methodA,methodB,methodC" --source
 ```
 
 Do NOT fall back to `source --file` full-file reads when you have method names.
@@ -145,16 +175,16 @@ Do NOT fall back to `source --file` full-file reads when you have method names.
 
 ```bash
 # Full business question (recommended)
-python ua_query.py --format md ask --query "火箭,rocket,RocketReward" --depth full
+python3 ua_query.py --format md ask --query "火箭,rocket,RocketReward" --depth full
 
 # Quick domain check
-python ua_query.py ask --query "亲密度,intimacy" --depth quick
+python3 ua_query.py ask --query "亲密度,intimacy" --depth quick
 
 # Override service
-python ua_query.py ask --query "家族,Family" --service ultron-relation --depth standard
+python3 ua_query.py ask --query "家族,Family" --service ultron-relation --depth standard
 
 # Cross-platform (Android client)
-python ua_query.py ask --query "PK对战,PKBattle" --platform android --depth full
+python3 ua_query.py ask --query "PK对战,PKBattle" --platform android --depth full
 ```
 
 ---

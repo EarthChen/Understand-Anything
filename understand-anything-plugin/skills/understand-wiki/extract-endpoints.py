@@ -333,7 +333,7 @@ def extract_endpoints_from_dir(
     When *project_root* is provided, the extractor reads actual Java source
     files to pull Javadoc descriptions for each provider method.
     """
-    cfg = config or {}
+    cfg = config if config is not None else load_annotation_config()
     ann_sets = _build_annotation_sets(cfg)
     provider_anns = ann_sets["provider_annotations"]
     consumer_field_anns = ann_sets["consumer_field_annotations"]
@@ -543,7 +543,7 @@ def extract_http_endpoints_from_kg(kg_path: Path, config: dict | None = None) ->
     Resolves functionName by matching KG function nodes via (filePath, lineRange).
     No source code scanning — all data comes from the KG.
     """
-    cfg = config or {}
+    cfg = config if config is not None else load_annotation_config()
     http_edge_types = set(cfg.get("kgEdgeTypes", {}).get("http", ["consumes_api"]))
     http_ann_map = _build_http_annotation_sets(cfg)
 
@@ -662,7 +662,7 @@ def extract_http_endpoints_from_structural_analysis(
     Reads the 'endpoints' and 'functions' fields from each file entry.
     HTTP method annotations are resolved from config (httpClient.frameworks.*.methodAnnotations).
     """
-    cfg = config or {}
+    cfg = config if config is not None else load_annotation_config()
     http_ann_map = _build_http_annotation_sets(cfg)
     # Flatten: set of all known HTTP method annotation names
     known_http_anns: set[str] = set()
@@ -797,7 +797,7 @@ def extract_rpc_endpoints_from_kg(kg_path: Path, config: dict | None = None) -> 
     without requiring intermediate extraction files.  Also extracts
     method-level data from KG function nodes belonging to each provider.
     """
-    cfg = config or {}
+    cfg = config if config is not None else load_annotation_config()
     rpc_edge_types = set(cfg.get("kgEdgeTypes", {}).get("rpc", ["provides_rpc", "consumes_rpc"]))
     event_edge_types = set(cfg.get("kgEdgeTypes", {}).get("events", ["publishes", "subscribes"]))
 
@@ -1023,7 +1023,7 @@ def extract_implicit_consumers_from_kg(
     - Source-target pair must NOT already have a consumes_rpc edge
     - Target must NOT have internal class tags
     """
-    cfg = config or {}
+    cfg = config if config is not None else load_annotation_config()
     implicit_pattern = _build_implicit_consumer_pattern(cfg)
     implicit_tags = set(cfg.get("implicitConsumers", {}).get("tags", []))
     internal_tags = set(cfg.get("internalClassTags", {}).get("tags", []))
