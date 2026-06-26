@@ -161,24 +161,26 @@ export async function handleWikiRequest(
     }
 
     if (apiPath === "/knowledge-tree") {
-      const serviceName = searchParams.get("service")
-      if (!serviceName) {
-        return { statusCode: 400, body: { error: "service parameter required" } }
-      }
+      const serviceName = searchParams.get("service") || ""
       if (serviceName.includes("\\") || serviceName.includes("..")) {
         return { statusCode: 400, body: { error: "invalid service name" } }
       }
 
       const graphDir = process.env.GRAPH_DIR
       const candidates: string[] = []
-      const resolvedBasePath = resolveServiceBasePath(serviceName)
-      if (resolvedBasePath) {
-        if (graphDir) candidates.push(path.resolve(graphDir, resolvedBasePath, ".understand-anything", "knowledge-graph.json"))
-        candidates.push(path.resolve(process.cwd(), resolvedBasePath, ".understand-anything", "knowledge-graph.json"))
+      if (!serviceName) {
+        if (graphDir) candidates.push(path.resolve(graphDir, ".understand-anything", "knowledge-graph.json"))
+        candidates.push(path.resolve(process.cwd(), ".understand-anything", "knowledge-graph.json"))
+      } else {
+        const resolvedBasePath = resolveServiceBasePath(serviceName)
+        if (resolvedBasePath) {
+          if (graphDir) candidates.push(path.resolve(graphDir, resolvedBasePath, ".understand-anything", "knowledge-graph.json"))
+          candidates.push(path.resolve(process.cwd(), resolvedBasePath, ".understand-anything", "knowledge-graph.json"))
+        }
+        if (graphDir) candidates.push(path.resolve(graphDir, serviceName, ".understand-anything", "knowledge-graph.json"))
+        candidates.push(path.resolve(process.cwd(), serviceName, ".understand-anything", "knowledge-graph.json"))
+        candidates.push(path.resolve(process.cwd(), "../../..", serviceName, ".understand-anything", "knowledge-graph.json"))
       }
-      if (graphDir) candidates.push(path.resolve(graphDir, serviceName, ".understand-anything", "knowledge-graph.json"))
-      candidates.push(path.resolve(process.cwd(), serviceName, ".understand-anything", "knowledge-graph.json"))
-      candidates.push(path.resolve(process.cwd(), "../../..", serviceName, ".understand-anything", "knowledge-graph.json"))
 
       let graphData: Record<string, unknown> | null = null
       for (const candidate of candidates) {

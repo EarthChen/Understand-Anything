@@ -127,6 +127,8 @@ export interface ReadSourceOptions {
    * When provided, files not in this set are rejected with 404.
    */
   kgAllowlist?: Set<string>;
+  /** When true, return full file content without line-range limits. */
+  fullFile?: boolean;
 }
 
 /**
@@ -136,12 +138,18 @@ export interface ReadSourceOptions {
  * enforces a KG allowlist, and returns a normalised SourcePayload.
  */
 export function readSource(opts: ReadSourceOptions): SourceReadResult {
-  const { projectRoot, filePath, startLine, endLine, kgAllowlist } = opts;
+  const { projectRoot, filePath, startLine, endLine, kgAllowlist, fullFile } = opts;
 
   // 1. Parse line range (default: full file up to MAX_SOURCE_LINES).
-  const range = parseLineRange(startLine, endLine);
-  if ("error" in range) {
-    return { statusCode: 400, payload: { error: range.error } };
+  let range: { startLine: number; endLine: number };
+  if (fullFile) {
+    range = { startLine: 1, endLine: Number.MAX_SAFE_INTEGER };
+  } else {
+    const parsed = parseLineRange(startLine, endLine);
+    if ("error" in parsed) {
+      return { statusCode: 400, payload: { error: parsed.error } };
+    }
+    range = parsed;
   }
 
   // 2. Sanitise the requested path.

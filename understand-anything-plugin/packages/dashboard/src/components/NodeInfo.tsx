@@ -64,6 +64,7 @@ function getDirectionalLabel(edgeType: string, isSource: boolean, t: ReturnType<
 
 function KnowledgeNodeDetails({ node, graph }: { node: GraphNode; graph: KnowledgeGraph }) {
   const navigateToNode = useDashboardStore((s) => s.navigateToNode);
+  const openWikiViewer = useDashboardStore((s) => s.openWikiViewer);
   const { t } = useI18n();
   const meta = node.knowledgeMeta;
 
@@ -211,15 +212,28 @@ function KnowledgeNodeDetails({ node, graph }: { node: GraphNode; graph: Knowled
           </div>
         </div>
       )}
-      {meta?.content && (
+      {(node.filePath || meta?.sourcePath || meta?.content) && (
         <div>
-          <h4 className="text-[10px] uppercase tracking-wider text-text-muted mb-1">{t.common.preview}</h4>
-          <div className="text-[11px] text-text-secondary leading-relaxed bg-elevated rounded-lg p-3 max-h-[300px] overflow-auto whitespace-pre-wrap font-mono">
-            {meta.content.slice(0, 1500)}
-            {meta.content.length > 1500 && (
-              <span className="text-text-muted">... {t.common.truncated}</span>
+          <div className="flex items-center justify-between mb-1">
+            <h4 className="text-[10px] uppercase tracking-wider text-text-muted">{t.common.preview}</h4>
+            {(node.filePath || meta?.sourcePath) && (
+              <button
+                type="button"
+                onClick={() => openWikiViewer(node.filePath || meta?.sourcePath || "")}
+                className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded border border-accent/30 text-accent hover:text-accent-bright hover:border-accent/60 transition-colors"
+              >
+                View Full Content
+              </button>
             )}
           </div>
+          {meta?.content && (
+            <div className="text-[11px] text-text-secondary leading-relaxed bg-elevated rounded-lg p-3 max-h-[200px] overflow-auto whitespace-pre-wrap font-mono">
+              {meta.content.slice(0, 800)}
+              {meta.content.length > 800 && (
+                <span className="text-text-muted">... {t.common.truncated}</span>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

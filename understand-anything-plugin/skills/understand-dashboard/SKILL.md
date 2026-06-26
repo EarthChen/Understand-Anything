@@ -20,6 +20,8 @@ Start the Understand Anything dashboard to visualize the knowledge graph for the
    KG_VALID=false
    if node "$VALIDATOR" .understand-anything/knowledge-graph.json knowledge-graph:complete >/dev/null 2>&1; then
      KG_VALID=true
+   elif node "$VALIDATOR" .understand-anything/knowledge-graph.json knowledge-graph:scan-only >/dev/null 2>&1; then
+     KG_VALID=true
    fi
    ```
    Accept ANY of these:

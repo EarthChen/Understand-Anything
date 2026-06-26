@@ -155,6 +155,7 @@ export async function handleSourceRequest(
     startLine: start,
     endLine: end,
     kgAllowlist,
+    fullFile: mode === "wiki" && !start && !end,
   })
   return { statusCode: result.statusCode, body: result.payload }
 }

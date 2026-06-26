@@ -685,6 +685,7 @@ export default function WikiView() {
   const setWikiTopology = useDashboardStore((s) => s.setWikiTopology);
   const setWikiBreadcrumb = useDashboardStore((s) => s.setWikiBreadcrumb);
   const activeService = useDashboardStore((s) => s.activeService);
+  const isKnowledgeGraph = useDashboardStore((s) => s.isKnowledgeGraph);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<NavEntry[]>([]);
@@ -943,8 +944,16 @@ export default function WikiView() {
     );
   }
 
+  if (isKnowledgeGraph && activeService) {
+    return <KnowledgeWikiView serviceName={activeService} />;
+  }
+
   if (hasKnowledgeNodes && activeService) {
     return <KnowledgeWikiView serviceName={activeService} />;
+  }
+
+  if (isKnowledgeGraph && (!wikiIndex || wikiIndex.entries.length === 0)) {
+    return <KnowledgeWikiView />;
   }
 
   return (

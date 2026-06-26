@@ -27,6 +27,7 @@ import { dirname, join } from 'node:path';
 // ---------------------------------------------------------------------------
 const CONTRACT_STAGES = {
   "knowledge-graph:complete": ["scan", "batch", "extract", "analyze", "merge", "validate"],
+  "knowledge-graph:scan-only": ["scan", "merge", "validate"],
   "domain-graph:complete": ["derive"],
   "wiki:complete": ["generate"],
 };

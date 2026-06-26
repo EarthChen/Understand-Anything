@@ -3,6 +3,14 @@ import ReactMarkdown, { defaultUrlTransform } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeRaw from "rehype-raw"
 import { MermaidDiagram } from "./MermaidDiagram"
+import { useDashboardStore } from "../store"
+
+function stripFrontmatter(text: string): string {
+  if (!text.startsWith("---")) return text
+  const end = text.indexOf("\n---", 3)
+  if (end === -1) return text
+  return text.slice(end + 4).trimStart()
+}
 
 interface TreeNode {
   id: string
@@ -28,11 +36,12 @@ const TYPE_COLORS: Record<string, string> = {
 }
 
 function sourceUrl(file: string, service: string): string {
-  const params = new URLSearchParams({ file, mode: "wiki", service })
+  const params = new URLSearchParams({ file, mode: "wiki" })
+  if (service) params.set("service", service)
   return `/api/source?${params.toString()}`
 }
 
-export function KnowledgeWikiView({ serviceName }: { serviceName: string }) {
+export function KnowledgeWikiView({ serviceName = "" }: { serviceName?: string }) {
   const [tree, setTree] = useState<KnowledgeTree | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
@@ -40,11 +49,13 @@ export function KnowledgeWikiView({ serviceName }: { serviceName: string }) {
   const [contentLoading, setContentLoading] = useState(false)
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
+  const knowledgeWikiSelectedFile = useDashboardStore((s) => s.knowledgeWikiSelectedFile)
+  const setKnowledgeWikiSelectedFile = useDashboardStore((s) => s.setKnowledgeWikiSelectedFile)
 
   useEffect(() => {
     setLoading(true)
     setError(null)
-    fetch(`/api/wiki/knowledge-tree?service=${encodeURIComponent(serviceName)}`)
+    fetch(`/api/wiki/knowledge-tree${serviceName ? `?service=${encodeURIComponent(serviceName)}` : ""}`)
       .then((r) => r.json())
       .then((data) => {
         setTree(data)
@@ -61,12 +72,19 @@ export function KnowledgeWikiView({ serviceName }: { serviceName: string }) {
       setContentLoading(true)
       fetch(sourceUrl(filePath, serviceName))
         .then((r) => r.json())
-        .then((data) => setContent(data.content || data.source || ""))
+        .then((data) => setContent(stripFrontmatter(data.content || data.source || "")))
         .catch(() => setContent("Failed to load content"))
         .finally(() => setContentLoading(false))
     },
     [serviceName],
   )
+
+  useEffect(() => {
+    if (knowledgeWikiSelectedFile) {
+      loadContent(knowledgeWikiSelectedFile)
+      setKnowledgeWikiSelectedFile(null)
+    }
+  }, [knowledgeWikiSelectedFile, loadContent, setKnowledgeWikiSelectedFile])
 
   const toggleDir = useCallback((dir: string) => {
     setExpandedDirs((prev) => {
@@ -80,8 +98,17 @@ export function KnowledgeWikiView({ serviceName }: { serviceName: string }) {
   const handleLinkClick = useCallback(
     (href: string) => {
       if (!href || href.startsWith("http://") || href.startsWith("https://")) return
-      const cleanHref = href.split("#")[0]
+      let cleanHref: string
+      try { cleanHref = decodeURIComponent(href.split("#")[0]) } catch { cleanHref = href.split("#")[0] }
       if (!cleanHref) return
+
+      const ROOT_PREFIXES = ["raw/", "wiki/", "outputs/", "audit/", "log/", "scripts/"]
+      const isRootRelative = ROOT_PREFIXES.some((p) => cleanHref.startsWith(p))
+
+      if (isRootRelative) {
+        loadContent(cleanHref)
+        return
+      }
 
       if (selectedFile) {
         const currentDir = selectedFile.includes("/")
@@ -123,7 +150,7 @@ export function KnowledgeWikiView({ serviceName }: { serviceName: string }) {
     <div className="flex h-full overflow-hidden">
       <div className="w-64 min-w-48 border-r border-border overflow-y-auto bg-surface/50">
         <div className="px-3 py-2 border-b border-border">
-          <div className="text-xs font-medium text-text">{serviceName}</div>
+          <div className="text-xs font-medium text-text">{serviceName || "Wiki"}</div>
           <div className="text-[10px] text-text-muted">{tree.totalNodes} nodes</div>
         </div>
         {sortedDirs.map((dir) => (
@@ -167,7 +194,7 @@ export function KnowledgeWikiView({ serviceName }: { serviceName: string }) {
         ) : contentLoading ? (
           <div className="flex items-center justify-center h-full text-text-muted">Loading...</div>
         ) : (
-          <div className="prose prose-sm prose-invert max-w-none p-6">
+          <div className="wiki-markdown max-w-none p-6">
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeRaw]}

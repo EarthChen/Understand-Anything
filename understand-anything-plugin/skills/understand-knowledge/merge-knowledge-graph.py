@@ -396,9 +396,14 @@ def merge(root: Path) -> dict:
     except (OSError, subprocess.TimeoutExpired):
         pass
 
+    has_llm_analysis = report["batches"] > 0
+    completed_stages = ["scan", "merge", "validate"]
+    if has_llm_analysis:
+        completed_stages = ["scan", "batch", "extract", "analyze", "merge", "validate"]
+
     graph["project"]["provenance"] = {
-        "generationMode": "standalone",
-        "completedStages": ["scan", "batch", "extract", "analyze", "merge", "validate"],
+        "generationMode": "scan-only" if not has_llm_analysis else "standalone",
+        "completedStages": completed_stages,
         "degraded": False,
         "qualityGates": {
             "deterministicScan": True,

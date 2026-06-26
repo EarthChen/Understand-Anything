@@ -37,11 +37,15 @@ function resolveWikiPage(result: WikiSearchResult): { type: "service" | "domain"
     return { type: t, id: result.id, service: result.service };
   }
   if (t === "domain") {
-    return { type: "domain", id: result.id, service: result.service };
+    const domainId = result.id.startsWith("domain:") ? result.id : `domain:${result.id}`;
+    return { type: "domain", id: domainId, service: result.service };
   }
-  // flow/step — navigate to parent domain if known, otherwise just switch to wiki view
   if (result.domain) {
-    return { type: "domain", id: result.domain, service: result.service };
+    const domainId = result.domain.startsWith("domain:") ? result.domain : `domain:${result.domain}`;
+    return { type: "domain", id: domainId, service: result.service };
+  }
+  if (t === "flow" || t === "step") {
+    return { type: "service" as const, id: result.service ?? result.id, service: result.service };
   }
   return { type: "domain", id: result.id, service: result.service };
 }
@@ -50,13 +54,13 @@ export default function SearchBar() {
   const searchQuery = useDashboardStore((s) => s.searchQuery);
   const searchResults = useDashboardStore((s) => s.searchResults);
   const wikiSearchResults = useDashboardStore((s) => s.wikiSearchResults);
+  const serverKgResults = useDashboardStore((s) => s.serverKgResults);
   const graph = useDashboardStore((s) => s.graph);
   const setSearchQuery = useDashboardStore((s) => s.setSearchQuery);
   const navigateToNodeInLayer = useDashboardStore((s) => s.navigateToNodeInLayer);
   const searchMode = useDashboardStore((s) => s.searchMode);
   const setSearchMode = useDashboardStore((s) => s.setSearchMode);
   const setViewMode = useDashboardStore((s) => s.setViewMode);
-  const setWikiActivePage = useDashboardStore((s) => s.setWikiActivePage);
   const { t } = useI18n();
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -71,7 +75,9 @@ export default function SearchBar() {
 
   const topResults = searchResults.slice(0, 5);
   const topWikiResults = wikiSearchResults.slice(0, 5);
-  const hasResults = topResults.length > 0 || topWikiResults.length > 0;
+  const localNodeIds = new Set(topResults.map((r) => r.nodeId));
+  const topServerKgResults = serverKgResults.filter((r) => !localNodeIds.has(r.id)).slice(0, 5);
+  const hasResults = topResults.length > 0 || topWikiResults.length > 0 || topServerKgResults.length > 0;
 
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -83,20 +89,105 @@ export default function SearchBar() {
 
   const handleResultClick = useCallback(
     (nodeId: string) => {
+      const store = useDashboardStore.getState();
+      const currentGraph = store.graph;
+      const currentIsKG = store.isKnowledgeGraph;
+      const currentViewMode = store.viewMode;
+
+      if (currentIsKG && currentGraph) {
+        const node = currentGraph.nodes.find((n) => n.id === nodeId);
+        if (node?.filePath) {
+          const updates: Record<string, unknown> = {
+            viewMode: "wiki",
+            knowledgeWikiSelectedFile: node.filePath,
+            selectedNodeId: null,
+            focusNodeId: null,
+            codeViewerOpen: false,
+            codeViewerNodeId: null,
+            codeViewerExpanded: false,
+            wikiViewerOpen: false,
+            wikiViewerFilePath: null,
+          };
+          if (!store.activeService && store.systemGraph) {
+            const services = Object.keys(store.systemGraph.serviceIndex);
+            const kgSvc = services.find(
+              (s) => store.systemGraph!.serviceIndex[s].facet === "knowledge"
+                || store.systemGraph!.serviceIndex[s].profile === "prd-wiki",
+            ) ?? services.find((s) => store.systemGraph!.serviceIndex[s].hasKg);
+            if (kgSvc) updates.activeService = kgSvc;
+          }
+          useDashboardStore.setState(updates);
+          setDropdownOpen(false);
+          return;
+        }
+      }
+      if (currentViewMode === "wiki" || currentViewMode === "system") {
+        setViewMode(currentIsKG ? "knowledge" : "structural");
+      }
       navigateToNodeInLayer(nodeId);
       setDropdownOpen(false);
     },
-    [navigateToNodeInLayer],
+    [navigateToNodeInLayer, setViewMode],
   );
+
 
   const handleWikiResultClick = useCallback(
     (result: WikiSearchResult) => {
+      const store = useDashboardStore.getState();
       const page = resolveWikiPage(result);
-      setViewMode("wiki");
-      setWikiActivePage(page);
+      const updates: Record<string, unknown> = {
+        viewMode: "wiki",
+        wikiActivePage: page,
+        selectedNodeId: null,
+        focusNodeId: null,
+        codeViewerOpen: false,
+        codeViewerNodeId: null,
+        codeViewerExpanded: false,
+        wikiViewerOpen: false,
+        wikiViewerFilePath: null,
+      };
+      if (store.isKnowledgeGraph) {
+        updates.isKnowledgeGraph = false;
+      }
+      if (result.service && result.service !== store.activeService) {
+        updates.activeService = result.service;
+      } else if (!result.service && store.activeService) {
+        updates.activeService = null;
+      }
+      useDashboardStore.setState(updates);
       setDropdownOpen(false);
     },
-    [setViewMode, setWikiActivePage],
+    [],
+  );
+
+  const handleServerKgClick = useCallback(
+    (result: { id: string; name: string; type: string; service?: string; filePath?: string }) => {
+      if (result.filePath && result.service) {
+        useDashboardStore.setState({
+          activeService: result.service,
+          isKnowledgeGraph: true,
+          viewMode: "wiki" as const,
+          knowledgeWikiSelectedFile: result.filePath,
+          selectedNodeId: null,
+          focusNodeId: null,
+          codeViewerOpen: false,
+          codeViewerNodeId: null,
+          codeViewerExpanded: false,
+          wikiViewerOpen: false,
+          wikiViewerFilePath: null,
+        });
+      } else if (result.service) {
+        useDashboardStore.setState({
+          activeService: result.service,
+          viewMode: "knowledge" as const,
+          isKnowledgeGraph: true,
+          selectedNodeId: null,
+          focusNodeId: null,
+        });
+      }
+      setDropdownOpen(false);
+    },
+    [],
   );
 
   // Close dropdown on Escape
@@ -174,7 +265,7 @@ export default function SearchBar() {
         </div>
         {searchQuery.trim() && (
           <span className="hidden sm:inline text-xs text-text-muted shrink-0">
-            {searchResults.length + wikiSearchResults.length} {t.search.result}{(searchResults.length + wikiSearchResults.length) !== 1 ? "s" : ""}{" "}
+            {searchResults.length + serverKgResults.length + wikiSearchResults.length} {t.search.result}{(searchResults.length + serverKgResults.length + wikiSearchResults.length) !== 1 ? "s" : ""}{" "}
             <span className="text-text-muted">({searchMode})</span>
           </span>
         )}
@@ -226,10 +317,54 @@ export default function SearchBar() {
             );
           })}
 
+          {/* Server KG results (cross-service) */}
+          {topServerKgResults.length > 0 && (
+            <>
+              {topResults.length > 0 && (
+                <div className="border-t border-border-subtle" />
+              )}
+              <div className="px-3 py-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                  Knowledge Graph
+                </span>
+              </div>
+              {topServerKgResults.map((result) => {
+                const relevance = Math.round(result.score * 100);
+                const badgeColor = typeBadgeColors[result.type] ?? typeBadgeColors.article;
+                return (
+                  <button
+                    key={`skg:${result.id}`}
+                    type="button"
+                    onClick={() => handleServerKgClick(result)}
+                    className="w-full flex items-center gap-3 px-3 py-2 hover:bg-elevated transition-colors text-left"
+                  >
+                    <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${badgeColor} shrink-0`}>
+                      {result.type}
+                    </span>
+                    <span className="text-sm text-text-primary truncate flex-1">
+                      {result.name}
+                    </span>
+                    {result.service && (
+                      <span className="text-[10px] text-text-muted shrink-0">
+                        {result.service}
+                      </span>
+                    )}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="w-16 h-1.5 bg-elevated rounded-full overflow-hidden">
+                        <div className="h-full bg-green-400 rounded-full" style={{ width: `${relevance}%` }} />
+                      </div>
+                      <span className="text-[10px] text-text-muted w-7 text-right">{relevance}%</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </>
+          )}
+
           {/* Wiki results section */}
           {topWikiResults.length > 0 && (
             <>
-              {topResults.length > 0 && (
+              {(topResults.length > 0 || topServerKgResults.length > 0) && (
                 <div className="border-t border-border-subtle" />
               )}
               <div className="px-3 py-1.5">
@@ -238,7 +373,7 @@ export default function SearchBar() {
                 </span>
               </div>
               {topWikiResults.map((result) => {
-                const relevance = Math.round((1 - result.score) * 100);
+                const relevance = Math.round(Math.min(result.score, 100));
                 const badgeColor = typeBadgeColors[result.type] ?? typeBadgeColors.domain;
 
                 return (

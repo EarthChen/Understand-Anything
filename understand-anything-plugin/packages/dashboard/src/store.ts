@@ -122,6 +122,9 @@ interface DashboardStore {
   codeViewerNodeId: string | null;
   codeViewerExpanded: boolean;
 
+  wikiViewerOpen: boolean;
+  wikiViewerFilePath: string | null;
+
   tourActive: boolean;
   currentTourStep: number;
   tourHighlightedNodeIds: string[];
@@ -176,6 +179,12 @@ interface DashboardStore {
   expandCodeViewer: () => void;
   collapseCodeViewer: () => void;
 
+  openWikiViewer: (filePath: string) => void;
+  closeWikiViewer: () => void;
+
+  knowledgeWikiSelectedFile: string | null;
+  setKnowledgeWikiSelectedFile: (file: string | null) => void;
+
   setDiffOverlay: (changed: string[], affected: string[]) => void;
   toggleDiffMode: () => void;
   clearDiffOverlay: () => void;
@@ -212,6 +221,7 @@ interface DashboardStore {
 
   // Wiki search results (from server-side /api/wiki/search)
   wikiSearchResults: WikiSearchResult[];
+  serverKgResults: Array<{ id: string; name: string; type: string; score: number; service?: string; filePath?: string; layer: string }>;
 
   // Wiki view
   wikiAvailable: boolean;
@@ -338,6 +348,11 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
   codeViewerNodeId: null,
   codeViewerExpanded: false,
 
+  wikiViewerOpen: false,
+  wikiViewerFilePath: null,
+
+  knowledgeWikiSelectedFile: null,
+
   tourActive: false,
   currentTourStep: 0,
   tourHighlightedNodeIds: [],
@@ -402,8 +417,8 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
     const query = get().searchQuery;
     const searchResults = query.trim() ? searchEngine.search(query) : [];
     const { viewMode, domainGraph, activeDomainId } = get();
-    // Preserve domain view if a domain graph is already loaded
     const keepDomainView = viewMode === "domain" && domainGraph !== null;
+    const keepWikiView = viewMode === "wiki";
     const { nodesById, nodeIdToLayerId, nodeIdToLayerIds } = buildGraphIndexes(graph);
     set({
       graph,
@@ -417,7 +432,7 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
       selectedNodeId: null,
       focusNodeId: null,
       nodeHistory: [],
-      viewMode: keepDomainView ? "domain" as const : "structural" as const,
+      viewMode: keepWikiView ? "wiki" as const : keepDomainView ? "domain" as const : "structural" as const,
       activeDomainId: keepDomainView ? activeDomainId : null,
       containerLayoutCache: new Map(),
       expandedContainers: new Set(),
@@ -462,6 +477,8 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
         codeViewerOpen: false,
         codeViewerNodeId: null,
         codeViewerExpanded: false,
+        wikiViewerOpen: false,
+        wikiViewerFilePath: null,
         nodeHistory: newHistory,
       });
     } else {
@@ -515,9 +532,8 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
       codeViewerOpen: false,
       codeViewerNodeId: null,
       codeViewerExpanded: false,
-      // Container ids derive from folder names and collide across layers
-      // (e.g. `container:auth` exists in many layers). Drop the cache so
-      // we don't render stale positions for the new layer's children.
+      wikiViewerOpen: false,
+      wikiViewerFilePath: null,
       containerLayoutCache: new Map(),
       containerSizeMemory: new Map(),
       expandedContainers: new Set(),
@@ -533,6 +549,8 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
       codeViewerOpen: false,
       codeViewerNodeId: null,
       codeViewerExpanded: false,
+      wikiViewerOpen: false,
+      wikiViewerFilePath: null,
       containerLayoutCache: new Map(),
       containerSizeMemory: new Map(),
       expandedContainers: new Set(),
@@ -556,29 +574,29 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
     const engine = get().searchEngine;
     const mode = get().searchMode;
     if (!query.trim()) {
-      set({ searchQuery: query, searchResults: [], wikiSearchResults: [] });
+      set({ searchQuery: query, searchResults: [], wikiSearchResults: [], serverKgResults: [] });
       return;
     }
-    // Currently both modes use the same fuzzy engine
-    // When embeddings are available, "semantic" mode will use SemanticSearchEngine
     void mode;
     const searchResults = engine ? engine.search(query) : [];
-    set({ searchQuery: query, searchResults });
+    set({ searchQuery: query, searchResults, serverKgResults: [], wikiSearchResults: [] });
 
-    // Fire async wiki search if wiki is available
-    const { wikiAvailable } = get();
-    if (wikiAvailable) {
-      const q = encodeURIComponent(query.trim());
-      fetch(`/api/wiki/search?q=${q}&limit=10`)
-        .then((r) => (r.ok ? r.json() : []))
-        .then((results: WikiSearchResult[]) => {
-          // Only apply if query hasn't changed since the request was fired
-          if (get().searchQuery === query) {
-            set({ wikiSearchResults: results });
-          }
-        })
-        .catch(() => {});
-    }
+    type RawResult = { id: string; name: string; type: string; score: number; service?: string; filePath?: string; layer: string; domain?: string; summary?: string };
+    const q = encodeURIComponent(query.trim());
+    const kgFetch = fetch(`/api/search?q=${q}&limit=10&scope=kg`).then((r) => (r.ok ? r.json() : { results: [] })) as Promise<{ results: RawResult[] }>;
+    const domainFetch = fetch(`/api/search?q=${q}&limit=10&scope=domain`).then((r) => (r.ok ? r.json() : { results: [] })) as Promise<{ results: RawResult[] }>;
+    const wikiFetch = fetch(`/api/search?q=${q}&limit=10&scope=wiki`).then((r) => (r.ok ? r.json() : { results: [] })) as Promise<{ results: RawResult[] }>;
+    Promise.all([kgFetch, domainFetch, wikiFetch])
+      .then(([kgData, domainData, wikiData]) => {
+        if (get().searchQuery !== query) return;
+        const serverKgResults = kgData.results;
+        const wikiResults: WikiSearchResult[] = [
+          ...domainData.results,
+          ...wikiData.results,
+        ].map((r) => ({ id: r.id, name: r.name, type: r.type, score: r.score, service: r.service, domain: r.domain, summary: r.summary ?? "" }));
+        set({ serverKgResults, wikiSearchResults: wikiResults });
+      })
+      .catch(() => {});
   },
 
   setPersona: (persona) =>
@@ -597,6 +615,13 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
     set({ codeViewerOpen: false, codeViewerNodeId: null, codeViewerExpanded: false }),
   expandCodeViewer: () => set({ codeViewerExpanded: true }),
   collapseCodeViewer: () => set({ codeViewerExpanded: false }),
+
+  openWikiViewer: (filePath) =>
+    set({ wikiViewerOpen: true, wikiViewerFilePath: filePath }),
+  closeWikiViewer: () =>
+    set({ wikiViewerOpen: false, wikiViewerFilePath: null }),
+
+  setKnowledgeWikiSelectedFile: (file) => set({ knowledgeWikiSelectedFile: file }),
 
   setDiffOverlay: (changed, affected) =>
     set({
@@ -740,6 +765,8 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
       codeViewerOpen: false,
       codeViewerNodeId: null,
       codeViewerExpanded: false,
+      wikiViewerOpen: false,
+      wikiViewerFilePath: null,
     });
   },
 
@@ -770,6 +797,7 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
 
   // Wiki search results
   wikiSearchResults: [],
+  serverKgResults: [],
 
   // Wiki view state
   wikiAvailable: false,

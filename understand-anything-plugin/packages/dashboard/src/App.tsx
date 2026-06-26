@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback, lazy, Suspense } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef, lazy, Suspense } from "react";
 import { validateGraph } from "@understand-anything/core/schema";
 import { validateSystemGraph } from "@understand-anything/core/system-graph";
 import type { GraphIssue } from "@understand-anything/core/schema";
@@ -33,6 +33,7 @@ import BusinessGraphView from "./components/BusinessGraphView";
 
 // Lazy-load heavy / optional components so they ship in separate chunks.
 const CodeViewer = lazy(() => import("./components/CodeViewer"));
+const WikiContentViewer = lazy(() => import("./components/WikiContentViewer"));
 const LearnPanel = lazy(() => import("./components/LearnPanel"));
 const PathFinderModal = lazy(() => import("./components/PathFinderModal"));
 const KeyboardShortcutsHelp = lazy(
@@ -226,17 +227,29 @@ function Dashboard() {
     }
   });
 
+  const loadGenRef = useRef(0);
   const loadServiceGraph = useCallback(
     async (serviceName: string) => {
+      const gen = ++loadGenRef.current;
       const url = `/api/graph?service=${encodeURIComponent(serviceName)}&file=knowledge-graph.json`;
       try {
         const res = await fetch(url);
         if (!res.ok) return;
+        if (gen !== loadGenRef.current) return;
         const data = await res.json();
+        if (gen !== loadGenRef.current) return;
         const result = validateGraph(data);
         if (result.success && result.data) {
-          useDashboardStore.getState().setGraph(result.data as KnowledgeGraph);
-          useDashboardStore.getState().setViewMode("structural");
+          const s = useDashboardStore.getState();
+          const preserveWiki = s.viewMode === "wiki";
+          s.setGraph(result.data as KnowledgeGraph);
+          if ((data as Record<string, unknown>).kind === "knowledge") {
+            if (!preserveWiki) s.setViewMode("knowledge");
+            s.setIsKnowledgeGraph(true);
+          } else {
+            if (!preserveWiki) s.setViewMode("structural");
+            s.setIsKnowledgeGraph(false);
+          }
         }
       } catch {
         // Service KG load failed — stay on current view
@@ -250,6 +263,8 @@ function Dashboard() {
       loadServiceGraph(activeService);
     }
   }, [activeService, loadServiceGraph]);
+
+  const systemGraph = useDashboardStore((s) => s.systemGraph);
 
   return (
     <I18nProvider language={outputLanguage ?? "en"}>
@@ -278,6 +293,7 @@ function DashboardContent({
   const codeViewerExpanded = useDashboardStore((s) => s.codeViewerExpanded);
   const expandCodeViewer = useDashboardStore((s) => s.expandCodeViewer);
   const collapseCodeViewer = useDashboardStore((s) => s.collapseCodeViewer);
+  const wikiViewerOpen = useDashboardStore((s) => s.wikiViewerOpen);
   const pathFinderOpen = useDashboardStore((s) => s.pathFinderOpen);
   const togglePathFinder = useDashboardStore((s) => s.togglePathFinder);
   const nodeTypeFilters = useDashboardStore((s) => s.nodeTypeFilters);
@@ -382,17 +398,49 @@ function DashboardContent({
           </h1>
           <div className="w-px h-5 bg-border-subtle hidden sm:block" />
           <PersonaSelector />
-          {activeService && viewMode !== "system" && systemGraph && (
+          {activeService && viewMode !== "system" && (systemGraph || isKnowledgeGraph) && (
             <button
               type="button"
               onClick={() => {
-                useDashboardStore.getState().setActiveService(null);
-                setViewMode("system");
+                const store = useDashboardStore.getState();
+                store.setActiveService(null);
+                store.setIsKnowledgeGraph(false);
+                setViewMode(systemGraph ? "system" : "structural");
               }}
               className="px-2 py-1 text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
             >
               ← {t.systemView}
             </button>
+          )}
+          {graph && isKnowledgeGraph && (
+            <>
+              <div className="w-px h-5 bg-border-subtle" />
+              <div className="flex items-center bg-elevated rounded-lg p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("knowledge")}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    viewMode === "knowledge"
+                      ? "bg-accent/20 text-accent"
+                      : "text-text-muted hover:text-text-secondary"
+                  }`}
+                >
+                  Graph
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("wiki")}
+                  title="Wiki"
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    viewMode === "wiki"
+                      ? "bg-accent/20 text-accent"
+                      : "text-text-muted hover:text-text-secondary"
+                  }`}
+                >
+                  Wiki
+                </button>
+              </div>
+            </>
           )}
           {graph && !isKnowledgeGraph && domainGraph && (
             <>
@@ -794,6 +842,15 @@ function DashboardContent({
           <div className="absolute bottom-0 left-0 right-0 h-[40vh] bg-surface border-t border-border-subtle animate-slide-up z-20 overflow-hidden">
             <Suspense fallback={null}>
               <CodeViewer onExpand={expandCodeViewer} />
+            </Suspense>
+          </div>
+        )}
+
+        {/* Wiki content viewer slide-up overlay */}
+        {wikiViewerOpen && !codeViewerOpen && (
+          <div className="absolute bottom-0 left-0 right-0 h-[60vh] bg-surface border-t border-border-subtle animate-slide-up z-20 overflow-hidden">
+            <Suspense fallback={null}>
+              <WikiContentViewer />
             </Suspense>
           </div>
         )}

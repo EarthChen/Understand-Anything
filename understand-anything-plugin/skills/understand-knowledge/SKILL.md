@@ -1,7 +1,7 @@
 ---
 name: understand-knowledge
-description: Analyze a Karpathy-pattern LLM wiki knowledge base and generate an interactive knowledge graph with entity extraction, implicit relationships, and topic clustering. Supports --full to force regeneration and --clean to remove intermediate files after success.
-argument-hint: ["[wiki-directory] [--full] [--clean] [--profile auto|generic|prd-wiki]"]
+description: Analyze a Karpathy-pattern LLM wiki knowledge base and generate an interactive knowledge graph with entity extraction, implicit relationships, and topic clustering. Supports --full to force regeneration, --clean to remove intermediate files after success, and --scan-only to skip LLM analysis.
+argument-hint: ["[wiki-directory] [--full] [--clean] [--scan-only] [--profile auto|generic|prd-wiki]"]
 ---
 
 # /understand-knowledge
@@ -26,6 +26,7 @@ The **PRD wiki profile** detects product requirement knowledge bases with `wiki/
 - `$ARGUMENTS` may contain:
   - `--full` — Force full regeneration: delete `intermediate/` before processing and re-analyze all batches
   - `--clean` — Remove `intermediate/` after successful completion (preserved by default for checkpoint/resume)
+  - `--scan-only` — Skip Phase 3 (LLM analysis) entirely: only run the deterministic parse and merge scripts. Ideal for LLM-compiled wikis (e.g. llm-wiki skill output) where wiki content is already LLM-enriched with explicit links, structured frontmatter, and concept pages — running a second LLM pass would be redundant. The graph will contain all article/requirement/testcase/source/topic nodes and all explicit link edges, but no implicit entities or claims.
   - `--profile auto|generic|prd-wiki` — Select detection profile. `auto` is the default; `prd-wiki` emits `requirement`/`testcase` nodes and provenance for raw PRD and testcase files.
   - A wiki directory path — analyze the given directory instead of the current working directory
 
@@ -60,9 +61,11 @@ The parse script in Phase 1 already performed the deterministic scan. The scan-m
 - `related` edges (from wikilinks)
 - `categorized_under` edges (from index.md sections)
 
-No additional scanning is needed. Proceed to Phase 3.
+No additional scanning is needed. Proceed to Phase 3 (or skip to Phase 4 if `--scan-only`).
 
 ### Phase 3: ANALYZE
+
+**If `--scan-only` is in `$ARGUMENTS`**, skip this entire phase and proceed directly to Phase 4. The deterministic scan from Phase 1 already captures all explicit structure (nodes, links, categories, frontmatter). This is the recommended mode for LLM-compiled wikis where the wiki content itself was already produced by LLM extraction (e.g. the llm-wiki skill).
 
 Dispatch `article-analyzer` subagents to extract implicit knowledge:
 
@@ -156,6 +159,7 @@ Dispatch `article-analyzer` subagents to extract implicit knowledge:
 ## Notes
 
 - The parse script handles ALL deterministic extraction (wikilinks, headings, frontmatter, categories from index.md). The LLM agents only add implicit knowledge that requires inference.
+- For LLM-compiled wikis (built by the llm-wiki skill), `--scan-only` is sufficient because the wiki pages already contain LLM-extracted entities, concepts, relationships, and structured metadata. The deterministic parse captures this structure without a redundant second LLM pass.
 - Categories and taxonomy come from index.md section headings, NOT from filename prefixes. The Karpathy spec is intentionally abstract about naming conventions.
 - The graph uses `kind: "knowledge"` to signal the dashboard to use force-directed layout instead of hierarchical dagre.
 - Source nodes from raw/ are lightweight (filename + size only) — we don't parse PDFs or binary files.
