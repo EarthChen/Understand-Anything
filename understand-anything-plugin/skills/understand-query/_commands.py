@@ -1312,6 +1312,8 @@ def cmd_structure(args: argparse.Namespace) -> Any:
             params["caller"] = args.caller
         if getattr(args, "exact", False):
             params["exact"] = "true"
+        if getattr(args, "argc", None) is not None:
+            params["argc"] = str(args.argc)
         if args.path:
             params["pathPattern"] = args.path
         if args.limit is not None:

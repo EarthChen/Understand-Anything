@@ -177,6 +177,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     struct.add_argument("--callee", help="Search callgraph by callee (who is called)")
     struct.add_argument("--caller", help="Search callgraph by caller (who calls)")
     struct.add_argument("--exact", action="store_true", help="Use exact match instead of substring match (for --callee/--caller)")
+    struct.add_argument("--argc", type=int, help="Filter callgraph results by argument count (requires structured callgraph data)")
 
     source = sub.add_parser("source", help="Source code: full-text search or file read")
     source.add_argument("--service", required=True)
