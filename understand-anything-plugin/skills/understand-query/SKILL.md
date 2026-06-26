@@ -187,6 +187,20 @@ python3 ua_query.py ask --query "家族,Family" --service ultron-relation --dept
 python3 ua_query.py ask --query "PK对战,PKBattle" --platform android --depth full
 ```
 
+**Callgraph examples:**
+
+```bash
+# Callgraph: who calls queryUserExtend (substring match)
+python3 ua_query.py --format md structure --service ultron-composite --callee "queryUserExtend"
+
+# Callgraph: what does getQuickMessage call
+python3 ua_query.py --format md structure --service ultron-composite --caller "getQuickMessage"
+
+# Callgraph: exact match + path filter
+python3 ua_query.py --format md structure --service ultron-composite \
+  --callee "userProfileMoaWrapperService.queryUserExtend" --exact --path "quickmessage"
+```
+
 ---
 
 ## Layered Drill-Down Model
@@ -383,8 +397,8 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "Which classes use OrderDTO?" / "谁用了OrderDTO？" | `structure --service S --param-type OrderDTO` + `--return-type OrderDTO` | Type usage across codebase |
 | **Dependency & Impact** |||
 | "What breaks if I change X?" / "改X会影响什么？" | `impact --service S --symbol X --depth 3 --direction inbound` | Transitive impact analysis |
-| "Who calls X?" / "谁调用了X？" | `callers --service S --symbol X --depth 2` | Inbound call graph |
-| "What does X call?" / "X调用了谁？" | `callees --service S --symbol X --depth 2` | Outbound call graph |
+| "Who calls X?" / "谁调用了X？" | `structure --service S --callee "X"` → parallel across services | AST callgraph search — **preferred over `callers`** for cross-service RPC scenarios |
+| "What does X call?" / "X调用了谁？" | `structure --service S --caller "X"` | AST callgraph search — **preferred over `callees`** for cross-service scenarios |
 | "Which tests for changed files?" / "改了要跑哪些测试？" | `affected --service S --files src/X.java,src/Y.java --depth 2` | Affected test discovery — **batch all changed files in one call** |
 | "Most critical classes?" / "最关键的类？" | `hotspots --service S --type class --limit 20` | Fan-in/fan-out hotspot scoring |
 | "Blast radius of X?" / "X的影响半径？" | `trace --service S --query X` → check `blastRadius` → `impact --service S --symbol X --depth 3` | Quick triage + transitive |

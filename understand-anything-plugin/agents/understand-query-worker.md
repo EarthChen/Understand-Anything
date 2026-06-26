@@ -167,6 +167,21 @@ python $SCRIPT source --service S --file "SettlementMoaServiceImpl.java:2700-285
 
 **Hard rule:** If you have method names (from `structureFallback`, `trace`, `domain flows`, or any other source), always use `structure --symbol "A,B,C" --source`. Only use `source --file` with line ranges when you do NOT know the method name.
 
+### "Find All Callers of Method X" — Dedicated Path
+
+When the user asks "who calls X", "how many places call X", or similar call-site queries:
+
+1. **Identify the wrapper layer first.** If X is an RPC interface (e.g., `UserProfileRemoteService#queryUserExtendDTO`), the actual call sites use a wrapper method (e.g., `UserProfileMoaWrapperService#queryUserExtend`). Search the wrapper, not the raw RPC.
+2. **Use `structure --callee "methodName"`** — this searches the AST-extracted callgraph, returning precise caller→callee pairs with line numbers. This is the **primary tool** for finding call sites.
+3. **Parallelize across services.** When searching multiple services, use parallel Bash calls — never serial loops.
+4. **`source --search` is a fallback only** — use it for config/YAML references or when `structure --callee` returns nothing.
+
+**Anti-patterns (do NOT do these):**
+- Serial `source --search` across services one by one (parallelize!)
+- `structure --q` to find call sites (it matches symbol names, not call relationships)
+- Searching for unrelated symbols that happen to share a name fragment
+- Using `callers` command for cross-service RPC methods (returns 0 in RPC scenarios)
+
 ## Efficiency & Batching Rules
 
 1. **Prefer `ask` for business questions** — one command replaces 5+ individual calls.
