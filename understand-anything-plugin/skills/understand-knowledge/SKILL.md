@@ -117,13 +117,22 @@ Dispatch `article-analyzer` subagents to extract implicit knowledge:
 
 1. Read the assembled-graph.json
 
-2. Run basic validation:
-   - Every edge source/target must reference an existing node
-   - Every node must have: id, type, name, summary, tags, complexity
-   - Remove any edges with dangling references
-   - **Content non-empty check:** verify every node `summary` is a non-empty string (not just present — must contain actual text after trimming whitespace)
-   - **Edge type validity check:** verify every edge `type` is in the allowed set from `understand-anything-plugin/packages/core/src/schema.ts` (`EdgeTypeSchema`): `imports`, `exports`, `contains`, `inherits`, `implements`, `calls`, `subscribes`, `publishes`, `middleware`, `provides_rpc`, `consumes_rpc`, `injects`, `reads_from`, `writes_to`, `transforms`, `validates`, `depends_on`, `tested_by`, `configures`, `related`, `similar_to`, `deploys`, `serves`, `provisions`, `triggers`, `migrates`, `documents`, `routes`, `defines_schema`, `contains_flow`, `flow_step`, `cross_domain`, `cites`, `contradicts`, `builds_on`, `exemplifies`, `categorized_under`, `authored_by`. Remove edges with invalid types.
-   - If any validation check fails: log warnings, continue saving, and record `"status": "degraded"` plus a `"degradedReason"` string in meta.json (see step 4)
+2. Run the validation script bundled with this skill:
+   ```
+   python3 <SKILL_DIR>/validate-knowledge-graph.py <TARGET_DIR>
+   ```
+   The script checks:
+   - Every edge source/target references an existing node
+   - Every node has required fields: id, type, name, summary, tags, complexity
+   - Every node `summary` is a non-empty string
+   - Every edge `type` is in the allowed set (matching `EdgeTypeSchema` from core)
+   - No duplicate node IDs
+   
+   If validation errors are found, re-run with `--fix` to auto-remove invalid edges:
+   ```
+   python3 <SKILL_DIR>/validate-knowledge-graph.py <TARGET_DIR> --fix
+   ```
+   If any validation check fails after fix: log warnings and record `"status": "degraded"` plus a `"degradedReason"` string in meta.json (see step 4)
 
 3. Copy the validated graph to `<TARGET_DIR>/.understand-anything/knowledge-graph.json`
 
