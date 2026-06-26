@@ -32,7 +32,7 @@ This skill is the **orchestrator**. When the human user asks a codebase question
 
 | Platform | Mechanism |
 |----------|-----------|
-| **Claude Code** | `Agent` tool with `subagent_type: "understand-query-worker"` |
+| **Claude Code** | `Agent` tool with `subagent_type: "understand-anything:understand-query-worker"` |
 | **Cursor** | `Task` tool targeting the `understand-query-worker` agent |
 | **Codex / others** | Platform-native sub-agent dispatch of the `understand-query-worker` agent |
 
