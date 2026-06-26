@@ -8,6 +8,13 @@ import {
 } from "../service-resolver"
 import { readSource } from "../../../source-reader"
 import { StructureIndex } from "./structure-index"
+import {
+  getCallgraphMatchMode,
+  matchesCallgraphEntry,
+  projectCallgraphResult,
+  type CallGraphEntry,
+  type CallgraphQuery,
+} from "./structure-callgraph"
 
 interface FunctionEntry {
   name: string
@@ -29,12 +36,6 @@ interface ClassEntry {
   interfaces?: string[]
   superclasses?: string[]
   typedProperties?: Array<{ name: string; type: string }>
-}
-
-interface CallGraphEntry {
-  caller: string
-  callee: string
-  lineNumber: number
 }
 
 interface FileStructure {
@@ -474,6 +475,16 @@ function handleCallgraphSearch(
     return { statusCode: 400, body: { error: "offset must be >= 0" } }
   }
 
+  const argcStr = searchParams.get("argc")
+  const parsedArgc = argcStr === null ? undefined : Number(argcStr)
+  if (
+    argcStr !== null &&
+    (!/^\d+$/.test(argcStr) || !Number.isSafeInteger(parsedArgc))
+  ) {
+    return { statusCode: 400, body: { error: "argc must be >= 0" } }
+  }
+  const argc = parsedArgc
+
   const pathPattern = searchParams.get("pathPattern") || undefined
 
   const data = loadStructuralAnalysis(service)
@@ -484,7 +495,13 @@ function handleCallgraphSearch(
     }
   }
 
-  const results: Array<{ filePath: string; caller: string; callee: string; lineNumber: number }> = []
+  const query: CallgraphQuery = {
+    exact,
+    ...(callee ? { callee } : {}),
+    ...(caller ? { caller } : {}),
+    ...(argc !== undefined ? { argc } : {}),
+  }
+  const results: Array<ReturnType<typeof projectCallgraphResult>> = []
 
   for (const [filePath, fileData] of Object.entries(data)) {
     if (pathPattern && !filePath.toLowerCase().includes(pathPattern.toLowerCase())) {
@@ -494,19 +511,8 @@ function handleCallgraphSearch(
     if (!Array.isArray(callGraph)) continue
 
     for (const entry of callGraph) {
-      if (callee) {
-        const match = exact
-          ? entry.callee === callee
-          : entry.callee.toLowerCase().includes(callee.toLowerCase())
-        if (!match) continue
-      }
-      if (caller) {
-        const match = exact
-          ? entry.caller === caller
-          : entry.caller.toLowerCase().includes(caller.toLowerCase())
-        if (!match) continue
-      }
-      results.push({ filePath, caller: entry.caller, callee: entry.callee, lineNumber: entry.lineNumber })
+      if (!matchesCallgraphEntry(entry, query)) continue
+      results.push(projectCallgraphResult(filePath, entry))
     }
   }
 
@@ -521,7 +527,13 @@ function handleCallgraphSearch(
       limit,
       offset,
       hasMore: offset + limit < total,
-      query: { callee: callee ?? null, caller: caller ?? null, exact },
+      query: {
+        callee: callee ?? null,
+        caller: caller ?? null,
+        exact,
+        argc: argc ?? null,
+        matchMode: getCallgraphMatchMode(query),
+      },
     },
   }
 }

@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach } from "vitest"
+import fs from "fs"
+import os from "os"
+import path from "path"
+import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { handleStructureRequest, clearStructureIndexCache } from "../structure"
 import type { ApiRequest, ApiContext } from "../../types"
 
@@ -15,10 +18,66 @@ function makeCallgraphRequest(params: Record<string, string>): ApiRequest {
 }
 
 const mockCtx = {} as ApiContext
+const originalCwd = process.cwd()
+
+let tempDir: string
+
+function seedStructuralAnalysis(service: string): void {
+  const extractionDir = path.join(
+    tempDir,
+    service,
+    ".understand-anything",
+    "intermediate",
+    "extraction",
+  )
+  fs.mkdirSync(extractionDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(extractionDir, "structural-analysis.json"),
+    JSON.stringify({
+      "src/UserService.java": {
+        language: "java",
+        totalLines: 100,
+        functions: [],
+        classes: [],
+        imports: [],
+        exports: [],
+        callGraph: [
+          {
+            caller: "processOrder",
+            callerOwner: "OrderService",
+            callerQualifiedName: "OrderService#processOrder",
+            callee: "userRepository.getUser",
+            receiver: "userRepository",
+            methodName: "getUser",
+            argumentCount: 1,
+            lineNumber: 42,
+            columnNumber: 12,
+          },
+          {
+            caller: "processOrder",
+            callee: "userRepository.getUser",
+            receiver: "userRepository",
+            methodName: "getUser",
+            argumentCount: 2,
+            lineNumber: 43,
+          },
+        ],
+      },
+    }),
+  )
+}
 
 describe("structure callgraph handler", () => {
   beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "structure-callgraph-"))
+    process.chdir(tempDir)
+    seedStructuralAnalysis("test-service")
     clearStructureIndexCache()
+  })
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+    fs.rmSync(tempDir, { recursive: true, force: true })
   })
 
   it("returns 400 when neither callee nor caller is provided", async () => {
@@ -74,6 +133,42 @@ describe("structure callgraph handler", () => {
     const req = makeCallgraphRequest({ service: "test-service", callee: "getUser", offset: "-1" })
     const res = await handleStructureRequest(req, mockCtx)
     expect(res?.statusCode).toBe(400)
+  })
+
+  it("returns 400 for invalid argc", async () => {
+    const req = makeCallgraphRequest({ service: "test-service", callee: "getUser", argc: "-1" })
+    const res = await handleStructureRequest(req, mockCtx)
+    expect(res?.statusCode).toBe(400)
+  })
+
+  it("returns 400 for empty argc", async () => {
+    const req = makeCallgraphRequest({ service: "test-service", callee: "getUser", argc: "" })
+    const res = await handleStructureRequest(req, mockCtx)
+    expect(res?.statusCode).toBe(400)
+  })
+
+  it("returns match mode and argc-filtered projected results", async () => {
+    const req = makeCallgraphRequest({
+      service: "test-service",
+      callee: "getUser",
+      exact: "true",
+      argc: "1",
+    })
+    const res = await handleStructureRequest(req, mockCtx)
+
+    expect(res?.statusCode).toBe(200)
+    const body = res!.body as {
+      query: { argc: number | null; matchMode: string }
+      total: number
+      results: Array<{ methodName?: string; argumentCount?: number; columnNumber?: number }>
+    }
+    expect(body.query).toMatchObject({ argc: 1, matchMode: "exact-method" })
+    expect(body.total).toBe(1)
+    expect(body.results[0]).toMatchObject({
+      methodName: "getUser",
+      argumentCount: 1,
+      columnNumber: 12,
+    })
   })
 
   it("ignores requests for other paths", async () => {
