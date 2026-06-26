@@ -488,7 +488,7 @@ class MergeFixtureTests(unittest.TestCase):
         self.assertEqual(graph["kind"], "knowledge")
         self.assertEqual(
             graph["project"]["provenance"]["completedStages"],
-            ["scan", "batch", "extract", "analyze", "merge", "validate"],
+            ["scan", "merge", "validate"],
         )
         self.assertFalse(graph["project"]["provenance"]["degraded"])
 
