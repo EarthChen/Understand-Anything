@@ -57,13 +57,16 @@ function findLastCallSeparator(
 
 export function parseCallQuery(input: string): ParsedCallQuery {
   const value = input.trim()
+  const firstHashIndex = value.indexOf("#")
   const hashIndex = value.lastIndexOf("#")
-  if (hashIndex >= 0) {
+  if (hashIndex >= 0 && firstHashIndex === hashIndex) {
     const owner = value.slice(0, hashIndex)
     const methodName = value.slice(hashIndex + 1)
     const ownerParts = owner.split(".").filter(Boolean)
     const ownerClass = ownerParts[ownerParts.length - 1] ?? owner
-    return { kind: "ownerMethod", ownerClass, methodName }
+    if (owner && methodName && owner.endsWith(ownerClass)) {
+      return { kind: "ownerMethod", ownerClass, methodName }
+    }
   }
 
   const receiverSeparator = findLastCallSeparator(value, [".", "::", "->"])

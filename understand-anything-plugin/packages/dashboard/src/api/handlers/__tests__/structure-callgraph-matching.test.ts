@@ -85,6 +85,15 @@ describe("callgraph exact matching", () => {
     )).toBe(true)
   })
 
+  it("rejects malformed owner-method callee queries", () => {
+    const entry = { caller: "x", callee: "example.queryUserExtend", lineNumber: 1 }
+
+    expect(matchesCallgraphEntry(entry, { callee: "#queryUserExtend", exact: true })).toBe(false)
+    expect(matchesCallgraphEntry(entry, { callee: "UserProfileMoaWrapperService#", exact: true })).toBe(false)
+    expect(matchesCallgraphEntry(entry, { callee: "com.example.#queryUserExtend", exact: true })).toBe(false)
+    expect(matchesCallgraphEntry(entry, { callee: "Foo#bar#baz", exact: true })).toBe(false)
+  })
+
   it("matches caller owner only when structured callerQualifiedName exists", () => {
     expect(matchesCallgraphEntry(
       {
