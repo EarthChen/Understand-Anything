@@ -1298,6 +1298,13 @@ def cmd_structure(args: argparse.Namespace) -> Any:
     if args.files:
         return _helpers.fetch_json(args.server, "/api/structure/files", {"service": args.service})
     if getattr(args, "callee", None) or getattr(args, "caller", None):
+        conflicts = [
+            f"--{k.replace('_', '-')}"
+            for k in ("q", "annotation", "param_type", "return_type", "interface", "property_type", "section_key", "section_value")
+            if getattr(args, k, None)
+        ]
+        if conflicts:
+            raise SystemExit(f"--callee/--caller cannot be combined with: {', '.join(conflicts)}")
         params = {"service": args.service}
         if args.callee:
             params["callee"] = args.callee
