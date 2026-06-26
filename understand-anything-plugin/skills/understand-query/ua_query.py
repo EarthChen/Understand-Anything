@@ -174,6 +174,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     struct.add_argument("--implementors", help="Find all classes implementing an interface")
     struct.add_argument("--symbol", help="Search for a specific symbol (function or class) across all files")
     struct.add_argument("--source", action="store_true", help="Include source code when using --symbol")
+    struct.add_argument("--callee", help="Search callgraph by callee (who is called)")
+    struct.add_argument("--caller", help="Search callgraph by caller (who calls)")
+    struct.add_argument("--exact", action="store_true", help="Use exact match instead of substring match (for --callee/--caller)")
 
     source = sub.add_parser("source", help="Source code: full-text search or file read")
     source.add_argument("--service", required=True)
