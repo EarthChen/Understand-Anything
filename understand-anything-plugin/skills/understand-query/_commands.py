@@ -1307,8 +1307,7 @@ def cmd_structure(args: argparse.Namespace) -> Any:
             params["exact"] = "true"
         if args.path:
             params["pathPattern"] = args.path
-        if args.limit is not None:
-            params["limit"] = str(args.limit)
+        params["limit"] = str(args.limit if args.limit is not None else 20)
         if getattr(args, "offset", 0) > 0:
             params["offset"] = str(args.offset)
         return _helpers.fetch_json(args.server, "/api/structure/callgraph", params)
