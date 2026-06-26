@@ -183,6 +183,38 @@ def _format_markdown(data: Any) -> str:
             lines.append("")
         return "\n".join(lines)
 
+    if isinstance(data, dict) and "results" in data and "query" in data and isinstance(data["query"], dict) and ("callee" in data["query"] or "caller" in data["query"]):
+        query = data["query"]
+        callee_q = query.get("callee") or ""
+        caller_q = query.get("caller") or ""
+        exact = query.get("exact", False)
+        mode = "exact" if exact else "substring"
+        if callee_q and caller_q:
+            title = f'callee="{callee_q}" AND caller="{caller_q}" ({mode})'
+        elif callee_q:
+            title = f'callee="{callee_q}" ({mode})'
+        else:
+            title = f'caller="{caller_q}" ({mode})'
+        lines = [f"# Callgraph Search: {title}", ""]
+        results = data.get("results", [])
+        if results:
+            lines.append("| File | Caller | Callee | Line |")
+            lines.append("|------|--------|--------|------|")
+            for r in results:
+                fp = r.get("filePath", "?")
+                # Shorten file path to last 2 segments for readability
+                parts = fp.replace("\\", "/").split("/")
+                short = "/".join(parts[-2:]) if len(parts) > 2 else fp
+                lines.append(f"| {short} | {r.get('caller', '?')} | {r.get('callee', '?')} | {r.get('lineNumber', '?')} |")
+            lines.append("")
+        else:
+            lines.append("No callgraph matches found.")
+            lines.append("")
+        lines.append(f"Total: {data.get('total', 0)} results")
+        if data.get("hasMore"):
+            lines.append(f"(showing {len(results)} of {data['total']}, use --offset to paginate)")
+        return "\n".join(lines)
+
     if isinstance(data, dict) and "domains" in data and not data.get("question"):
         lines = ["# Business Domains", ""]
         for d in data["domains"]:

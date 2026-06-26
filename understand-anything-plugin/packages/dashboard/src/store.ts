@@ -593,7 +593,7 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
         const wikiResults: WikiSearchResult[] = [
           ...domainData.results,
           ...wikiData.results,
-        ].map((r) => ({ id: r.id, name: r.name, type: r.type, score: r.score, service: r.service, domain: r.domain, summary: r.summary ?? "" }));
+        ].map((r) => ({ id: r.id, name: r.name, type: r.type as WikiSearchResult["type"], score: r.score, service: r.service, domain: r.domain, summary: r.summary ?? "" }));
         set({ serverKgResults, wikiSearchResults: wikiResults });
       })
       .catch(() => {});

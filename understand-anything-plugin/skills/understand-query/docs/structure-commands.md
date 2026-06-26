@@ -31,6 +31,9 @@ Complements the KG (which has names/summaries but not full type info).
 | `--section-value TEXT` | string | Filter by section content substring |
 | `--path PATTERN` | string | Filter by file path substring |
 | `--symbol NAME` | string | Cross-file symbol search (post-filter by name) |
+| `--callee` | string | Search callgraph by callee (who is called) |
+| `--caller` | string | Search callgraph by caller (who calls) |
+| `--exact` | flag | Use exact match for `--callee`/`--caller` (default: off) |
 | `--limit N` | int | Max results (default: 50) |
 | `--offset N` | int | Pagination offset (default: 0) |
 

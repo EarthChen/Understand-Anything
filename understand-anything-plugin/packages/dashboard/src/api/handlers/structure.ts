@@ -31,6 +31,12 @@ interface ClassEntry {
   typedProperties?: Array<{ name: string; type: string }>
 }
 
+interface CallGraphEntry {
+  caller: string
+  callee: string
+  lineNumber: number
+}
+
 interface FileStructure {
   language: string
   fileCategory?: string
@@ -39,6 +45,7 @@ interface FileStructure {
   classes: ClassEntry[]
   imports: Array<{ name: string; line?: number }>
   exports: Array<{ name: string; line?: number; isDefault?: boolean }>
+  callGraph?: CallGraphEntry[]
 }
 
 type StructuralAnalysis = Record<string, FileStructure>
@@ -440,6 +447,85 @@ function handleSymbolSource(
   }
 }
 
+function handleCallgraphSearch(
+  service: string,
+  searchParams: URLSearchParams,
+): ApiResponse {
+  const callee = searchParams.get("callee")?.trim() || undefined
+  const caller = searchParams.get("caller")?.trim() || undefined
+  const exact = searchParams.get("exact") === "true"
+
+  if (!callee && !caller) {
+    return {
+      statusCode: 400,
+      body: { error: "At least one of 'callee' or 'caller' is required" },
+    }
+  }
+
+  const limitStr = searchParams.get("limit")
+  const limit = limitStr === null ? 50 : Number.parseInt(limitStr, 10)
+  if (!Number.isFinite(limit) || limit < 1 || limit > 500) {
+    return { statusCode: 400, body: { error: "limit must be between 1 and 500" } }
+  }
+
+  const offsetStr = searchParams.get("offset")
+  const offset = offsetStr === null ? 0 : Number.parseInt(offsetStr, 10)
+  if (!Number.isFinite(offset) || offset < 0) {
+    return { statusCode: 400, body: { error: "offset must be >= 0" } }
+  }
+
+  const pathPattern = searchParams.get("pathPattern") || undefined
+
+  const data = loadStructuralAnalysis(service)
+  if (!data) {
+    return {
+      statusCode: 404,
+      body: { error: `structural-analysis.json not found for service "${service}"` },
+    }
+  }
+
+  const results: Array<{ filePath: string; caller: string; callee: string; lineNumber: number }> = []
+
+  for (const [filePath, fileData] of Object.entries(data)) {
+    if (pathPattern && !filePath.toLowerCase().includes(pathPattern.toLowerCase())) {
+      continue
+    }
+    const callGraph = fileData.callGraph
+    if (!Array.isArray(callGraph)) continue
+
+    for (const entry of callGraph) {
+      if (callee) {
+        const match = exact
+          ? entry.callee === callee
+          : entry.callee.toLowerCase().includes(callee.toLowerCase())
+        if (!match) continue
+      }
+      if (caller) {
+        const match = exact
+          ? entry.caller === caller
+          : entry.caller.toLowerCase().includes(caller.toLowerCase())
+        if (!match) continue
+      }
+      results.push({ filePath, caller: entry.caller, callee: entry.callee, lineNumber: entry.lineNumber })
+    }
+  }
+
+  const total = results.length
+  const paged = results.slice(offset, offset + limit)
+
+  return {
+    statusCode: 200,
+    body: {
+      results: paged,
+      total,
+      limit,
+      offset,
+      hasMore: offset + limit < total,
+      query: { callee: callee ?? null, caller: caller ?? null, exact },
+    },
+  }
+}
+
 export async function handleStructureRequest(
   req: ApiRequest,
   _ctx: ApiContext,
@@ -516,6 +602,13 @@ export async function handleStructureRequest(
     const err = validateServiceNameRequired(service)
     if (err) return err
     return handleImplementors(service, iface)
+  }
+
+  if (pathname === "/api/structure/callgraph") {
+    const service = searchParams.get("service")
+    const err = validateServiceNameRequired(service)
+    if (err) return err
+    return handleCallgraphSearch(service!, searchParams)
   }
 
   return null

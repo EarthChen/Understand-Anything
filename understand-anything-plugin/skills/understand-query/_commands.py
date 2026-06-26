@@ -1297,6 +1297,28 @@ def cmd_structure(args: argparse.Namespace) -> Any:
         return _helpers.fetch_json(args.server, "/api/structure/implementors", params)
     if args.files:
         return _helpers.fetch_json(args.server, "/api/structure/files", {"service": args.service})
+    if getattr(args, "callee", None) or getattr(args, "caller", None):
+        conflicts = [
+            f"--{k.replace('_', '-')}"
+            for k in ("q", "annotation", "param_type", "return_type", "interface", "property_type", "section_key", "section_value")
+            if getattr(args, k, None)
+        ]
+        if conflicts:
+            raise SystemExit(f"--callee/--caller cannot be combined with: {', '.join(conflicts)}")
+        params = {"service": args.service}
+        if args.callee:
+            params["callee"] = args.callee
+        if args.caller:
+            params["caller"] = args.caller
+        if getattr(args, "exact", False):
+            params["exact"] = "true"
+        if args.path:
+            params["pathPattern"] = args.path
+        if args.limit is not None:
+            params["limit"] = str(args.limit)
+        if getattr(args, "offset", 0) > 0:
+            params["offset"] = str(args.offset)
+        return _helpers.fetch_json(args.server, "/api/structure/callgraph", params)
     if args.file:
         params = {"service": args.service, "path": args.file}
         result = _helpers.fetch_json(args.server, "/api/structure/file", params)

@@ -264,8 +264,6 @@ function Dashboard() {
     }
   }, [activeService, loadServiceGraph]);
 
-  const systemGraph = useDashboardStore((s) => s.systemGraph);
-
   return (
     <I18nProvider language={outputLanguage ?? "en"}>
       <ThemeProvider metaTheme={metaTheme}>
