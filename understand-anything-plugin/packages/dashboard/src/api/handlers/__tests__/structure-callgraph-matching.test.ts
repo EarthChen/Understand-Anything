@@ -42,10 +42,39 @@ describe("callgraph exact matching", () => {
     )).toBe(false)
   })
 
+  it("uses the rightmost separator when extracting fallback method names", () => {
+    expect(matchesCallgraphEntry(
+      { caller: "getQuickMessage", callee: "UserProfileMoaWrapperService#service.queryUserExtend", lineNumber: 318 },
+      { callee: "queryUserExtend", exact: true },
+    )).toBe(true)
+  })
+
   it("matches receiver.method exactly", () => {
     expect(matchesCallgraphEntry(
       { caller: "getQuickMessage", callee: "userProfileMoaWrapperService.queryUserExtend", lineNumber: 318 },
       { callee: "userProfileMoaWrapperService.queryUserExtend", exact: true },
+    )).toBe(true)
+  })
+
+  it("matches arrow receiver calls by method name and receiver.method exactly", () => {
+    expect(matchesCallgraphEntry(
+      { caller: "getQuickMessage", callee: "service->queryUserExtend", lineNumber: 318 },
+      { callee: "queryUserExtend", exact: true },
+    )).toBe(true)
+    expect(matchesCallgraphEntry(
+      { caller: "getQuickMessage", callee: "service->queryUserExtend", lineNumber: 318 },
+      { callee: "service->queryUserExtend", exact: true },
+    )).toBe(true)
+  })
+
+  it("matches double-colon receiver calls by method name and receiver.method exactly", () => {
+    expect(matchesCallgraphEntry(
+      { caller: "getQuickMessage", callee: "Service::queryUserExtend", lineNumber: 318 },
+      { callee: "queryUserExtend", exact: true },
+    )).toBe(true)
+    expect(matchesCallgraphEntry(
+      { caller: "getQuickMessage", callee: "Service::queryUserExtend", lineNumber: 318 },
+      { callee: "Service::queryUserExtend", exact: true },
     )).toBe(true)
   })
 
@@ -117,6 +146,19 @@ describe("callgraph result projection", () => {
       callText: "repo.save(order)",
       lineNumber: 42,
       columnNumber: 12,
+    })
+  })
+
+  it("omits optional keys when structured optional fields are absent", () => {
+    expect(projectCallgraphResult("src/OrderService.java", {
+      caller: "process",
+      callee: "repo.save",
+      lineNumber: 42,
+    })).toEqual({
+      filePath: "src/OrderService.java",
+      caller: "process",
+      callee: "repo.save",
+      lineNumber: 42,
     })
   })
 })

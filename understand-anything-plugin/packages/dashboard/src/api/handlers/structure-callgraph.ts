@@ -35,6 +35,26 @@ export interface CallgraphResult extends CallGraphEntry {
   filePath: string
 }
 
+const CALL_SEPARATORS = ["#", ".", "::", "->"] as const
+
+function findLastCallSeparator(
+  value: string,
+  separators: readonly string[] = CALL_SEPARATORS,
+): { index: number; separator: string } | undefined {
+  let match: { index: number; separator: string } | undefined
+  for (const separator of separators) {
+    const index = value.lastIndexOf(separator)
+    if (
+      index > 0 &&
+      index < value.length - separator.length &&
+      (match === undefined || index > match.index)
+    ) {
+      match = { index, separator }
+    }
+  }
+  return match
+}
+
 export function parseCallQuery(input: string): ParsedCallQuery {
   const value = input.trim()
   const hashIndex = value.lastIndexOf("#")
@@ -46,12 +66,12 @@ export function parseCallQuery(input: string): ParsedCallQuery {
     return { kind: "ownerMethod", ownerClass, methodName }
   }
 
-  const dotIndex = value.lastIndexOf(".")
-  if (dotIndex > 0 && dotIndex < value.length - 1) {
+  const receiverSeparator = findLastCallSeparator(value, [".", "::", "->"])
+  if (receiverSeparator) {
     return {
       kind: "receiverMethod",
-      receiver: value.slice(0, dotIndex),
-      methodName: value.slice(dotIndex + 1),
+      receiver: value.slice(0, receiverSeparator.index),
+      methodName: value.slice(receiverSeparator.index + receiverSeparator.separator.length),
     }
   }
 
@@ -65,19 +85,13 @@ function lowerCamel(name: string): string {
 
 function terminalMethod(callee: string): string {
   const trimmed = callee.trim()
-  for (const separator of ["#", ".", "::", "->"]) {
-    const index = trimmed.lastIndexOf(separator)
-    if (index >= 0 && index < trimmed.length - separator.length) {
-      return trimmed.slice(index + separator.length)
-    }
-  }
-  return trimmed
+  const separator = findLastCallSeparator(trimmed)
+  return separator ? trimmed.slice(separator.index + separator.separator.length) : trimmed
 }
 
 function fallbackReceiver(callee: string): string | undefined {
-  const index = callee.lastIndexOf(".")
-  if (index <= 0) return undefined
-  return callee.slice(0, index)
+  const separator = findLastCallSeparator(callee)
+  return separator ? callee.slice(0, separator.index) : undefined
 }
 
 function entryMethodName(entry: CallGraphEntry): string {
