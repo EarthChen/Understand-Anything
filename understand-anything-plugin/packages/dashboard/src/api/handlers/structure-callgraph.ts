@@ -58,12 +58,12 @@ export function parseCallQuery(input: string): ParsedCallQuery {
   return { kind: "method", methodName: value }
 }
 
-export function lowerCamel(name: string): string {
+function lowerCamel(name: string): string {
   if (!name) return name
   return name[0].toLowerCase() + name.slice(1)
 }
 
-export function terminalMethod(callee: string): string {
+function terminalMethod(callee: string): string {
   const trimmed = callee.trim()
   for (const separator of ["#", ".", "::", "->"]) {
     const index = trimmed.lastIndexOf(separator)
