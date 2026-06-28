@@ -370,6 +370,62 @@ class Foo {}
       parser.delete();
     });
 
+    it("resolves field, parameter, local, and explicit self receivers", () => {
+      const { tree, parser, root } = parse(`class QuickMessageService {
+    private let fieldService: UserProfileMoaWrapperService
+
+    func getQuickMessage(parameterService: UserProfileMoaWrapperService) {
+        fieldService.queryUserExtend(1)
+        parameterService.queryUserExtend()
+        let fieldService: OtherService = OtherService()
+        fieldService.queryUserExtend()
+        self.fieldService.queryUserExtend()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const queryCalls = result.filter(
+        (entry) => entry.methodName === "queryUserExtend",
+      );
+
+      expect(queryCalls).toHaveLength(4);
+      expect(queryCalls[0]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#queryUserExtend",
+        resolutionKind: "field",
+      });
+      expect(queryCalls[1]).toMatchObject({
+        receiver: "parameterService",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#queryUserExtend",
+        resolutionKind: "parameter",
+      });
+      expect(queryCalls[2]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "OtherService",
+        receiverQualifiedType: "OtherService",
+        calleeOwner: "OtherService",
+        calleeQualifiedName: "OtherService#queryUserExtend",
+        resolutionKind: "local",
+      });
+      expect(queryCalls[3]).toMatchObject({
+        receiver: "self.fieldService",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#queryUserExtend",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
     it("keeps nested class calls under their own owner and leaves top-level callers unowned", () => {
       const { tree, parser, root } = parse(`func topLevel() {
     work()

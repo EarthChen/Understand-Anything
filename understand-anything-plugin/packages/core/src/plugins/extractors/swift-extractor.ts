@@ -1,5 +1,11 @@
 import type { StructuralAnalysis, CallGraphEntry, PropertyInfo } from "../../types.js";
 import type { LanguageExtractor, TreeSitterNode } from "./types.js";
+import {
+  buildQualifiedMethodName,
+  simpleTypeName,
+  TypeScopeStack,
+  type TypeBinding,
+} from "./callgraph-resolution.js";
 import { findChild, findChildren } from "./base-extractor.js";
 
 function extractFunctionParams(node: TreeSitterNode): string[] {
@@ -139,10 +145,14 @@ export class SwiftExtractor implements LanguageExtractor {
     const entries: CallGraphEntry[] = [];
     const functionStack: string[] = [];
     const ownerStack: string[] = [];
+    const typeScopes = new TypeScopeStack();
+    const fieldScopes: Array<Map<string, TypeBinding>> = [];
 
     const walkForCalls = (node: TreeSitterNode) => {
       let pushedName = false;
       let pushedOwner = false;
+      let pushedFunctionScope = false;
+      let pushedOwnerScope = false;
       const savedFunctionStack = functionStack.slice();
       const isolatesFunctionScope = this.isOwnerDeclaration(node);
 
@@ -156,6 +166,11 @@ export class SwiftExtractor implements LanguageExtractor {
           ownerStack.push(ownerName);
           pushedOwner = true;
         }
+        typeScopes.pushScope();
+        pushedOwnerScope = true;
+        const fields = new Map<string, TypeBinding>();
+        fieldScopes.push(fields);
+        this.bindOwnerFields(node, typeScopes, fields);
       }
 
       if (node.type === "function_declaration") {
@@ -163,6 +178,9 @@ export class SwiftExtractor implements LanguageExtractor {
         if (nameNode) {
           functionStack.push(nameNode.text);
           pushedName = true;
+          typeScopes.pushScope();
+          pushedFunctionScope = true;
+          this.bindFunctionParameters(node, typeScopes);
         }
       }
 
@@ -184,8 +202,20 @@ export class SwiftExtractor implements LanguageExtractor {
             callText: node.text,
             ...(callerOwner ? { callerOwner } : {}),
             ...(callerOwner ? { callerQualifiedName: `${callerOwner}#${caller}` } : {}),
+            ...(receiver
+              ? this.resolveReceiver(receiver, methodName, typeScopes, fieldScopes)
+              : {}),
           });
         }
+      }
+
+      if (node.type === "property_declaration" && functionStack.length > 0) {
+        for (let i = 0; i < node.childCount; i++) {
+          const child = node.child(i);
+          if (child) walkForCalls(child);
+        }
+        this.bindTypedProperty(node, "local", typeScopes);
+        return;
       }
 
       for (let i = 0; i < node.childCount; i++) {
@@ -193,11 +223,18 @@ export class SwiftExtractor implements LanguageExtractor {
         if (child) walkForCalls(child);
       }
 
+      if (pushedFunctionScope) {
+        typeScopes.popScope();
+      }
       if (pushedName) {
         functionStack.pop();
       }
       if (pushedOwner) {
         ownerStack.pop();
+      }
+      if (pushedOwnerScope) {
+        fieldScopes.pop();
+        typeScopes.popScope();
       }
       if (isolatesFunctionScope) {
         functionStack.length = 0;
@@ -207,6 +244,105 @@ export class SwiftExtractor implements LanguageExtractor {
 
     walkForCalls(rootNode);
     return entries;
+  }
+
+  private bindOwnerFields(
+    node: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    fields: Map<string, TypeBinding>,
+  ): void {
+    const body = node.childForFieldName("body")
+      ?? findChild(node, "class_body")
+      ?? findChild(node, "enum_class_body");
+    if (!body) return;
+
+    for (let i = 0; i < body.childCount; i++) {
+      const child = body.child(i);
+      if (child?.type === "property_declaration") {
+        this.bindTypedProperty(child, "field", typeScopes, fields);
+      }
+    }
+  }
+
+  private bindFunctionParameters(
+    node: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+  ): void {
+    for (const param of findChildren(node, "parameter")) {
+      const nameNode = findChild(param, "simple_identifier");
+      const typeNode = findChild(param, "user_type")
+        ?? findChild(param, "array_type")
+        ?? findChild(param, "optional_type")
+        ?? findChild(param, "tuple_type");
+      if (!nameNode || !typeNode) continue;
+
+      this.bindNamedType(nameNode.text, typeNode.text, "parameter", typeScopes);
+    }
+  }
+
+  private bindTypedProperty(
+    node: TreeSitterNode,
+    kind: TypeBinding["kind"],
+    typeScopes: TypeScopeStack,
+    bindings?: Map<string, TypeBinding>,
+  ): void {
+    const name = extractPropertyName(node);
+    const type = extractPropertyType(node);
+    if (!name || !type) return;
+
+    const binding = this.bindNamedType(name, type, kind, typeScopes);
+    bindings?.set(name, binding);
+  }
+
+  private bindNamedType(
+    name: string,
+    type: string,
+    kind: TypeBinding["kind"],
+    typeScopes: TypeScopeStack,
+  ): TypeBinding {
+    const strippedType = simpleTypeName(type);
+    const binding: TypeBinding = {
+      type: strippedType,
+      qualifiedType: strippedType,
+      kind,
+    };
+    typeScopes.set(name, binding);
+    return binding;
+  }
+
+  private resolveReceiver(
+    receiver: string,
+    methodName: string,
+    typeScopes: TypeScopeStack,
+    fieldScopes: Array<Map<string, TypeBinding>>,
+  ): Partial<CallGraphEntry> {
+    if (receiver.startsWith("self.")) {
+      const fieldName = receiver.slice("self.".length).split(".")[0];
+      const binding = fieldScopes[fieldScopes.length - 1]?.get(fieldName);
+      return binding
+        ? this.buildResolvedReceiver(binding, methodName)
+        : { resolutionKind: "unresolved" };
+    }
+
+    const binding = typeScopes.resolve(receiver);
+    return binding
+      ? this.buildResolvedReceiver(binding, methodName)
+      : { resolutionKind: "unresolved" };
+  }
+
+  private buildResolvedReceiver(
+    binding: TypeBinding,
+    methodName: string,
+  ): Partial<CallGraphEntry> {
+    return {
+      receiverType: binding.type,
+      ...(binding.qualifiedType ? { receiverQualifiedType: binding.qualifiedType } : {}),
+      calleeOwner: binding.type,
+      ...(binding.qualifiedType
+        ? { calleeQualifiedName: buildQualifiedMethodName(binding.qualifiedType, methodName) }
+        : {}),
+      resolutionKind: binding.kind,
+    };
   }
 
   private extractCallExpressionName(node: TreeSitterNode): string | null {

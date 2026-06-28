@@ -344,6 +344,56 @@ describe("ObjcExtractor", () => {
       tree.delete();
       parser.delete();
     });
+
+    it("resolves field, parameter, and local receivers", () => {
+      const { tree, parser, root } = parse(`@interface QuickMessageService
+@property(nonatomic, strong) UserProfileMoaWrapperService *fieldService;
+@end
+
+@implementation QuickMessageService
+- (void)getQuickMessage:(UserProfileMoaWrapperService *)parameterService {
+    [self.fieldService queryUserExtend:1];
+    [parameterService queryUserExtend];
+    OtherService *fieldService = [OtherService new];
+    [fieldService queryUserExtend];
+}
+@end
+`);
+      const result = extractor.extractCallGraph(root);
+      const queryCalls = result.filter(
+        (entry) => entry.methodName === "queryUserExtend:"
+          || entry.methodName === "queryUserExtend",
+      );
+
+      expect(queryCalls).toHaveLength(3);
+      expect(queryCalls[0]).toMatchObject({
+        receiver: "self.fieldService",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#queryUserExtend:",
+        resolutionKind: "field",
+      });
+      expect(queryCalls[1]).toMatchObject({
+        receiver: "parameterService",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#queryUserExtend",
+        resolutionKind: "parameter",
+      });
+      expect(queryCalls[2]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "OtherService",
+        receiverQualifiedType: "OtherService",
+        calleeOwner: "OtherService",
+        calleeQualifiedName: "OtherService#queryUserExtend",
+        resolutionKind: "local",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
   });
 
   describe("comprehensive Objective-C file", () => {
