@@ -844,6 +844,44 @@ public class ExplicitFieldService {
         tree.delete();
         parser.delete();
       });
+
+      it("resolves explicit this fields before shadowing locals", () => {
+        const { tree, parser, root } = parse(`package com.example;
+
+public class ExplicitLocalFieldService {
+    private FieldService service;
+
+    public void run() {
+        OtherService service = new OtherService();
+        service.call();
+        this.service.call();
+    }
+}
+`);
+        const result = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "call");
+
+        expect(result).toEqual([
+          expect.objectContaining({
+            receiver: "service",
+            receiverType: "OtherService",
+            receiverQualifiedType: "com.example.OtherService",
+            calleeOwner: "OtherService",
+            calleeQualifiedName: "com.example.OtherService#call",
+            resolutionKind: "local",
+          }),
+          expect.objectContaining({
+            receiver: "this.service",
+            receiverType: "FieldService",
+            receiverQualifiedType: "com.example.FieldService",
+            calleeOwner: "FieldService",
+            calleeQualifiedName: "com.example.FieldService#call",
+            resolutionKind: "field",
+          }),
+        ]);
+
+        tree.delete();
+        parser.delete();
+      });
     });
   });
 
