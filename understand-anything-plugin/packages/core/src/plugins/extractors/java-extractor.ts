@@ -375,8 +375,25 @@ export class JavaExtractor implements LanguageExtractor {
         pushedTypeScope = true;
       }
 
+      if (
+        node.type === "for_statement" ||
+        node.type === "enhanced_for_statement" ||
+        node.type === "catch_clause"
+      ) {
+        typeScopes.pushScope();
+        pushedTypeScope = true;
+      }
+
       if (node.type === "local_variable_declaration") {
         this.bindLocalVariables(node, typeScopes, typeContext);
+      }
+
+      if (node.type === "enhanced_for_statement") {
+        this.bindEnhancedForVariable(node, typeScopes, typeContext);
+      }
+
+      if (node.type === "catch_clause") {
+        this.bindCatchParameter(node, typeScopes, typeContext);
       }
 
       // Extract method invocations: e.g. fetchFromDb(limit), System.out.println(msg)
@@ -392,6 +409,7 @@ export class JavaExtractor implements LanguageExtractor {
               ? this.resolveReceiver(
                 objectNode.text,
                 nameNode?.text,
+                objectNode,
                 typeScopes,
                 fieldScopes,
                 typeContext,
@@ -655,6 +673,41 @@ export class JavaExtractor implements LanguageExtractor {
     this.bindTypedDeclarators(node, "local", typeScopes, typeContext);
   }
 
+  private bindEnhancedForVariable(
+    node: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    typeContext: {
+      packageName?: string;
+      imports: Map<string, string>;
+      knownTypes: Map<string, string>;
+    },
+  ): void {
+    const typeNode = node.childForFieldName("type");
+    const nameNode = node.childForFieldName("name");
+    if (!typeNode || !nameNode) return;
+
+    this.bindNamedType(nameNode.text, typeNode.text, "local", typeScopes, typeContext);
+  }
+
+  private bindCatchParameter(
+    node: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    typeContext: {
+      packageName?: string;
+      imports: Map<string, string>;
+      knownTypes: Map<string, string>;
+    },
+  ): void {
+    const parameter = findChild(node, "catch_formal_parameter");
+    const typeNode =
+      parameter?.childForFieldName("type") ??
+      (parameter ? findChild(parameter, "catch_type") : null);
+    const nameNode = parameter?.childForFieldName("name");
+    if (!typeNode || !nameNode) return;
+
+    this.bindNamedType(nameNode.text, typeNode.text, "local", typeScopes, typeContext);
+  }
+
   private bindTypedDeclarators(
     node: TreeSitterNode,
     kind: "field" | "local",
@@ -673,19 +726,35 @@ export class JavaExtractor implements LanguageExtractor {
       const nameNode = declarator.childForFieldName("name");
       if (!nameNode) continue;
 
-      const binding: TypeBinding = {
-        type: simpleTypeName(typeNode.text),
-        qualifiedType: qualifyTypeName(typeNode.text, typeContext),
-        kind,
-      };
-      typeScopes.set(nameNode.text, binding);
+      const binding = this.bindNamedType(nameNode.text, typeNode.text, kind, typeScopes, typeContext);
       bindings?.set(nameNode.text, binding);
     }
+  }
+
+  private bindNamedType(
+    name: string,
+    type: string,
+    kind: "field" | "local",
+    typeScopes: TypeScopeStack,
+    typeContext: {
+      packageName?: string;
+      imports: Map<string, string>;
+      knownTypes: Map<string, string>;
+    },
+  ): TypeBinding {
+    const binding: TypeBinding = {
+      type: simpleTypeName(type),
+      qualifiedType: qualifyTypeName(type, typeContext),
+      kind,
+    };
+    typeScopes.set(name, binding);
+    return binding;
   }
 
   private resolveReceiver(
     receiver: string,
     methodName: string | undefined,
+    receiverNode: TreeSitterNode,
     typeScopes: TypeScopeStack,
     fieldScopes: Array<Map<string, TypeBinding>>,
     typeContext: {
@@ -709,7 +778,7 @@ export class JavaExtractor implements LanguageExtractor {
       return this.buildResolvedReceiver(binding, methodName);
     }
 
-    if (/^[A-Z]/.test(receiver)) {
+    if (receiverNode.type === "identifier" && /^[A-Z]/.test(receiver)) {
       const qualifiedType = qualifyTypeName(receiver, typeContext);
       const receiverType = simpleTypeName(receiver);
       return {

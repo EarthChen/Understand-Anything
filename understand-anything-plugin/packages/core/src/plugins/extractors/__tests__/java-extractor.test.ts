@@ -882,6 +882,159 @@ public class ExplicitLocalFieldService {
         tree.delete();
         parser.delete();
       });
+
+      it("does not resolve non-simple uppercase receivers as static", () => {
+        const { tree, parser, root } = parse(`package com.example;
+
+public class StaticFalsePositiveService {
+    public void run(String message) {
+        System.out.println(message);
+        ServiceFactory.create().call();
+    }
+}
+`);
+        const result = extractor.extractCallGraph(root);
+        const printlnCall = result.find((entry) => entry.methodName === "println");
+        const outerCall = result.find((entry) => entry.methodName === "call");
+
+        expect(printlnCall).toMatchObject({
+          receiver: "System.out",
+          methodName: "println",
+          resolutionKind: "unresolved",
+        });
+        expect(printlnCall?.calleeOwner).toBeUndefined();
+        expect(printlnCall?.calleeQualifiedName).toBeUndefined();
+
+        expect(outerCall).toMatchObject({
+          receiver: "ServiceFactory.create()",
+          methodName: "call",
+          resolutionKind: "unresolved",
+        });
+        expect(outerCall?.calleeOwner).toBeUndefined();
+        expect(outerCall?.calleeQualifiedName).toBeUndefined();
+
+        tree.delete();
+        parser.delete();
+      });
+
+      it("keeps for initializer locals scoped to the loop", () => {
+        const { tree, parser, root } = parse(`package com.example;
+
+public class ForScopeService {
+    private FieldService service;
+
+    public void run() {
+        for (LocalService service = new LocalService(); ready(); service.next()) {
+            service.call();
+        }
+        service.call();
+    }
+}
+`);
+        const result = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "call");
+
+        expect(result).toEqual([
+          expect.objectContaining({
+            receiver: "service",
+            receiverType: "LocalService",
+            receiverQualifiedType: "com.example.LocalService",
+            calleeOwner: "LocalService",
+            calleeQualifiedName: "com.example.LocalService#call",
+            resolutionKind: "local",
+          }),
+          expect.objectContaining({
+            receiver: "service",
+            receiverType: "FieldService",
+            receiverQualifiedType: "com.example.FieldService",
+            calleeOwner: "FieldService",
+            calleeQualifiedName: "com.example.FieldService#call",
+            resolutionKind: "field",
+          }),
+        ]);
+
+        tree.delete();
+        parser.delete();
+      });
+
+      it("binds enhanced for variables as loop locals", () => {
+        const { tree, parser, root } = parse(`package com.example;
+
+public class EnhancedForScopeService {
+    private FieldService service;
+
+    public void run(List<LocalService> services) {
+        for (LocalService service : services) {
+            service.call();
+        }
+        service.call();
+    }
+}
+`);
+        const result = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "call");
+
+        expect(result).toEqual([
+          expect.objectContaining({
+            receiver: "service",
+            receiverType: "LocalService",
+            receiverQualifiedType: "com.example.LocalService",
+            calleeOwner: "LocalService",
+            calleeQualifiedName: "com.example.LocalService#call",
+            resolutionKind: "local",
+          }),
+          expect.objectContaining({
+            receiver: "service",
+            receiverType: "FieldService",
+            receiverQualifiedType: "com.example.FieldService",
+            calleeOwner: "FieldService",
+            calleeQualifiedName: "com.example.FieldService#call",
+            resolutionKind: "field",
+          }),
+        ]);
+
+        tree.delete();
+        parser.delete();
+      });
+
+      it("binds catch parameters as catch-local receivers", () => {
+        const { tree, parser, root } = parse(`package com.example;
+
+public class CatchScopeService {
+    private FieldService service;
+
+    public void run() {
+        try {
+            risky();
+        } catch (LocalService service) {
+            service.call();
+        }
+        service.call();
+    }
+}
+`);
+        const result = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "call");
+
+        expect(result).toEqual([
+          expect.objectContaining({
+            receiver: "service",
+            receiverType: "LocalService",
+            receiverQualifiedType: "com.example.LocalService",
+            calleeOwner: "LocalService",
+            calleeQualifiedName: "com.example.LocalService#call",
+            resolutionKind: "local",
+          }),
+          expect.objectContaining({
+            receiver: "service",
+            receiverType: "FieldService",
+            receiverQualifiedType: "com.example.FieldService",
+            calleeOwner: "FieldService",
+            calleeQualifiedName: "com.example.FieldService#call",
+            resolutionKind: "field",
+          }),
+        ]);
+
+        tree.delete();
+        parser.delete();
+      });
     });
   });
 
