@@ -78,8 +78,11 @@ function extractPropertyName(node: TreeSitterNode): string | null {
 function extractPropertyType(node: TreeSitterNode): string | undefined {
   const typeAnnotation = findChild(node, "type_annotation");
   if (!typeAnnotation) return undefined;
-  const userType = findChild(typeAnnotation, "user_type");
-  return userType?.text;
+  const typeNode = findChild(typeAnnotation, "user_type")
+    ?? findChild(typeAnnotation, "optional_type")
+    ?? findChild(typeAnnotation, "array_type")
+    ?? findChild(typeAnnotation, "tuple_type");
+  return typeNode?.text;
 }
 
 function extractInheritanceSpecifiers(node: TreeSitterNode): {

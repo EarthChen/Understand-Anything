@@ -595,6 +595,39 @@ extension ExtensionService {
       parser.delete();
     });
 
+    it("resolves optional field and local receivers", () => {
+      const { tree, parser, root } = parse(`class OptionalService {
+    private let dep: DepService?
+
+    func run() {
+        let local: DepService? = nil
+        dep?.call()
+        local?.call()
+    }
+}
+`);
+      const calls = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "call");
+
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatchObject({
+        receiver: "dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
+      expect(calls[1]).toMatchObject({
+        receiver: "local",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "local",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
     it("keeps nested class calls under their own owner and leaves top-level callers unowned", () => {
       const { tree, parser, root } = parse(`func topLevel() {
     work()

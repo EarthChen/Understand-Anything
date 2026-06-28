@@ -689,10 +689,15 @@ export class KotlinExtractor implements LanguageExtractor {
   }
 
   private isOwnerDeclaration(node: TreeSitterNode): boolean {
-    return node.type === "class_declaration" || node.type === "object_declaration";
+    return (
+      node.type === "class_declaration" ||
+      node.type === "object_declaration" ||
+      node.type === "companion_object"
+    );
   }
 
   private extractDeclarationName(node: TreeSitterNode): string | null {
+    if (node.type === "companion_object") return "Companion";
     return (
       node.childForFieldName("name") ??
       findChild(node, "identifier")

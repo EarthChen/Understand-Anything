@@ -100,6 +100,33 @@ class Outer {
       tree.delete();
       parser.delete();
     });
+
+    it("does not resolve companion object receivers from outer class fields", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+class Outer {
+    private val dep: FieldDep = FieldDep()
+
+    companion object {
+        fun run() {
+            dep.call()
+        }
+    }
+}
+`);
+      const call = extractor.extractCallGraph(root).find((entry) => entry.methodName === "call");
+
+      expect(call).toMatchObject({
+        caller: "run",
+        receiver: "dep",
+        resolutionKind: "unresolved",
+      });
+      expect(call?.calleeOwner).toBeUndefined();
+      expect(call?.calleeQualifiedName).toBeUndefined();
+
+      tree.delete();
+      parser.delete();
+    });
   });
 
   describe("extractStructure - classes", () => {
