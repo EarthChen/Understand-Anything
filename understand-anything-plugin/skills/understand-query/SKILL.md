@@ -190,16 +190,22 @@ python3 ua_query.py ask --query "PK对战,PKBattle" --platform android --depth f
 **Callgraph examples:**
 
 ```bash
-# Callgraph: who calls queryUserExtend (substring match)
-python3 ua_query.py --format md structure --service ultron-composite --callee "queryUserExtend"
+# Callgraph: who calls queryUserExtend (exact method)
+python3 ua_query.py --format md structure --service ultron-composite --callee "queryUserExtend" --exact
+
+# Callgraph: exact owner-qualified callee; falls back to plain method if needed
+python3 ua_query.py --format md structure --service ultron-composite \
+  --callee "UserProfileMoaWrapperService#queryUserExtend" --exact
+
+# Callgraph: overload triage by argument count only
+python3 ua_query.py --format md structure --service ultron-composite \
+  --callee "queryUserExtend" --exact --argc 2
 
 # Callgraph: what does getQuickMessage call
-python3 ua_query.py --format md structure --service ultron-composite --caller "getQuickMessage"
-
-# Callgraph: exact match + path filter
-python3 ua_query.py --format md structure --service ultron-composite \
-  --callee "userProfileMoaWrapperService.queryUserExtend" --exact --path "quickmessage"
+python3 ua_query.py --format md structure --service ultron-composite --caller "getQuickMessage" --exact
 ```
+
+For callgraph exact search, X can be a method (`queryUserExtend`), `receiver.method`, or `Class#method` / `FQN#method`. Use `--argc N` only to triage overloads by argument count; it does not parse argument types.
 
 ---
 
@@ -230,7 +236,7 @@ Each layer is progressively more complete but less semantically rich. Use the up
 | Symbol + Source | "Show me the code for createOrder" | `structure --symbol createOrder --source` |
 | Bug Investigation | "API returns wrong data" | `wiki --type endpoint` → `kg --neighbors` → `trace --source` |
 | Impact Analysis | "What will changing X break?" | `impact --symbol X --direction inbound --depth 3` → `callers` / `structure --property-type X` |
-| Call Graph | "Who calls X?" / "What does X call?" | `callers --symbol X` or `callees --symbol X` |
+| Call Graph | "Who calls X?" / "What does X call?" | `structure --service S --callee "X" --exact` or `structure --service S --caller "X" --exact` |
 | Code Hotspots | "What are the most critical classes?" | `hotspots --type class --limit 20` |
 | Test Impact | "Which tests break if I change these files?" | `affected --files path1,path2` |
 | Cross-Platform | "Client/server don't sync" | `business --features` → `business --domain X --type interactions` → `trace` per service |
@@ -397,8 +403,8 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "Which classes use OrderDTO?" / "谁用了OrderDTO？" | `structure --service S --param-type OrderDTO` + `--return-type OrderDTO` | Type usage across codebase |
 | **Dependency & Impact** |||
 | "What breaks if I change X?" / "改X会影响什么？" | `impact --service S --symbol X --depth 3 --direction inbound` | Transitive impact analysis |
-| "Who calls X?" / "谁调用了X？" | `structure --service S --callee "X"` → parallel across services | AST callgraph search — **preferred over `callers`** for cross-service RPC scenarios |
-| "What does X call?" / "X调用了谁？" | `structure --service S --caller "X"` | AST callgraph search — **preferred over `callees`** for cross-service scenarios |
+| "Who calls X?" / "谁调用了X？" | `structure --service S --callee "X" --exact` → parallel across services | X may be method, `receiver.method`, or `Class#method`; add `--argc N` only for overload triage |
+| "What does X call?" / "X调用了谁？" | `structure --service S --caller "X" --exact` | X may be method or `Class#method`; owner-qualified caller needs structured reextract data |
 | "Which tests for changed files?" / "改了要跑哪些测试？" | `affected --service S --files src/X.java,src/Y.java --depth 2` | Affected test discovery — **batch all changed files in one call** |
 | "Most critical classes?" / "最关键的类？" | `hotspots --service S --type class --limit 20` | Fan-in/fan-out hotspot scoring |
 | "Blast radius of X?" / "X的影响半径？" | `trace --service S --query X` → check `blastRadius` → `impact --service S --symbol X --depth 3` | Quick triage + transitive |

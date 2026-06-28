@@ -172,9 +172,17 @@ python $SCRIPT source --service S --file "SettlementMoaServiceImpl.java:2700-285
 When the user asks "who calls X", "how many places call X", or similar call-site queries:
 
 1. **Identify the wrapper layer first.** If X is an RPC interface (e.g., `UserProfileRemoteService#queryUserExtendDTO`), the actual call sites use a wrapper method (e.g., `UserProfileMoaWrapperService#queryUserExtend`). Search the wrapper, not the raw RPC.
-2. **Use `structure --callee "methodName"`** — this searches the AST-extracted callgraph, returning precise caller→callee pairs with line numbers. This is the **primary tool** for finding call sites.
+2. **Use `structure --callee "X" --exact`** — this searches the AST-extracted callgraph, returning precise caller→callee pairs with line numbers. This is the **primary tool** for finding call sites; exact search avoids substring false positives.
 3. **Parallelize across services.** When searching multiple services, use parallel Bash calls — never serial loops.
 4. **`source --search` is a fallback only** — use it for config/YAML references or when `structure --callee` returns nothing.
+
+**`--exact` decision rules:**
+- `--callee queryUserExtend --exact` matches the exact method name and excludes substring matches like `queryUserExtendList`.
+- `--callee userProfileMoaWrapperService.queryUserExtend --exact` matches exact receiver + method.
+- `--callee UserProfileMoaWrapperService#queryUserExtend --exact` and `FQN#method` use the owner-to-lowerCamel receiver heuristic. If that returns 0 results, retry `--callee queryUserExtend --exact`.
+- `--caller getQuickMessage --exact` matches the exact caller method.
+- `--caller OrderService#process --exact` requires structured reextract data with `callerQualifiedName`; old indexes cannot answer owner-qualified caller queries and can only do method-name exact.
+- `--argc N` filters only by argument count. It does not parse argument types; use it for overload or same-name call triage.
 
 **Anti-patterns (do NOT do these):**
 - Serial `source --search` across services one by one (parallelize!)
@@ -226,7 +234,7 @@ If `source --search "kw"` returns nothing, the concept genuinely is not in that 
 | Source for symbol(s) | `structure --service S --symbol "X,Y,Z" --source` |
 | Read file ranges (batched) | `source --service S --file "A.java:1-60,B.java"` |
 | Method index of a file | `kg --service S --file F --toc` |
-| Who calls / what it calls | `callers --service S --symbol X` / `callees --service S --symbol X` |
+| Who calls / what it calls | `structure --service S --callee "X" --exact` / `structure --service S --caller "X" --exact` |
 | Impact of changing X | `impact --service S --symbol X --depth 3 --direction inbound` |
 | Tests affected by changes | `affected --service S --files a.java,b.java` |
 | Full-text source search | `source --service S --search "literal" [--path "*.yml"]` |

@@ -34,6 +34,7 @@ Complements the KG (which has names/summaries but not full type info).
 | `--callee` | string | Search callgraph by callee (who is called) |
 | `--caller` | string | Search callgraph by caller (who calls) |
 | `--exact` | flag | Use exact match for `--callee`/`--caller` (default: off) |
+| `--argc N` | int | Filter callgraph results by argument count; requires structured callgraph data |
 | `--limit N` | int | Max results (default: 50) |
 | `--offset N` | int | Pagination offset (default: 0) |
 
@@ -49,6 +50,30 @@ Complements the KG (which has names/summaries but not full type info).
 | `--direction DIR` | string | Chain direction: `up` (superclasses) or `down` (subclasses, default: `up`) |
 | `--implementors IFACE` | string | Find all classes implementing an interface |
 | `--source` | boolean | Include source code. With `--symbol`: returns source per matched symbol. With `--file`: appends `sourceContent` to the file structure response. |
+
+---
+
+### Callgraph search
+
+Use structured callgraph search for call-site questions:
+
+```bash
+python3 ua_query.py structure --service S --callee queryUserExtend --exact
+python3 ua_query.py structure --service S --callee UserProfileMoaWrapperService#queryUserExtend --exact
+python3 ua_query.py structure --service S --callee queryUserExtend --exact --argc 2
+python3 ua_query.py structure --service S --caller OrderService#process --exact
+```
+
+`--callee --exact` supports exact-method matching by:
+- plain method name: `queryUserExtend`
+- receiver + method: `userProfileMoaWrapperService.queryUserExtend`
+- owner-qualified method: `Class#method` or `FQN#method`
+
+For callee queries, `Class#method` / `FQN#method` uses an owner-to-lowerCamel receiver heuristic, so `UserProfileMoaWrapperService#queryUserExtend` searches for receiver-style calls such as `userProfileMoaWrapperService.queryUserExtend`. If that returns no results, fall back to the plain exact method name: `--callee queryUserExtend --exact`.
+
+`--caller Class#method --exact` depends on `callerQualifiedName` from structured reextract data. Old indexes can only answer method-name exact caller queries, such as `--caller process --exact`.
+
+`--argc N` filters only by the number of call arguments. It does not parse or match argument types; use it only to triage overloads or same-name calls with different arities.
 
 ---
 
@@ -192,6 +217,10 @@ python3 ua_query.py structure --service S --implementors IUserService
 | `--q QUERY` | No | Fuzzy search across name, annotations, paramTypes, returnType, content |
 | `--section-key NAME` | No | Filter by section name substring (function/class name) |
 | `--section-value TEXT` | No | Filter by section content substring |
+| `--callee NAME` | No | Search structured callgraph by callee |
+| `--caller NAME` | No | Search structured callgraph by caller |
+| `--exact` | No | Exact callgraph matching for `--callee`/`--caller` |
+| `--argc N` | No | Filter callgraph results by argument count; no argument type parsing |
 | `--limit N` | No | Max results (default 50) |
 | `--offset N` | No | Pagination offset (default 0) |
 | `--start N` | No | Start line for `--file --source` (1-based) |
