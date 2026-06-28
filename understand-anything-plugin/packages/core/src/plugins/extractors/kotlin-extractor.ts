@@ -348,6 +348,7 @@ export class KotlinExtractor implements LanguageExtractor {
       let pushedOwner = false;
       let pushedTypeScope = false;
       let pushedFieldScope = false;
+      let savedOwnerTypeScopes: Array<Map<string, TypeBinding>> | undefined;
       const savedFunctionStack = functionStack.slice();
       const isolatesFunctionScope = this.isOwnerDeclaration(node);
 
@@ -361,6 +362,8 @@ export class KotlinExtractor implements LanguageExtractor {
           ownerStack.push(ownerName);
           pushedOwner = true;
         }
+        savedOwnerTypeScopes = typeScopes.snapshot();
+        typeScopes.reset();
         typeScopes.pushScope();
         pushedTypeScope = true;
         fieldScopes.push(this.bindClassReceiverTypes(node, typeScopes, typeContext));
@@ -449,6 +452,9 @@ export class KotlinExtractor implements LanguageExtractor {
       }
       if (pushedTypeScope) {
         typeScopes.popScope();
+      }
+      if (savedOwnerTypeScopes) {
+        typeScopes.restore(savedOwnerTypeScopes);
       }
       if (isolatesFunctionScope) {
         functionStack.length = 0;

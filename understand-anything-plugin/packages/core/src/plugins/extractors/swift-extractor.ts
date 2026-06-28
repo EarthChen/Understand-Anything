@@ -155,6 +155,7 @@ export class SwiftExtractor implements LanguageExtractor {
       let pushedFunctionScope = false;
       let pushedOwnerScope = false;
       let pushedBlockScope = false;
+      let savedOwnerTypeScopes: Array<Map<string, TypeBinding>> | undefined;
       const savedFunctionStack = functionStack.slice();
       const isolatesFunctionScope = this.isOwnerDeclaration(node);
 
@@ -168,6 +169,8 @@ export class SwiftExtractor implements LanguageExtractor {
           ownerStack.push(ownerName);
           pushedOwner = true;
         }
+        savedOwnerTypeScopes = typeScopes.snapshot();
+        typeScopes.reset();
         typeScopes.pushScope();
         pushedOwnerScope = true;
         const fields = ownerName
@@ -251,6 +254,9 @@ export class SwiftExtractor implements LanguageExtractor {
       if (pushedOwnerScope) {
         fieldScopes.pop();
         typeScopes.popScope();
+      }
+      if (savedOwnerTypeScopes) {
+        typeScopes.restore(savedOwnerTypeScopes);
       }
       if (isolatesFunctionScope) {
         functionStack.length = 0;

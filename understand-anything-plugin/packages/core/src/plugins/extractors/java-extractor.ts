@@ -336,6 +336,7 @@ export class JavaExtractor implements LanguageExtractor {
       let pushedOwner = false;
       let pushedFieldScope = false;
       let pushedTypeScope = false;
+      let savedOwnerTypeScopes: Array<Map<string, TypeBinding>> | undefined;
       const savedFunctionStack = functionStack.slice();
       const isolatesFunctionScope = this.isOwnerDeclaration(node);
 
@@ -349,6 +350,8 @@ export class JavaExtractor implements LanguageExtractor {
           ownerStack.push(ownerName);
           pushedOwner = true;
         }
+        savedOwnerTypeScopes = typeScopes.snapshot();
+        typeScopes.reset();
         typeScopes.pushScope();
         pushedTypeScope = true;
         fieldScopes.push(this.bindClassFields(node, typeScopes, typeContext));
@@ -466,14 +469,17 @@ export class JavaExtractor implements LanguageExtractor {
           const savedAnonymousFunctionStack = functionStack.slice();
           const savedAnonymousOwnerStack = ownerStack.slice();
           const savedAnonymousFieldScopes = fieldScopes.slice();
+          const savedAnonymousTypeScopes = typeScopes.snapshot();
           functionStack.length = 0;
           ownerStack.length = 0;
           fieldScopes.length = 0;
+          typeScopes.reset();
           typeScopes.pushScope();
           fieldScopes.push(this.bindClassBodyFields(child, typeScopes, typeContext));
           walkForCalls(child);
           fieldScopes.pop();
           typeScopes.popScope();
+          typeScopes.restore(savedAnonymousTypeScopes);
           functionStack.length = 0;
           functionStack.push(...savedAnonymousFunctionStack);
           ownerStack.length = 0;
@@ -497,6 +503,9 @@ export class JavaExtractor implements LanguageExtractor {
       }
       if (pushedTypeScope) {
         typeScopes.popScope();
+      }
+      if (savedOwnerTypeScopes) {
+        typeScopes.restore(savedOwnerTypeScopes);
       }
       if (isolatesFunctionScope) {
         functionStack.length = 0;

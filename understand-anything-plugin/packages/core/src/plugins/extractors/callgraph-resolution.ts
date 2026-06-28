@@ -22,6 +22,25 @@ export interface QualificationContext {
 export class TypeScopeStack {
   private readonly scopes: Array<Map<string, TypeBinding>> = [new Map()];
 
+  snapshot(): Array<Map<string, TypeBinding>> {
+    return this.scopes.map((scope) => new Map(scope));
+  }
+
+  restore(snapshot: Array<Map<string, TypeBinding>>): void {
+    this.scopes.length = 0;
+    for (const scope of snapshot) {
+      this.scopes.push(new Map(scope));
+    }
+    if (this.scopes.length === 0) {
+      this.scopes.push(new Map());
+    }
+  }
+
+  reset(): void {
+    this.scopes.length = 0;
+    this.scopes.push(new Map());
+  }
+
   pushScope(): void {
     this.scopes.push(new Map());
   }

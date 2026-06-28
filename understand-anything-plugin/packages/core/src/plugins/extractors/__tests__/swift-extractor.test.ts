@@ -569,6 +569,32 @@ extension ExtensionService {
       parser.delete();
     });
 
+    it("does not resolve nested class receivers from outer class fields", () => {
+      const { tree, parser, root } = parse(`class Outer {
+    private let dep: FieldDep
+
+    class Inner {
+        func run() {
+            dep.call()
+        }
+    }
+}
+`);
+      const call = extractor.extractCallGraph(root).find((entry) => entry.methodName === "call");
+
+      expect(call).toMatchObject({
+        caller: "run",
+        callerOwner: "Inner",
+        receiver: "dep",
+        resolutionKind: "unresolved",
+      });
+      expect(call?.calleeOwner).toBeUndefined();
+      expect(call?.calleeQualifiedName).toBeUndefined();
+
+      tree.delete();
+      parser.delete();
+    });
+
     it("keeps nested class calls under their own owner and leaves top-level callers unowned", () => {
       const { tree, parser, root } = parse(`func topLevel() {
     work()

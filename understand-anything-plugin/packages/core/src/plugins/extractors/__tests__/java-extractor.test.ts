@@ -1090,6 +1090,34 @@ public class Outer {
         tree.delete();
         parser.delete();
       });
+
+      it("does not resolve nested class receivers from outer class fields", () => {
+        const { tree, parser, root } = parse(`package com.example;
+
+public class Outer {
+    private FieldService dep;
+
+    static class Inner {
+        public void run() {
+            dep.call();
+        }
+    }
+}
+`);
+        const call = extractor.extractCallGraph(root).find((entry) => entry.methodName === "call");
+
+        expect(call).toMatchObject({
+          caller: "run",
+          callerOwner: "Inner",
+          receiver: "dep",
+          resolutionKind: "unresolved",
+        });
+        expect(call?.calleeOwner).toBeUndefined();
+        expect(call?.calleeQualifiedName).toBeUndefined();
+
+        tree.delete();
+        parser.delete();
+      });
     });
   });
 
