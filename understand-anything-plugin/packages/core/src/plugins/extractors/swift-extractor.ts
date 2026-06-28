@@ -147,6 +147,7 @@ export class SwiftExtractor implements LanguageExtractor {
     const ownerStack: string[] = [];
     const typeScopes = new TypeScopeStack();
     const fieldScopes: Array<Map<string, TypeBinding>> = [];
+    const fieldsByOwner = new Map<string, Map<string, TypeBinding>>();
 
     const walkForCalls = (node: TreeSitterNode) => {
       let pushedName = false;
@@ -169,7 +170,10 @@ export class SwiftExtractor implements LanguageExtractor {
         }
         typeScopes.pushScope();
         pushedOwnerScope = true;
-        const fields = new Map<string, TypeBinding>();
+        const fields = ownerName
+          ? fieldsByOwner.get(ownerName) ?? new Map<string, TypeBinding>()
+          : new Map<string, TypeBinding>();
+        if (ownerName) fieldsByOwner.set(ownerName, fields);
         fieldScopes.push(fields);
         this.bindOwnerFields(node, typeScopes, fields);
       }
@@ -263,6 +267,10 @@ export class SwiftExtractor implements LanguageExtractor {
     typeScopes: TypeScopeStack,
     fields: Map<string, TypeBinding>,
   ): void {
+    for (const [name, binding] of fields) {
+      typeScopes.set(name, binding);
+    }
+
     const body = node.childForFieldName("body")
       ?? findChild(node, "class_body")
       ?? findChild(node, "enum_class_body");
@@ -329,7 +337,8 @@ export class SwiftExtractor implements LanguageExtractor {
     fieldScopes: Array<Map<string, TypeBinding>>,
   ): Partial<CallGraphEntry> {
     if (receiver.startsWith("self.")) {
-      const fieldName = receiver.slice("self.".length).split(".")[0];
+      const fieldName = receiver.slice("self.".length);
+      if (fieldName.includes(".")) return { resolutionKind: "unresolved" };
       const binding = fieldScopes[fieldScopes.length - 1]?.get(fieldName);
       return binding
         ? this.buildResolvedReceiver(binding, methodName)

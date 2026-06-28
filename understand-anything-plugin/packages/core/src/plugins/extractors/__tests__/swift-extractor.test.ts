@@ -499,6 +499,76 @@ class Foo {}
       parser.delete();
     });
 
+    it("does not resolve chained self receivers as direct field calls", () => {
+      const { tree, parser, root } = parse(`class ChainedSelfService {
+    private let dep: DepService
+
+    func run() {
+        self.dep.child.call()
+        self.dep.call()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const callEntries = result.filter((entry) => entry.methodName === "call");
+
+      expect(callEntries).toHaveLength(2);
+      expect(callEntries[0]).toMatchObject({
+        receiver: "self.dep.child",
+        resolutionKind: "unresolved",
+      });
+      expect(callEntries[0].calleeOwner).toBeUndefined();
+      expect(callEntries[0].calleeQualifiedName).toBeUndefined();
+      expect(callEntries[1]).toMatchObject({
+        receiver: "self.dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeOwner: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("reuses class fields when resolving calls inside Swift extensions", () => {
+      const { tree, parser, root } = parse(`class ExtensionService {
+    private let dep: DepService
+}
+
+extension ExtensionService {
+    func run() {
+        dep.call()
+        self.dep.call()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const callEntries = result.filter((entry) => entry.methodName === "call");
+
+      expect(callEntries).toHaveLength(2);
+      expect(callEntries[0]).toMatchObject({
+        receiver: "dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeOwner: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
+      expect(callEntries[1]).toMatchObject({
+        receiver: "self.dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeOwner: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
     it("keeps nested class calls under their own owner and leaves top-level callers unowned", () => {
       const { tree, parser, root } = parse(`func topLevel() {
     work()

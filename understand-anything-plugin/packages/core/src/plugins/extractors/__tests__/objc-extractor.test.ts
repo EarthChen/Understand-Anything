@@ -483,6 +483,78 @@ describe("ObjcExtractor", () => {
       tree.delete();
       parser.delete();
     });
+
+    it("does not resolve chained self receivers as direct Objective-C property calls", () => {
+      const { tree, parser, root } = parse(`@interface ChainedSelfService
+@property(nonatomic, strong) DepService *dep;
+@end
+
+@implementation ChainedSelfService
+- (void)run {
+    [self.dep.child call];
+    [self.dep call];
+}
+@end
+`);
+      const result = extractor.extractCallGraph(root);
+      const callEntries = result.filter((entry) => entry.methodName === "call");
+
+      expect(callEntries).toHaveLength(2);
+      expect(callEntries[0]).toMatchObject({
+        receiver: "self.dep.child",
+        resolutionKind: "unresolved",
+      });
+      expect(callEntries[0].calleeOwner).toBeUndefined();
+      expect(callEntries[0].calleeQualifiedName).toBeUndefined();
+      expect(callEntries[1]).toMatchObject({
+        receiver: "self.dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeOwner: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("reuses interface properties when resolving calls inside Objective-C categories", () => {
+      const { tree, parser, root } = parse(`@interface CategoryService
+@property(nonatomic, strong) DepService *dep;
+@end
+
+@implementation CategoryService (Extra)
+- (void)run {
+    [dep call];
+    [self.dep call];
+}
+@end
+`);
+      const result = extractor.extractCallGraph(root);
+      const callEntries = result.filter((entry) => entry.methodName === "call");
+
+      expect(callEntries).toHaveLength(2);
+      expect(callEntries[0]).toMatchObject({
+        receiver: "dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeOwner: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
+      expect(callEntries[1]).toMatchObject({
+        receiver: "self.dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeOwner: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
   });
 
   describe("comprehensive Objective-C file", () => {

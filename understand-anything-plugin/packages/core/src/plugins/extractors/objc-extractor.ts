@@ -296,8 +296,9 @@ export class ObjcExtractor implements LanguageExtractor {
           pushedOwner = true;
           typeScopes.pushScope();
           pushedOwnerScope = true;
-          const fields = fieldsByOwner.get(ownerName) ?? new Map<string, TypeBinding>();
-          fieldsByOwner.set(ownerName, fields);
+          const fieldOwnerName = this.extractFieldOwnerName(node) ?? ownerName;
+          const fields = fieldsByOwner.get(fieldOwnerName) ?? new Map<string, TypeBinding>();
+          fieldsByOwner.set(fieldOwnerName, fields);
           fieldScopes.push(fields);
           this.bindOwnerFields(node, typeScopes, fields);
         }
@@ -467,7 +468,8 @@ export class ObjcExtractor implements LanguageExtractor {
     fieldScopes: Array<Map<string, TypeBinding>>,
   ): Partial<CallGraphEntry> {
     if (receiver.startsWith("self.")) {
-      const fieldName = receiver.slice("self.".length).split(".")[0];
+      const fieldName = receiver.slice("self.".length);
+      if (fieldName.includes(".")) return { resolutionKind: "unresolved" };
       const binding = fieldScopes[fieldScopes.length - 1]?.get(fieldName);
       return binding
         ? this.buildResolvedReceiver(binding, methodName)
@@ -518,6 +520,11 @@ export class ObjcExtractor implements LanguageExtractor {
       return `${className.text}(${category.text})`;
     }
     return className.text;
+  }
+
+  private extractFieldOwnerName(node: TreeSitterNode): string | null {
+    const className = findChild(node, "identifier");
+    return className?.text ?? null;
   }
 
   private extractSelectorArgumentCount(selector: string): number {
