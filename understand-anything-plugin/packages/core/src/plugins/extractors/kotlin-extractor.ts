@@ -375,8 +375,21 @@ export class KotlinExtractor implements LanguageExtractor {
         this.bindFunctionParameters(node, typeScopes, typeContext);
       }
 
+      if (functionStack.length > 0 && this.isLocalScopeNode(node)) {
+        typeScopes.pushScope();
+        pushedTypeScope = true;
+      }
+
       if (functionStack.length > 0 && node.type === "property_declaration") {
+        for (let i = 0; i < node.childCount; i++) {
+          const child = node.child(i);
+          if (child) walkForCalls(child);
+        }
         this.bindLocalProperty(node, typeScopes, typeContext);
+        if (pushedTypeScope) {
+          typeScopes.popScope();
+        }
+        return;
       }
 
       if (
@@ -438,6 +451,10 @@ export class KotlinExtractor implements LanguageExtractor {
 
     walkForCalls(rootNode);
     return entries;
+  }
+
+  private isLocalScopeNode(node: TreeSitterNode): boolean {
+    return node.type === "block" || node.type === "lambda_literal";
   }
 
   private buildTypeContext(rootNode: TreeSitterNode): QualificationContext {

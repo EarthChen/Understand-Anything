@@ -599,6 +599,122 @@ class Svc {
       tree.delete();
       parser.delete();
     });
+
+    it("keeps block-local receiver bindings from leaking after the block", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+class ScopeService {
+    private val dep: FieldDep = FieldDep()
+
+    fun run(flag: Boolean) {
+        if (flag) {
+            val dep: LocalDep = LocalDep()
+            dep.call()
+        }
+        dep.call()
+    }
+}
+`);
+      const calls = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "call");
+
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatchObject({
+        receiver: "dep",
+        receiverType: "LocalDep",
+        receiverQualifiedType: "com.example.LocalDep",
+        calleeQualifiedName: "com.example.LocalDep#call",
+        resolutionKind: "local",
+      });
+      expect(calls[1]).toMatchObject({
+        receiver: "dep",
+        receiverType: "FieldDep",
+        receiverQualifiedType: "com.example.FieldDep",
+        calleeQualifiedName: "com.example.FieldDep#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("resolves initializer receiver before binding the new local property", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+class InitService {
+    private val dep: FieldDep = FieldDep()
+
+    fun run() {
+        val dep: LocalDep = dep.wrap()
+        dep.call()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const wrapCall = result.find((entry) => entry.methodName === "wrap");
+      const call = result.find((entry) => entry.methodName === "call");
+
+      expect(wrapCall).toMatchObject({
+        receiver: "dep",
+        receiverType: "FieldDep",
+        receiverQualifiedType: "com.example.FieldDep",
+        calleeQualifiedName: "com.example.FieldDep#wrap",
+        resolutionKind: "field",
+      });
+      expect(call).toMatchObject({
+        receiver: "dep",
+        receiverType: "LocalDep",
+        receiverQualifiedType: "com.example.LocalDep",
+        calleeQualifiedName: "com.example.LocalDep#call",
+        resolutionKind: "local",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("keeps lambda-local receiver bindings from leaking after a trailing lambda", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+class LambdaService {
+    private val dep: FieldDep = FieldDep()
+
+    fun run() {
+        withBlock {
+            val dep: LocalDep = LocalDep()
+            dep.call()
+        }
+        dep.call()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const withBlockCall = result.find((entry) => entry.methodName === "withBlock");
+      const calls = result.filter((entry) => entry.methodName === "call");
+
+      expect(withBlockCall).toMatchObject({
+        callee: "withBlock",
+        argumentCount: 1,
+        callText: expect.stringContaining("withBlock"),
+      });
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatchObject({
+        receiver: "dep",
+        receiverType: "LocalDep",
+        receiverQualifiedType: "com.example.LocalDep",
+        calleeQualifiedName: "com.example.LocalDep#call",
+        resolutionKind: "local",
+      });
+      expect(calls[1]).toMatchObject({
+        receiver: "dep",
+        receiverType: "FieldDep",
+        receiverQualifiedType: "com.example.FieldDep",
+        calleeQualifiedName: "com.example.FieldDep#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
   });
 
   // ---- HTTP Endpoint Extraction ----
