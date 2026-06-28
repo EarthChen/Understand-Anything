@@ -316,9 +316,19 @@ export class JavaExtractor implements LanguageExtractor {
   extractCallGraph(rootNode: TreeSitterNode): CallGraphEntry[] {
     const entries: CallGraphEntry[] = [];
     const functionStack: string[] = [];
+    const ownerStack: string[] = [];
 
     const walkForCalls = (node: TreeSitterNode) => {
       let pushedName = false;
+      let pushedOwner = false;
+
+      if (this.isOwnerDeclaration(node)) {
+        const ownerName = this.extractDeclarationName(node);
+        if (ownerName) {
+          ownerStack.push(ownerName);
+          pushedOwner = true;
+        }
+      }
 
       // Track entering method/constructor declarations
       if (
@@ -336,11 +346,24 @@ export class JavaExtractor implements LanguageExtractor {
       if (node.type === "method_invocation") {
         if (functionStack.length > 0) {
           const callee = this.extractMethodInvocationName(node);
+          const nameNode = node.childForFieldName("name");
           if (callee) {
+            const caller = functionStack[functionStack.length - 1];
+            const callerOwner = ownerStack[ownerStack.length - 1];
+            const objectNode = node.childForFieldName("object");
             entries.push({
-              caller: functionStack[functionStack.length - 1],
+              caller,
               callee,
               lineNumber: node.startPosition.row + 1,
+              columnNumber: node.startPosition.column + 1,
+              ...(objectNode ? { receiver: objectNode.text } : {}),
+              ...(nameNode ? { methodName: nameNode.text } : {}),
+              argumentCount: this.extractArgumentCount(node),
+              callText: node.text,
+              ...(callerOwner ? { callerOwner } : {}),
+              ...(callerOwner
+                ? { callerQualifiedName: `${callerOwner}#${caller}` }
+                : {}),
             });
           }
         }
@@ -351,10 +374,20 @@ export class JavaExtractor implements LanguageExtractor {
         if (functionStack.length > 0) {
           const typeNode = node.childForFieldName("type");
           if (typeNode) {
+            const caller = functionStack[functionStack.length - 1];
+            const callerOwner = ownerStack[ownerStack.length - 1];
             entries.push({
-              caller: functionStack[functionStack.length - 1],
+              caller,
               callee: `new ${typeNode.text}`,
               lineNumber: node.startPosition.row + 1,
+              columnNumber: node.startPosition.column + 1,
+              methodName: typeNode.text,
+              argumentCount: this.extractArgumentCount(node),
+              callText: node.text,
+              ...(callerOwner ? { callerOwner } : {}),
+              ...(callerOwner
+                ? { callerQualifiedName: `${callerOwner}#${caller}` }
+                : {}),
             });
           }
         }
@@ -367,6 +400,9 @@ export class JavaExtractor implements LanguageExtractor {
 
       if (pushedName) {
         functionStack.pop();
+      }
+      if (pushedOwner) {
+        ownerStack.pop();
       }
     };
 
@@ -394,6 +430,36 @@ export class JavaExtractor implements LanguageExtractor {
     }
 
     return nameNode.text;
+  }
+
+  private isOwnerDeclaration(node: TreeSitterNode): boolean {
+    return (
+      node.type === "class_declaration" ||
+      node.type === "interface_declaration" ||
+      node.type === "record_declaration" ||
+      node.type === "enum_declaration" ||
+      node.type === "annotation_type_declaration"
+    );
+  }
+
+  private extractDeclarationName(node: TreeSitterNode): string | null {
+    return (
+      node.childForFieldName("name") ??
+      findChild(node, "identifier") ??
+      findChild(node, "type_identifier")
+    )?.text ?? null;
+  }
+
+  private extractArgumentCount(node: TreeSitterNode): number {
+    const argsNode =
+      node.childForFieldName("arguments") ?? findChild(node, "argument_list");
+    if (!argsNode) return 0;
+
+    let count = 0;
+    for (let i = 0; i < argsNode.childCount; i++) {
+      if (argsNode.child(i)?.isNamed) count++;
+    }
+    return count;
   }
 
   private extractImport(

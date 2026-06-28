@@ -413,6 +413,15 @@ public class Foo {}
       expect(result).toHaveLength(2);
       expect(result[0].caller).toBe("process");
       expect(result[0].callee).toBe("transform");
+      expect(result[0]).toMatchObject({
+        columnNumber: 9,
+        methodName: "transform",
+        argumentCount: 1,
+        callText: "transform(data)",
+        callerOwner: "Foo",
+        callerQualifiedName: "Foo#process",
+      });
+      expect(result[0].receiver).toBeUndefined();
       expect(result[1].caller).toBe("process");
       expect(result[1].callee).toBe("format");
 
@@ -430,8 +439,18 @@ public class Foo {}
       const result = extractor.extractCallGraph(root);
 
       expect(result).toHaveLength(1);
-      expect(result[0].caller).toBe("log");
-      expect(result[0].callee).toBe("System.out.println");
+      expect(result[0]).toMatchObject({
+        caller: "log",
+        callee: "System.out.println",
+        lineNumber: 3,
+        columnNumber: 9,
+        receiver: "System.out",
+        methodName: "println",
+        argumentCount: 1,
+        callText: "System.out.println(message)",
+        callerOwner: "Foo",
+        callerQualifiedName: "Foo#log",
+      });
 
       tree.delete();
       parser.delete();
@@ -447,8 +466,72 @@ public class Foo {}
       const result = extractor.extractCallGraph(root);
 
       expect(result).toHaveLength(1);
-      expect(result[0].caller).toBe("create");
-      expect(result[0].callee).toBe("new Bar");
+      expect(result[0]).toMatchObject({
+        caller: "create",
+        callee: "new Bar",
+        lineNumber: 3,
+        columnNumber: 17,
+        methodName: "Bar",
+        argumentCount: 0,
+        callText: "new Bar()",
+        callerOwner: "Foo",
+        callerQualifiedName: "Foo#create",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("records zero arguments for no-arg calls", () => {
+      const { tree, parser, root } = parse(`public class Foo {
+    public void run() {
+        refresh();
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        caller: "run",
+        callee: "refresh",
+        methodName: "refresh",
+        argumentCount: 0,
+        callText: "refresh()",
+        callerOwner: "Foo",
+        callerQualifiedName: "Foo#run",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("keeps overloaded calls separate by argument count", () => {
+      const { tree, parser, root } = parse(`public class UserController {
+    public void load(String id) {
+        service.queryUserExtend(id);
+        service.queryUserExtend(id, false);
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const queryCalls = result.filter(
+        (entry) => entry.callee === "service.queryUserExtend",
+      );
+
+      expect(queryCalls).toHaveLength(2);
+      expect(queryCalls.map((entry) => entry.argumentCount)).toEqual([1, 2]);
+      expect(queryCalls.every((entry) => entry.receiver === "service")).toBe(
+        true,
+      );
+      expect(
+        queryCalls.every((entry) => entry.methodName === "queryUserExtend"),
+      ).toBe(true);
+      expect(
+        queryCalls.every(
+          (entry) => entry.callerQualifiedName === "UserController#load",
+        ),
+      ).toBe(true);
 
       tree.delete();
       parser.delete();

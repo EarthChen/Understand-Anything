@@ -597,6 +597,13 @@ export interface CallGraphEntry {
   caller: string;
   callee: string;
   lineNumber: number;
+  columnNumber?: number;
+  receiver?: string;
+  methodName?: string;
+  argumentCount?: number;
+  callText?: string;
+  callerOwner?: string;
+  callerQualifiedName?: string;
 }
 
 export interface AnalyzerPlugin {
