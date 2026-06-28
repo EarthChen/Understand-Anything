@@ -1,4 +1,5 @@
 node_modules
+.pnpm-store/
 dist
 .understand-anything
 !tests/fixtures/**/.understand-anything/
