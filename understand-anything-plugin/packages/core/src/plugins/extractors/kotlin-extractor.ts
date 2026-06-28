@@ -358,7 +358,11 @@ export class KotlinExtractor implements LanguageExtractor {
         }
       }
 
-      if (node.type === "call_expression" && functionStack.length > 0) {
+      if (
+        node.type === "call_expression" &&
+        functionStack.length > 0 &&
+        !this.isTrailingLambdaBaseCall(node)
+      ) {
         const callee = this.extractCallExpressionName(node);
         if (callee) {
           const caller = functionStack[functionStack.length - 1];
@@ -408,6 +412,29 @@ export class KotlinExtractor implements LanguageExtractor {
     const identifier = findChild(node, "identifier");
     if (identifier) return identifier.text;
 
+    const baseCall = this.extractTrailingLambdaBaseCall(node);
+    if (baseCall) return this.extractCallExpressionName(baseCall);
+
+    return null;
+  }
+
+  private isTrailingLambdaBaseCall(node: TreeSitterNode): boolean {
+    const parent = node.parent;
+    if (!parent || parent.type !== "call_expression") return false;
+    if (findChildren(parent, "annotated_lambda").length === 0) return false;
+
+    const baseCall = this.extractTrailingLambdaBaseCall(parent);
+    return baseCall?.equals(node) ?? false;
+  }
+
+  private extractTrailingLambdaBaseCall(node: TreeSitterNode): TreeSitterNode | null {
+    if (findChildren(node, "annotated_lambda").length === 0) return null;
+
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child?.type === "call_expression") return child;
+    }
+
     return null;
   }
 
@@ -424,7 +451,9 @@ export class KotlinExtractor implements LanguageExtractor {
 
   private extractReceiver(callee: string): string | undefined {
     const dotIndex = callee.lastIndexOf(".");
-    return dotIndex === -1 ? undefined : callee.slice(0, dotIndex);
+    if (dotIndex === -1) return undefined;
+
+    return callee.slice(0, dotIndex).replace(/(?:\?|!!)+$/, "");
   }
 
   private extractMethodName(callee: string): string {
@@ -434,9 +463,14 @@ export class KotlinExtractor implements LanguageExtractor {
 
   private extractArgumentCount(node: TreeSitterNode): number {
     const argsNode = findChild(node, "value_arguments");
-    if (!argsNode) return 0;
+    const valueArgumentCount = argsNode
+      ? findChildren(argsNode, "value_argument").length
+      : 0;
+    const baseCall = this.extractTrailingLambdaBaseCall(node);
+    const baseArgumentCount = baseCall ? this.extractArgumentCount(baseCall) : 0;
+    const trailingLambdaCount = findChildren(node, "annotated_lambda").length;
 
-    return findChildren(argsNode, "value_argument").length;
+    return valueArgumentCount + baseArgumentCount + trailingLambdaCount;
   }
 
   private extractImport(

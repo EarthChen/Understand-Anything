@@ -340,6 +340,36 @@ class Foo {}
       parser.delete();
     });
 
+    it("counts trailing closures as call arguments", () => {
+      const { tree, parser, root } = parse(`class Svc {
+    func process() {
+        repo.save(1) { done() }
+        run { work() }
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const saveCall = result.find((entry) => entry.methodName === "save");
+      const runCall = result.find((entry) => entry.callee === "run");
+
+      expect(saveCall).toMatchObject({
+        caller: "process",
+        callee: "repo.save",
+        receiver: "repo",
+        methodName: "save",
+        argumentCount: 2,
+      });
+      expect(runCall).toMatchObject({
+        caller: "process",
+        callee: "run",
+        methodName: "run",
+        argumentCount: 1,
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
     it("keeps nested class calls under their own owner and leaves top-level callers unowned", () => {
       const { tree, parser, root } = parse(`func topLevel() {
     work()

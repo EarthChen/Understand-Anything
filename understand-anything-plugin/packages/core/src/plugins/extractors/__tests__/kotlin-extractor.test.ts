@@ -409,6 +409,51 @@ class OrderController : BaseController(), OrderService {
       parser.delete();
     });
 
+    it("counts trailing lambda as an argument and keeps it in call text", () => {
+      const { tree, parser, root } = parse(`class Svc {
+    fun process() {
+        repo.save(1) { done() }
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const saveCall = result.find((entry) => entry.methodName === "save");
+
+      expect(saveCall).toMatchObject({
+        caller: "process",
+        callee: "repo.save",
+        receiver: "repo",
+        methodName: "save",
+        argumentCount: 2,
+        callText: "repo.save(1) { done() }",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("cleans structured receiver for null-safe and non-null Kotlin calls", () => {
+      const { tree, parser, root } = parse(`class Svc {
+    fun process() {
+        repo?.query(1)
+        repo!!.query(2)
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const queryCalls = result.filter((entry) => entry.methodName === "query");
+
+      expect(queryCalls).toHaveLength(2);
+      expect(queryCalls.map((entry) => entry.callee)).toEqual([
+        "repo?.query",
+        "repo!!.query",
+      ]);
+      expect(queryCalls.every((entry) => entry.receiver === "repo")).toBe(true);
+
+      tree.delete();
+      parser.delete();
+    });
+
     it("keeps local object calls under their own owner and leaves top-level callers unowned", () => {
       const { tree, parser, root } = parse(`fun topLevel() {
     work()

@@ -258,9 +258,14 @@ export class SwiftExtractor implements LanguageExtractor {
   private extractArgumentCount(node: TreeSitterNode): number {
     const suffix = findChild(node, "call_suffix");
     const argsNode = suffix ? findChild(suffix, "value_arguments") : null;
-    if (!argsNode) return 0;
+    const valueArgumentCount = argsNode
+      ? findChildren(argsNode, "value_argument").length
+      : 0;
+    const trailingClosureCount = suffix
+      ? findChildren(suffix, "lambda_literal").length
+      : 0;
 
-    return findChildren(argsNode, "value_argument").length;
+    return valueArgumentCount + trailingClosureCount;
   }
 
   private extractImport(
