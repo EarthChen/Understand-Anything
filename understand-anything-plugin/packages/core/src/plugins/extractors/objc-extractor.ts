@@ -227,9 +227,25 @@ export class ObjcExtractor implements LanguageExtractor {
   extractCallGraph(rootNode: TreeSitterNode): CallGraphEntry[] {
     const entries: CallGraphEntry[] = [];
     const functionStack: string[] = [];
+    const ownerStack: string[] = [];
 
     const walkForCalls = (node: TreeSitterNode) => {
       let pushedName = false;
+      let pushedOwner = false;
+      const savedFunctionStack = functionStack.slice();
+      const isolatesFunctionScope = this.isOwnerDeclaration(node);
+
+      if (isolatesFunctionScope) {
+        functionStack.length = 0;
+      }
+
+      if (this.isOwnerDeclaration(node)) {
+        const ownerName = this.extractOwnerName(node);
+        if (ownerName) {
+          ownerStack.push(ownerName);
+          pushedOwner = true;
+        }
+      }
 
       if (node.type === "method_definition") {
         const selector = extractSelector(node);
@@ -243,11 +259,20 @@ export class ObjcExtractor implements LanguageExtractor {
         const receiver = node.childForFieldName("receiver");
         const selector = extractMessageSelector(node);
         const callee = receiver ? `${receiver.text}.${selector}` : selector;
+        const caller = functionStack[functionStack.length - 1];
+        const callerOwner = ownerStack[ownerStack.length - 1];
 
         entries.push({
-          caller: functionStack[functionStack.length - 1],
+          caller,
           callee,
           lineNumber: node.startPosition.row + 1,
+          columnNumber: node.startPosition.column + 1,
+          ...(receiver ? { receiver: receiver.text } : {}),
+          methodName: selector,
+          argumentCount: this.extractSelectorArgumentCount(selector),
+          callText: node.text,
+          ...(callerOwner ? { callerOwner } : {}),
+          ...(callerOwner ? { callerQualifiedName: `${callerOwner}#${caller}` } : {}),
         });
       }
 
@@ -259,10 +284,50 @@ export class ObjcExtractor implements LanguageExtractor {
       if (pushedName) {
         functionStack.pop();
       }
+      if (pushedOwner) {
+        ownerStack.pop();
+      }
+      if (isolatesFunctionScope) {
+        functionStack.length = 0;
+        functionStack.push(...savedFunctionStack);
+      }
     };
 
     walkForCalls(rootNode);
     return entries;
+  }
+
+  private isOwnerDeclaration(node: TreeSitterNode): boolean {
+    return (
+      node.type === "class_interface" ||
+      node.type === "class_implementation" ||
+      node.type === "category_interface" ||
+      node.type === "category_implementation" ||
+      node.type === "protocol_declaration"
+    );
+  }
+
+  private extractOwnerName(node: TreeSitterNode): string | null {
+    if (node.type === "class_interface") {
+      return extractInterfaceName(node);
+    }
+
+    const className = findChild(node, "identifier");
+    if (!className) return null;
+
+    const category = node.childForFieldName("category");
+    if (category) {
+      return `${className.text}(${category.text})`;
+    }
+    return className.text;
+  }
+
+  private extractSelectorArgumentCount(selector: string): number {
+    let count = 0;
+    for (const char of selector) {
+      if (char === ":") count++;
+    }
+    return count;
   }
 
   private extractImport(

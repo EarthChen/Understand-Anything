@@ -362,6 +362,105 @@ class OrderController : BaseController(), OrderService {
       tree.delete();
       parser.delete();
     });
+
+    it("records structured metadata so overloads can be distinguished inside an owner", () => {
+      const { tree, parser, root } = parse(`class UserController {
+    fun load(id: String) {
+        refresh()
+        repo.queryUser(id)
+        repo.queryUser(id, false)
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const queryCalls = result.filter(
+        (entry) => entry.callee === "repo.queryUser",
+      );
+
+      expect(result[0]).toMatchObject({
+        caller: "load",
+        callee: "refresh",
+        lineNumber: 3,
+        columnNumber: 9,
+        methodName: "refresh",
+        argumentCount: 0,
+        callText: "refresh()",
+        callerOwner: "UserController",
+        callerQualifiedName: "UserController#load",
+      });
+      expect(result[0].receiver).toBeUndefined();
+      expect(queryCalls).toHaveLength(2);
+      expect(queryCalls.map((entry) => entry.argumentCount)).toEqual([1, 2]);
+      expect(queryCalls.every((entry) => entry.receiver === "repo")).toBe(true);
+      expect(queryCalls.every((entry) => entry.methodName === "queryUser")).toBe(
+        true,
+      );
+      expect(
+        queryCalls.every(
+          (entry) => entry.callerQualifiedName === "UserController#load",
+        ),
+      ).toBe(true);
+      expect(queryCalls[1]).toMatchObject({
+        callText: "repo.queryUser(id, false)",
+        columnNumber: 9,
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("keeps local object calls under their own owner and leaves top-level callers unowned", () => {
+      const { tree, parser, root } = parse(`fun topLevel() {
+    work()
+}
+
+class Outer {
+    fun outer() {
+        object Local {
+            fun inner() {
+                nested()
+            }
+        }
+        after()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const workCall = result.find((entry) => entry.callee === "work");
+
+      expect(workCall).toMatchObject({
+        caller: "topLevel",
+        callee: "work",
+        argumentCount: 0,
+        callText: "work()",
+      });
+      expect(workCall?.callerOwner).toBeUndefined();
+      expect(workCall?.callerQualifiedName).toBeUndefined();
+      expect(
+        result.some(
+          (entry) => entry.callerQualifiedName === "Local#outer",
+        ),
+      ).toBe(false);
+      expect(result).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            caller: "inner",
+            callee: "nested",
+            callerOwner: "Local",
+            callerQualifiedName: "Local#inner",
+          }),
+          expect.objectContaining({
+            caller: "outer",
+            callee: "after",
+            callerOwner: "Outer",
+            callerQualifiedName: "Outer#outer",
+          }),
+        ]),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
   });
 
   // ---- HTTP Endpoint Extraction ----

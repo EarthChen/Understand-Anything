@@ -265,17 +265,17 @@ describe("ObjcExtractor", () => {
       const result = extractor.extractCallGraph(root);
 
       expect(result).toHaveLength(3);
-      expect(result[0]).toEqual({
+      expect(result[0]).toMatchObject({
         caller: "process",
         callee: "self.validate",
         lineNumber: 3,
       });
-      expect(result[1]).toEqual({
+      expect(result[1]).toMatchObject({
         caller: "process",
         callee: "repo.save",
         lineNumber: 4,
       });
-      expect(result[2]).toEqual({
+      expect(result[2]).toMatchObject({
         caller: "process",
         callee: "obj.insertObject:atIndex:",
         lineNumber: 5,
@@ -293,6 +293,53 @@ describe("ObjcExtractor", () => {
       const result = extractor.extractCallGraph(root);
 
       expect(result).toHaveLength(0);
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("records message metadata so selectors and owning methods stay unambiguous", () => {
+      const { tree, parser, root } = parse(`@implementation Svc
+- (void)process {
+  [self validate];
+  [repo save];
+  [obj insertObject:item atIndex:idx];
+}
+@end
+`);
+      const result = extractor.extractCallGraph(root);
+
+      expect(result).toHaveLength(3);
+      expect(result[0]).toMatchObject({
+        caller: "process",
+        callee: "self.validate",
+        lineNumber: 3,
+        columnNumber: 3,
+        receiver: "self",
+        methodName: "validate",
+        argumentCount: 0,
+        callText: "[self validate]",
+        callerOwner: "Svc",
+        callerQualifiedName: "Svc#process",
+      });
+      expect(result[1]).toMatchObject({
+        receiver: "repo",
+        methodName: "save",
+        argumentCount: 0,
+        callText: "[repo save]",
+      });
+      expect(result[2]).toMatchObject({
+        caller: "process",
+        callee: "obj.insertObject:atIndex:",
+        lineNumber: 5,
+        columnNumber: 3,
+        receiver: "obj",
+        methodName: "insertObject:atIndex:",
+        argumentCount: 2,
+        callText: "[obj insertObject:item atIndex:idx]",
+        callerOwner: "Svc",
+        callerQualifiedName: "Svc#process",
+      });
 
       tree.delete();
       parser.delete();

@@ -330,9 +330,25 @@ export class KotlinExtractor implements LanguageExtractor {
   extractCallGraph(rootNode: TreeSitterNode): CallGraphEntry[] {
     const entries: CallGraphEntry[] = [];
     const functionStack: string[] = [];
+    const ownerStack: string[] = [];
 
     const walkForCalls = (node: TreeSitterNode) => {
       let pushedName = false;
+      let pushedOwner = false;
+      const savedFunctionStack = functionStack.slice();
+      const isolatesFunctionScope = this.isOwnerDeclaration(node);
+
+      if (isolatesFunctionScope) {
+        functionStack.length = 0;
+      }
+
+      if (this.isOwnerDeclaration(node)) {
+        const ownerName = this.extractDeclarationName(node);
+        if (ownerName) {
+          ownerStack.push(ownerName);
+          pushedOwner = true;
+        }
+      }
 
       if (node.type === "function_declaration") {
         const nameNode = node.childForFieldName("name") ?? findChild(node, "identifier");
@@ -345,10 +361,21 @@ export class KotlinExtractor implements LanguageExtractor {
       if (node.type === "call_expression" && functionStack.length > 0) {
         const callee = this.extractCallExpressionName(node);
         if (callee) {
+          const caller = functionStack[functionStack.length - 1];
+          const callerOwner = ownerStack[ownerStack.length - 1];
+          const receiver = this.extractReceiver(callee);
+          const methodName = this.extractMethodName(callee);
           entries.push({
-            caller: functionStack[functionStack.length - 1],
+            caller,
             callee,
             lineNumber: node.startPosition.row + 1,
+            columnNumber: node.startPosition.column + 1,
+            ...(receiver ? { receiver } : {}),
+            methodName,
+            argumentCount: this.extractArgumentCount(node),
+            callText: node.text,
+            ...(callerOwner ? { callerOwner } : {}),
+            ...(callerOwner ? { callerQualifiedName: `${callerOwner}#${caller}` } : {}),
           });
         }
       }
@@ -360,6 +387,13 @@ export class KotlinExtractor implements LanguageExtractor {
 
       if (pushedName) {
         functionStack.pop();
+      }
+      if (pushedOwner) {
+        ownerStack.pop();
+      }
+      if (isolatesFunctionScope) {
+        functionStack.length = 0;
+        functionStack.push(...savedFunctionStack);
       }
     };
 
@@ -375,6 +409,34 @@ export class KotlinExtractor implements LanguageExtractor {
     if (identifier) return identifier.text;
 
     return null;
+  }
+
+  private isOwnerDeclaration(node: TreeSitterNode): boolean {
+    return node.type === "class_declaration" || node.type === "object_declaration";
+  }
+
+  private extractDeclarationName(node: TreeSitterNode): string | null {
+    return (
+      node.childForFieldName("name") ??
+      findChild(node, "identifier")
+    )?.text ?? null;
+  }
+
+  private extractReceiver(callee: string): string | undefined {
+    const dotIndex = callee.lastIndexOf(".");
+    return dotIndex === -1 ? undefined : callee.slice(0, dotIndex);
+  }
+
+  private extractMethodName(callee: string): string {
+    const dotIndex = callee.lastIndexOf(".");
+    return dotIndex === -1 ? callee : callee.slice(dotIndex + 1);
+  }
+
+  private extractArgumentCount(node: TreeSitterNode): number {
+    const argsNode = findChild(node, "value_arguments");
+    if (!argsNode) return 0;
+
+    return findChildren(argsNode, "value_argument").length;
   }
 
   private extractImport(
