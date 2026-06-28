@@ -14,6 +14,7 @@
  *   # 单次执行
  *   node daily-update.mjs <project_root> [options]
  *   node daily-update.mjs /path/to/project --mode reextract --pull
+ *   node daily-update.mjs /path/to/project --mode reextract --force --dry-run
  *   node daily-update.mjs /path/to/project --cli claude --mode full --pull
  *
  *   # 常驻调度（替代 cron）
@@ -26,6 +27,7 @@
  *   --phases kg,domain,wiki,business  Phases to run in full mode (default: all)
  *   --language zh|en            Output language (default: zh)
  *   --pull                      Git pull before update
+ *   --force                     Use all services instead of only changed services; primarily for reextract
  *   --dry-run                   Preview without executing
  *   --schedule "HH:MM"|"everyNh" 内置定时：每天指定时间 或 每 N 小时执行
  */
@@ -63,6 +65,7 @@ const MODE = getFlag('mode', 'full');         // full = 含 LLM 的完整流程;
 const LANGUAGE = getFlag('language', 'zh');
 const PHASES = getFlag('phases', 'all');       // 逗号分隔: kg,domain,wiki,business
 const DO_PULL = args.includes('--pull');
+const FORCE = args.includes('--force');
 const DRY_RUN = args.includes('--dry-run');
 const SCHEDULE = getFlag('schedule', '');      // "02:00" 或 "*/4h"
 
@@ -335,6 +338,7 @@ async function runOnce() {
   log(`CLI:      ${CLI_TOOL}`);
   log(`Language: ${LANGUAGE}`);
   log(`Pull:     ${DO_PULL}`);
+  log(`Force:    ${FORCE}`);
 
   const totalStart = Date.now();
   const failures = [];
@@ -346,8 +350,15 @@ async function runOnce() {
   const allServices = getServicePaths(system);
   log(`Services: ${allServices.length} total`);
 
-  const changed = getChangedServices(allServices);
-  if (changed.length === 0) {
+  const changed = FORCE ? allServices : getChangedServices(allServices);
+  if (FORCE) {
+    if (MODE === 'reextract') {
+      log('Force mode: reextract target set to all services.');
+    } else {
+      log('Force mode: target set to all services.');
+    }
+  }
+  if (!FORCE && changed.length === 0) {
     log('No services have code changes since last analysis.');
     if (MODE === 'reextract') {
       log('Nothing to reextract. Done.');
