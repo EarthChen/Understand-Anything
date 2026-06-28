@@ -179,7 +179,8 @@ When the user asks "who calls X", "how many places call X", or similar call-site
 **`--exact` decision rules:**
 - `--callee queryUserExtend --exact` matches the exact method name and excludes substring matches like `queryUserExtendList`.
 - `--callee userProfileMoaWrapperService.queryUserExtend --exact` matches exact receiver + method.
-- `--callee UserProfileMoaWrapperService#queryUserExtend --exact` and `FQN#method` use the owner-to-lowerCamel receiver heuristic. If that returns 0 results, retry `--callee queryUserExtend --exact`.
+- When the user provides an IDE-style reference such as `com.example.UserService#queryUserExtend`, pass it directly as `--callee` with `--exact`. Do not manually convert it to a receiver name. If the query returns no rows, retry with `Class#method`, then method-only plus `--argc` when the user gave argument count.
+- `--callee UserProfileMoaWrapperService#queryUserExtend --exact` and `FQN#method` first use resolved callee owner metadata when available, then fall back to legacy matching for old indexes.
 - `--caller getQuickMessage --exact` matches the exact caller method.
 - `--caller OrderService#process --exact` requires structured reextract data with `callerQualifiedName`; old indexes cannot answer owner-qualified caller queries and can only do method-name exact.
 - `--argc N` filters only by argument count. It does not parse argument types; use it for overload or same-name call triage.

@@ -193,7 +193,7 @@ python3 ua_query.py ask --query "PK对战,PKBattle" --platform android --depth f
 # Callgraph: who calls queryUserExtend (exact method)
 python3 ua_query.py --format md structure --service ultron-composite --callee "queryUserExtend" --exact
 
-# Callgraph: owner-qualified callee heuristic; falls back to plain method if needed
+# Callgraph: owner-qualified exact callee; falls back for old indexes if needed
 python3 ua_query.py --format md structure --service ultron-composite \
   --callee "UserProfileMoaWrapperService#queryUserExtend" --exact
 
@@ -205,7 +205,14 @@ python3 ua_query.py --format md structure --service ultron-composite \
 python3 ua_query.py --format md structure --service ultron-composite --caller "getQuickMessage" --exact
 ```
 
-For callgraph exact callee search, X can be a method (`queryUserExtend`), `receiver.method`, or `Class#method` / `FQN#method`; owner-qualified callee matching is an owner-to-lowerCamel receiver heuristic, not true AST owner matching. For caller exact search, use a plain method; `Class#method` / `FQN#method` requires structured `callerQualifiedName` data, and caller search has no `receiver.method` semantics. Use `--argc N` only to triage overloads by argument count; it does not parse argument types.
+For callgraph exact callee search:
+- `--exact --callee FQN#method` first matches AST-resolved `calleeQualifiedName` when the structure index was generated after the AST resolver change.
+- `--exact --callee Class#method` matches resolved `calleeOwner` / qualified owner first, then falls back to the legacy lower-camel receiver heuristic for old indexes.
+- `--exact --callee methodName` remains useful for quick method-name lookup across all owners.
+- Use `--argc N` with exact callee queries to split overloads by argument count. Same-arity overloads are not separated by this MVP.
+- For existing projects, run `daily-update.mjs --mode reextract --force` to regenerate structure indexes with resolved callee metadata. Upper KG/wiki data does not need to be regenerated for callgraph exact matching.
+
+For caller exact search, use a plain method; `Class#method` / `FQN#method` requires structured `callerQualifiedName` data, and caller search has no `receiver.method` semantics.
 
 ---
 
@@ -403,7 +410,7 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "Which classes use OrderDTO?" / "谁用了OrderDTO？" | `structure --service S --param-type OrderDTO` + `--return-type OrderDTO` | Type usage across codebase |
 | **Dependency & Impact** |||
 | "What breaks if I change X?" / "改X会影响什么？" | `impact --service S --symbol X --depth 3 --direction inbound` | Transitive impact analysis |
-| "Who calls X?" / "谁调用了X？" | `structure --service S --callee "X" --exact` → parallel across services | X may be method, `receiver.method`, or `Class#method` / `FQN#method`; owner-qualified callee is a lowerCamel receiver heuristic; add `--argc N` only for overload triage |
+| "Who calls X?" / "谁调用了X？" | `structure --service S --callee "X" --exact` → parallel across services | X may be method, `receiver.method`, or `Class#method` / `FQN#method`; resolved owner metadata is used first when available; add `--argc N` only for overload triage |
 | "What does X call?" / "X调用了谁？" | `structure --service S --caller "X" --exact` | Use a plain method; `Class#method` / `FQN#method` needs structured `callerQualifiedName`; no `receiver.method` semantics |
 | "Which tests for changed files?" / "改了要跑哪些测试？" | `affected --service S --files src/X.java,src/Y.java --depth 2` | Affected test discovery — **batch all changed files in one call** |
 | "Most critical classes?" / "最关键的类？" | `hotspots --service S --type class --limit 20` | Fan-in/fan-out hotspot scoring |
