@@ -756,6 +756,57 @@ public class QuickMessageService {
         tree.delete();
         parser.delete();
       });
+
+      it("keeps local bindings scoped to blocks and resolves this-qualified fields", () => {
+        const { tree, parser, root } = parse(`package com.example;
+
+import com.remote.FieldService;
+
+public class ScopeService {
+    private FieldService service;
+
+    public void run(boolean ok) {
+        if (ok) {
+            LocalService service = new LocalService();
+            service.call();
+        }
+        this.service.call();
+        service.call();
+    }
+}
+`);
+        const result = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "call");
+
+        expect(result).toEqual([
+          expect.objectContaining({
+            receiver: "service",
+            receiverType: "LocalService",
+            receiverQualifiedType: "com.example.LocalService",
+            calleeOwner: "LocalService",
+            calleeQualifiedName: "com.example.LocalService#call",
+            resolutionKind: "local",
+          }),
+          expect.objectContaining({
+            receiver: "this.service",
+            receiverType: "FieldService",
+            receiverQualifiedType: "com.remote.FieldService",
+            calleeOwner: "FieldService",
+            calleeQualifiedName: "com.remote.FieldService#call",
+            resolutionKind: "field",
+          }),
+          expect.objectContaining({
+            receiver: "service",
+            receiverType: "FieldService",
+            receiverQualifiedType: "com.remote.FieldService",
+            calleeOwner: "FieldService",
+            calleeQualifiedName: "com.remote.FieldService#call",
+            resolutionKind: "field",
+          }),
+        ]);
+
+        tree.delete();
+        parser.delete();
+      });
     });
   });
 

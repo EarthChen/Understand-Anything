@@ -366,6 +366,11 @@ export class JavaExtractor implements LanguageExtractor {
         this.bindParameters(node, typeScopes, typeContext);
       }
 
+      if (node.type === "block") {
+        typeScopes.pushScope();
+        pushedTypeScope = true;
+      }
+
       if (node.type === "local_variable_declaration") {
         this.bindLocalVariables(node, typeScopes, typeContext);
       }
@@ -670,7 +675,10 @@ export class JavaExtractor implements LanguageExtractor {
       knownTypes: Map<string, string>;
     },
   ): Partial<CallGraphEntry> {
-    const binding = typeScopes.resolve(receiver);
+    const lookupName = receiver.startsWith("this.")
+      ? receiver.slice("this.".length)
+      : receiver;
+    const binding = typeScopes.resolve(lookupName);
     if (binding) {
       return {
         receiverType: binding.type,
