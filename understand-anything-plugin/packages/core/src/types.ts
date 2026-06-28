@@ -597,6 +597,18 @@ export interface CallGraphEntry {
   caller: string;
   callee: string;
   lineNumber: number;
+  columnNumber?: number;
+  receiver?: string;
+  methodName?: string;
+  argumentCount?: number;
+  callText?: string;
+  callerOwner?: string;
+  callerQualifiedName?: string;
+  receiverType?: string;
+  receiverQualifiedType?: string;
+  calleeOwner?: string;
+  calleeQualifiedName?: string;
+  resolutionKind?: "field" | "parameter" | "local" | "static" | "implicit-owner" | "heuristic" | "unresolved";
 }
 
 export interface AnalyzerPlugin {

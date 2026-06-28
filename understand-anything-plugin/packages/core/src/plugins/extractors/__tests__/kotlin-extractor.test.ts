@@ -72,6 +72,61 @@ describe("KotlinExtractor", () => {
       tree.delete();
       parser.delete();
     });
+
+    it("does not resolve nested class receivers from outer class fields", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+class Outer {
+    private val dep: FieldDep = FieldDep()
+
+    class Inner {
+        fun run() {
+            dep.call()
+        }
+    }
+}
+`);
+      const call = extractor.extractCallGraph(root).find((entry) => entry.methodName === "call");
+
+      expect(call).toMatchObject({
+        caller: "run",
+        callerOwner: "Inner",
+        receiver: "dep",
+        resolutionKind: "unresolved",
+      });
+      expect(call?.calleeOwner).toBeUndefined();
+      expect(call?.calleeQualifiedName).toBeUndefined();
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("does not resolve companion object receivers from outer class fields", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+class Outer {
+    private val dep: FieldDep = FieldDep()
+
+    companion object {
+        fun run() {
+            dep.call()
+        }
+    }
+}
+`);
+      const call = extractor.extractCallGraph(root).find((entry) => entry.methodName === "call");
+
+      expect(call).toMatchObject({
+        caller: "run",
+        receiver: "dep",
+        resolutionKind: "unresolved",
+      });
+      expect(call?.calleeOwner).toBeUndefined();
+      expect(call?.calleeQualifiedName).toBeUndefined();
+
+      tree.delete();
+      parser.delete();
+    });
   });
 
   describe("extractStructure - classes", () => {
@@ -358,6 +413,417 @@ class OrderController : BaseController(), OrderService {
       expect(result).toHaveLength(2);
       expect(result[0].lineNumber).toBe(3);
       expect(result[1].lineNumber).toBe(4);
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("records structured metadata so overloads can be distinguished inside an owner", () => {
+      const { tree, parser, root } = parse(`class UserController {
+    fun load(id: String) {
+        refresh()
+        repo.queryUser(id)
+        repo.queryUser(id, false)
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const queryCalls = result.filter(
+        (entry) => entry.callee === "repo.queryUser",
+      );
+
+      expect(result[0]).toMatchObject({
+        caller: "load",
+        callee: "refresh",
+        lineNumber: 3,
+        columnNumber: 9,
+        methodName: "refresh",
+        argumentCount: 0,
+        callText: "refresh()",
+        callerOwner: "UserController",
+        callerQualifiedName: "UserController#load",
+      });
+      expect(result[0].receiver).toBeUndefined();
+      expect(queryCalls).toHaveLength(2);
+      expect(queryCalls.map((entry) => entry.argumentCount)).toEqual([1, 2]);
+      expect(queryCalls.every((entry) => entry.receiver === "repo")).toBe(true);
+      expect(queryCalls.every((entry) => entry.methodName === "queryUser")).toBe(
+        true,
+      );
+      expect(
+        queryCalls.every(
+          (entry) => entry.callerQualifiedName === "UserController#load",
+        ),
+      ).toBe(true);
+      expect(queryCalls[1]).toMatchObject({
+        callText: "repo.queryUser(id, false)",
+        columnNumber: 9,
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("counts trailing lambda as an argument and keeps it in call text", () => {
+      const { tree, parser, root } = parse(`class Svc {
+    fun process() {
+        repo.save(1) { done() }
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const saveCall = result.find((entry) => entry.methodName === "save");
+
+      expect(saveCall).toMatchObject({
+        caller: "process",
+        callee: "repo.save",
+        receiver: "repo",
+        methodName: "save",
+        argumentCount: 2,
+        callText: "repo.save(1) { done() }",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("cleans structured receiver for null-safe and non-null Kotlin calls", () => {
+      const { tree, parser, root } = parse(`class Svc {
+    fun process() {
+        repo?.query(1)
+        repo!!.query(2)
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const queryCalls = result.filter((entry) => entry.methodName === "query");
+
+      expect(queryCalls).toHaveLength(2);
+      expect(queryCalls.map((entry) => entry.callee)).toEqual([
+        "repo?.query",
+        "repo!!.query",
+      ]);
+      expect(queryCalls.every((entry) => entry.receiver === "repo")).toBe(true);
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("keeps local object calls under their own owner and leaves top-level callers unowned", () => {
+      const { tree, parser, root } = parse(`fun topLevel() {
+    work()
+}
+
+class Outer {
+    fun outer() {
+        object Local {
+            fun inner() {
+                nested()
+            }
+        }
+        after()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const workCall = result.find((entry) => entry.callee === "work");
+
+      expect(workCall).toMatchObject({
+        caller: "topLevel",
+        callee: "work",
+        argumentCount: 0,
+        callText: "work()",
+      });
+      expect(workCall?.callerOwner).toBeUndefined();
+      expect(workCall?.callerQualifiedName).toBeUndefined();
+      expect(
+        result.some(
+          (entry) => entry.callerQualifiedName === "Local#outer",
+        ),
+      ).toBe(false);
+      expect(result).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            caller: "inner",
+            callee: "nested",
+            callerOwner: "Local",
+            callerQualifiedName: "Local#inner",
+          }),
+          expect.objectContaining({
+            caller: "outer",
+            callee: "after",
+            callerOwner: "Outer",
+            callerQualifiedName: "Outer#outer",
+          }),
+        ]),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("resolves Kotlin receiver types for fields, parameters, locals, and static-looking calls", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+import com.remote.UserProfileMoaWrapperService
+
+class QuickMessageService(
+    private val constructorService: UserProfileMoaWrapperService
+) {
+    private val fieldService: UserProfileMoaWrapperService? = null
+
+    fun getQuickMessage(parameterService: UserProfileMoaWrapperService) {
+        fieldService?.queryUserExtend(1)
+        constructorService.queryUserExtend(1, 2)
+        parameterService.queryUserExtend()
+        val fieldService: OtherService = OtherService()
+        fieldService.queryUserExtend()
+        UnknownService.queryUserExtend()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "queryUserExtend");
+
+      expect(result).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          receiver: "fieldService",
+          receiverType: "UserProfileMoaWrapperService",
+          receiverQualifiedType: "com.remote.UserProfileMoaWrapperService",
+          calleeOwner: "UserProfileMoaWrapperService",
+          calleeQualifiedName: "com.remote.UserProfileMoaWrapperService#queryUserExtend",
+          resolutionKind: "field",
+        }),
+        expect.objectContaining({
+          receiver: "constructorService",
+          argumentCount: 2,
+          receiverType: "UserProfileMoaWrapperService",
+          receiverQualifiedType: "com.remote.UserProfileMoaWrapperService",
+          resolutionKind: "field",
+        }),
+        expect.objectContaining({
+          receiver: "parameterService",
+          receiverType: "UserProfileMoaWrapperService",
+          receiverQualifiedType: "com.remote.UserProfileMoaWrapperService",
+          resolutionKind: "parameter",
+        }),
+        expect.objectContaining({
+          receiver: "fieldService",
+          receiverType: "OtherService",
+          receiverQualifiedType: "com.example.OtherService",
+          calleeQualifiedName: "com.example.OtherService#queryUserExtend",
+          resolutionKind: "local",
+        }),
+        expect.objectContaining({
+          receiver: "UnknownService",
+          receiverQualifiedType: "com.example.UnknownService",
+          calleeQualifiedName: "com.example.UnknownService#queryUserExtend",
+          resolutionKind: "static",
+        }),
+      ]));
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("does not resolve chained receiver expressions as static calls", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+class Svc {
+    fun process() {
+        Factory.create().queryUserExtend()
+        pkg.Factory.queryUserExtend()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "queryUserExtend");
+
+      expect(result).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          receiver: "Factory.create()",
+          resolutionKind: "unresolved",
+        }),
+        expect.objectContaining({
+          receiver: "pkg.Factory",
+          resolutionKind: "unresolved",
+        }),
+      ]));
+      expect(result).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ resolutionKind: "static" }),
+      ]));
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("keeps block-local receiver bindings from leaking after the block", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+class ScopeService {
+    private val dep: FieldDep = FieldDep()
+
+    fun run(flag: Boolean) {
+        if (flag) {
+            val dep: LocalDep = LocalDep()
+            dep.call()
+        }
+        dep.call()
+    }
+}
+`);
+      const calls = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "call");
+
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatchObject({
+        receiver: "dep",
+        receiverType: "LocalDep",
+        receiverQualifiedType: "com.example.LocalDep",
+        calleeQualifiedName: "com.example.LocalDep#call",
+        resolutionKind: "local",
+      });
+      expect(calls[1]).toMatchObject({
+        receiver: "dep",
+        receiverType: "FieldDep",
+        receiverQualifiedType: "com.example.FieldDep",
+        calleeQualifiedName: "com.example.FieldDep#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("resolves initializer receiver before binding the new local property", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+class InitService {
+    private val dep: FieldDep = FieldDep()
+
+    fun run() {
+        val dep: LocalDep = dep.wrap()
+        dep.call()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const wrapCall = result.find((entry) => entry.methodName === "wrap");
+      const call = result.find((entry) => entry.methodName === "call");
+
+      expect(wrapCall).toMatchObject({
+        receiver: "dep",
+        receiverType: "FieldDep",
+        receiverQualifiedType: "com.example.FieldDep",
+        calleeQualifiedName: "com.example.FieldDep#wrap",
+        resolutionKind: "field",
+      });
+      expect(call).toMatchObject({
+        receiver: "dep",
+        receiverType: "LocalDep",
+        receiverQualifiedType: "com.example.LocalDep",
+        calleeQualifiedName: "com.example.LocalDep#call",
+        resolutionKind: "local",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("keeps lambda-local receiver bindings from leaking after a trailing lambda", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+class LambdaService {
+    private val dep: FieldDep = FieldDep()
+
+    fun run() {
+        withBlock {
+            val dep: LocalDep = LocalDep()
+            dep.call()
+        }
+        dep.call()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const withBlockCall = result.find((entry) => entry.methodName === "withBlock");
+      const calls = result.filter((entry) => entry.methodName === "call");
+
+      expect(withBlockCall).toMatchObject({
+        callee: "withBlock",
+        argumentCount: 1,
+        callText: expect.stringContaining("withBlock"),
+      });
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatchObject({
+        receiver: "dep",
+        receiverType: "LocalDep",
+        receiverQualifiedType: "com.example.LocalDep",
+        calleeQualifiedName: "com.example.LocalDep#call",
+        resolutionKind: "local",
+      });
+      expect(calls[1]).toMatchObject({
+        receiver: "dep",
+        receiverType: "FieldDep",
+        receiverQualifiedType: "com.example.FieldDep",
+        calleeQualifiedName: "com.example.FieldDep#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("resolves explicit this-qualified receivers to fields despite parameter or local shadows", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+class ExplicitFieldService {
+    private val dep: FieldDep = FieldDep()
+
+    fun runWithParameter(dep: OtherDep) {
+        dep.call()
+        this.dep.call()
+    }
+
+    fun runWithLocal() {
+        val dep: OtherDep = OtherDep()
+        dep.call()
+        this.dep.call()
+    }
+}
+`);
+      const calls = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "call");
+
+      expect(calls).toHaveLength(4);
+      expect(calls[0]).toMatchObject({
+        caller: "runWithParameter",
+        receiver: "dep",
+        receiverType: "OtherDep",
+        receiverQualifiedType: "com.example.OtherDep",
+        calleeQualifiedName: "com.example.OtherDep#call",
+        resolutionKind: "parameter",
+      });
+      expect(calls[1]).toMatchObject({
+        caller: "runWithParameter",
+        receiver: "this.dep",
+        receiverType: "FieldDep",
+        receiverQualifiedType: "com.example.FieldDep",
+        calleeQualifiedName: "com.example.FieldDep#call",
+        resolutionKind: "field",
+      });
+      expect(calls[2]).toMatchObject({
+        caller: "runWithLocal",
+        receiver: "dep",
+        receiverType: "OtherDep",
+        receiverQualifiedType: "com.example.OtherDep",
+        calleeQualifiedName: "com.example.OtherDep#call",
+        resolutionKind: "local",
+      });
+      expect(calls[3]).toMatchObject({
+        caller: "runWithLocal",
+        receiver: "this.dep",
+        receiverType: "FieldDep",
+        receiverQualifiedType: "com.example.FieldDep",
+        calleeQualifiedName: "com.example.FieldDep#call",
+        resolutionKind: "field",
+      });
 
       tree.delete();
       parser.delete();

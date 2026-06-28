@@ -293,5 +293,392 @@ class Foo {}
       tree.delete();
       parser.delete();
     });
+
+    it("records structured metadata so overloads can be distinguished inside an owner", () => {
+      const { tree, parser, root } = parse(`class UserController {
+    func load(id: String) {
+        refresh()
+        repo.queryUser(id)
+        repo.queryUser(id, false)
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const queryCalls = result.filter(
+        (entry) => entry.callee === "repo.queryUser",
+      );
+
+      expect(result[0]).toMatchObject({
+        caller: "load",
+        callee: "refresh",
+        lineNumber: 3,
+        columnNumber: 9,
+        methodName: "refresh",
+        argumentCount: 0,
+        callText: "refresh()",
+        callerOwner: "UserController",
+        callerQualifiedName: "UserController#load",
+      });
+      expect(result[0].receiver).toBeUndefined();
+      expect(queryCalls).toHaveLength(2);
+      expect(queryCalls.map((entry) => entry.argumentCount)).toEqual([1, 2]);
+      expect(queryCalls.every((entry) => entry.receiver === "repo")).toBe(true);
+      expect(queryCalls.every((entry) => entry.methodName === "queryUser")).toBe(
+        true,
+      );
+      expect(
+        queryCalls.every(
+          (entry) => entry.callerQualifiedName === "UserController#load",
+        ),
+      ).toBe(true);
+      expect(queryCalls[1]).toMatchObject({
+        callText: "repo.queryUser(id, false)",
+        columnNumber: 9,
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("counts trailing closures as call arguments", () => {
+      const { tree, parser, root } = parse(`class Svc {
+    func process() {
+        repo.save(1) { done() }
+        run { work() }
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const saveCall = result.find((entry) => entry.methodName === "save");
+      const runCall = result.find((entry) => entry.callee === "run");
+
+      expect(saveCall).toMatchObject({
+        caller: "process",
+        callee: "repo.save",
+        receiver: "repo",
+        methodName: "save",
+        argumentCount: 2,
+      });
+      expect(runCall).toMatchObject({
+        caller: "process",
+        callee: "run",
+        methodName: "run",
+        argumentCount: 1,
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("resolves field, parameter, local, and explicit self receivers", () => {
+      const { tree, parser, root } = parse(`class QuickMessageService {
+    private let fieldService: UserProfileMoaWrapperService
+
+    func getQuickMessage(parameterService: UserProfileMoaWrapperService) {
+        fieldService.queryUserExtend(1)
+        parameterService.queryUserExtend()
+        let fieldService: OtherService = OtherService()
+        fieldService.queryUserExtend()
+        self.fieldService.queryUserExtend()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const queryCalls = result.filter(
+        (entry) => entry.methodName === "queryUserExtend",
+      );
+
+      expect(queryCalls).toHaveLength(4);
+      expect(queryCalls[0]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#queryUserExtend",
+        resolutionKind: "field",
+      });
+      expect(queryCalls[1]).toMatchObject({
+        receiver: "parameterService",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#queryUserExtend",
+        resolutionKind: "parameter",
+      });
+      expect(queryCalls[2]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "OtherService",
+        receiverQualifiedType: "OtherService",
+        calleeOwner: "OtherService",
+        calleeQualifiedName: "OtherService#queryUserExtend",
+        resolutionKind: "local",
+      });
+      expect(queryCalls[3]).toMatchObject({
+        receiver: "self.fieldService",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#queryUserExtend",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("binds Swift labeled parameters by their local names", () => {
+      const { tree, parser, root } = parse(`class LabelService {
+    func run(_ parameterService: UserProfileMoaWrapperService, for otherService: OtherService) {
+        parameterService.queryUserExtend()
+        otherService.queryUserExtend()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const queryCalls = result.filter(
+        (entry) => entry.methodName === "queryUserExtend",
+      );
+
+      expect(queryCalls).toHaveLength(2);
+      expect(queryCalls[0]).toMatchObject({
+        receiver: "parameterService",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#queryUserExtend",
+        resolutionKind: "parameter",
+      });
+      expect(queryCalls[1]).toMatchObject({
+        receiver: "otherService",
+        receiverType: "OtherService",
+        receiverQualifiedType: "OtherService",
+        calleeOwner: "OtherService",
+        calleeQualifiedName: "OtherService#queryUserExtend",
+        resolutionKind: "parameter",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("does not leak block locals outside Swift lexical scopes", () => {
+      const { tree, parser, root } = parse(`class ScopeService {
+    private let fieldService: FieldService
+
+    func run(flag: Bool) {
+        if flag {
+            let fieldService: LocalService = LocalService()
+            fieldService.call()
+        }
+        fieldService.call()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const callEntries = result.filter((entry) => entry.methodName === "call");
+
+      expect(callEntries).toHaveLength(2);
+      expect(callEntries[0]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "LocalService",
+        receiverQualifiedType: "LocalService",
+        calleeOwner: "LocalService",
+        calleeQualifiedName: "LocalService#call",
+        resolutionKind: "local",
+      });
+      expect(callEntries[1]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "FieldService",
+        receiverQualifiedType: "FieldService",
+        calleeOwner: "FieldService",
+        calleeQualifiedName: "FieldService#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("does not resolve chained self receivers as direct field calls", () => {
+      const { tree, parser, root } = parse(`class ChainedSelfService {
+    private let dep: DepService
+
+    func run() {
+        self.dep.child.call()
+        self.dep.call()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const callEntries = result.filter((entry) => entry.methodName === "call");
+
+      expect(callEntries).toHaveLength(2);
+      expect(callEntries[0]).toMatchObject({
+        receiver: "self.dep.child",
+        resolutionKind: "unresolved",
+      });
+      expect(callEntries[0].calleeOwner).toBeUndefined();
+      expect(callEntries[0].calleeQualifiedName).toBeUndefined();
+      expect(callEntries[1]).toMatchObject({
+        receiver: "self.dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeOwner: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("reuses class fields when resolving calls inside Swift extensions", () => {
+      const { tree, parser, root } = parse(`class ExtensionService {
+    private let dep: DepService
+}
+
+extension ExtensionService {
+    func run() {
+        dep.call()
+        self.dep.call()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const callEntries = result.filter((entry) => entry.methodName === "call");
+
+      expect(callEntries).toHaveLength(2);
+      expect(callEntries[0]).toMatchObject({
+        receiver: "dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeOwner: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
+      expect(callEntries[1]).toMatchObject({
+        receiver: "self.dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeOwner: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("does not resolve nested class receivers from outer class fields", () => {
+      const { tree, parser, root } = parse(`class Outer {
+    private let dep: FieldDep
+
+    class Inner {
+        func run() {
+            dep.call()
+        }
+    }
+}
+`);
+      const call = extractor.extractCallGraph(root).find((entry) => entry.methodName === "call");
+
+      expect(call).toMatchObject({
+        caller: "run",
+        callerOwner: "Inner",
+        receiver: "dep",
+        resolutionKind: "unresolved",
+      });
+      expect(call?.calleeOwner).toBeUndefined();
+      expect(call?.calleeQualifiedName).toBeUndefined();
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("resolves optional field and local receivers", () => {
+      const { tree, parser, root } = parse(`class OptionalService {
+    private let dep: DepService?
+
+    func run() {
+        let local: DepService? = nil
+        dep?.call()
+        local?.call()
+    }
+}
+`);
+      const calls = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "call");
+
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatchObject({
+        receiver: "dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
+      expect(calls[1]).toMatchObject({
+        receiver: "local",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "local",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("keeps nested class calls under their own owner and leaves top-level callers unowned", () => {
+      const { tree, parser, root } = parse(`func topLevel() {
+    work()
+}
+
+class Outer {
+    func outer() {
+        class Local {
+            func inner() {
+                nested()
+            }
+        }
+        after()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const workCall = result.find((entry) => entry.callee === "work");
+
+      expect(workCall).toMatchObject({
+        caller: "topLevel",
+        callee: "work",
+        argumentCount: 0,
+        callText: "work()",
+      });
+      expect(workCall?.callerOwner).toBeUndefined();
+      expect(workCall?.callerQualifiedName).toBeUndefined();
+      expect(
+        result.some(
+          (entry) => entry.callerQualifiedName === "Local#outer",
+        ),
+      ).toBe(false);
+      expect(result).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            caller: "inner",
+            callee: "nested",
+            callerOwner: "Local",
+            callerQualifiedName: "Local#inner",
+          }),
+          expect.objectContaining({
+            caller: "outer",
+            callee: "after",
+            callerOwner: "Outer",
+            callerQualifiedName: "Outer#outer",
+          }),
+        ]),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
   });
 });

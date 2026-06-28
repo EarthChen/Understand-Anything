@@ -1,4 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { buildResult, buildOutput } from "../../skills/understand/extract-structure.mjs";
 
 const file = (overrides = {}) => ({
@@ -131,5 +135,72 @@ describe("extract-structure buildResult", () => {
       expect(output.filesAnalyzed).toBe(0);
       expect(output.filesSkipped).toHaveLength(3);
     });
+  });
+});
+
+describe("extract-structure CLI", () => {
+  it("preserves resolved call graph metadata in the output JSON", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "ua-extract-structure-"));
+
+    try {
+      const projectRoot = join(tempRoot, "project");
+      mkdirSync(join(projectRoot, "src"), { recursive: true });
+      writeFileSync(
+        join(projectRoot, "src", "QuickMessage.java"),
+        `package com.example;
+
+import com.remote.UserProfileMoaWrapperService;
+
+public class QuickMessage {
+    private UserProfileMoaWrapperService userProfileMoaWrapperService;
+
+    public void getQuickMessage(String id) {
+        userProfileMoaWrapperService.queryUserExtend(id);
+    }
+}
+`,
+      );
+
+      const inputPath = join(tempRoot, "input.json");
+      const outputPath = join(tempRoot, "output.json");
+      writeFileSync(
+        inputPath,
+        JSON.stringify({
+          projectRoot,
+          fileList: [{
+            path: "src/QuickMessage.java",
+            language: "java",
+            sizeLines: 11,
+            fileCategory: "code",
+          }],
+          importData: {},
+        }),
+      );
+
+      const scriptPath = join(process.cwd(), "understand-anything-plugin", "skills", "understand", "extract-structure.mjs");
+      const result = spawnSync("node", [scriptPath, inputPath, outputPath], {
+        cwd: process.cwd(),
+        encoding: "utf-8",
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+
+      const output = JSON.parse(readFileSync(outputPath, "utf-8"));
+      const queryCall = output.results[0].callGraph.find((entry) => entry.callee === "userProfileMoaWrapperService.queryUserExtend");
+
+      expect(queryCall).toEqual(expect.objectContaining({
+        caller: "getQuickMessage",
+        receiver: "userProfileMoaWrapperService",
+        methodName: "queryUserExtend",
+        argumentCount: 1,
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "com.remote.UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "com.remote.UserProfileMoaWrapperService#queryUserExtend",
+        resolutionKind: "field",
+      }));
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });

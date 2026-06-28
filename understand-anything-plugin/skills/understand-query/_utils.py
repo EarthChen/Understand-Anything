@@ -188,7 +188,7 @@ def _format_markdown(data: Any) -> str:
         callee_q = query.get("callee") or ""
         caller_q = query.get("caller") or ""
         exact = query.get("exact", False)
-        mode = "exact" if exact else "substring"
+        mode = query.get("matchMode") or ("exact" if exact else "substring")
         if callee_q and caller_q:
             title = f'callee="{callee_q}" AND caller="{caller_q}" ({mode})'
         elif callee_q:
@@ -198,14 +198,33 @@ def _format_markdown(data: Any) -> str:
         lines = [f"# Callgraph Search: {title}", ""]
         results = data.get("results", [])
         if results:
-            lines.append("| File | Caller | Callee | Line |")
-            lines.append("|------|--------|--------|------|")
-            for r in results:
-                fp = r.get("filePath", "?")
-                # Shorten file path to last 2 segments for readability
-                parts = fp.replace("\\", "/").split("/")
-                short = "/".join(parts[-2:]) if len(parts) > 2 else fp
-                lines.append(f"| {short} | {r.get('caller', '?')} | {r.get('callee', '?')} | {r.get('lineNumber', '?')} |")
+            has_structured_fields = any(
+                "callText" in r or "argumentCount" in r or "callerQualifiedName" in r or "columnNumber" in r
+                for r in results
+            )
+            if has_structured_fields:
+                lines.append("| File | Caller | Callee | Args | Line | Call |")
+                lines.append("|------|--------|--------|------|------|------|")
+                for r in results:
+                    fp = r.get("filePath", "?")
+                    parts = fp.replace("\\", "/").split("/")
+                    short = parts[-1] if parts else fp
+                    caller = r.get("callerQualifiedName") or r.get("caller", "?")
+                    args = r.get("argumentCount", "")
+                    call = r.get("callText") or r.get("callee", "?")
+                    line = r.get("lineNumber", "?")
+                    if r.get("columnNumber") is not None:
+                        line = f"{line}:{r['columnNumber']}"
+                    lines.append(f"| {short} | {caller} | {r.get('callee', '?')} | {args} | {line} | {call} |")
+            else:
+                lines.append("| File | Caller | Callee | Line |")
+                lines.append("|------|--------|--------|------|")
+                for r in results:
+                    fp = r.get("filePath", "?")
+                    # Shorten file path to last 2 segments for readability
+                    parts = fp.replace("\\", "/").split("/")
+                    short = "/".join(parts[-2:]) if len(parts) > 2 else fp
+                    lines.append(f"| {short} | {r.get('caller', '?')} | {r.get('callee', '?')} | {r.get('lineNumber', '?')} |")
             lines.append("")
         else:
             lines.append("No callgraph matches found.")

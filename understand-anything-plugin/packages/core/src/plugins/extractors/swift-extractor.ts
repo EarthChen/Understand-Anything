@@ -1,5 +1,11 @@
 import type { StructuralAnalysis, CallGraphEntry, PropertyInfo } from "../../types.js";
 import type { LanguageExtractor, TreeSitterNode } from "./types.js";
+import {
+  buildQualifiedMethodName,
+  simpleTypeName,
+  TypeScopeStack,
+  type TypeBinding,
+} from "./callgraph-resolution.js";
 import { findChild, findChildren } from "./base-extractor.js";
 
 function extractFunctionParams(node: TreeSitterNode): string[] {
@@ -72,8 +78,11 @@ function extractPropertyName(node: TreeSitterNode): string | null {
 function extractPropertyType(node: TreeSitterNode): string | undefined {
   const typeAnnotation = findChild(node, "type_annotation");
   if (!typeAnnotation) return undefined;
-  const userType = findChild(typeAnnotation, "user_type");
-  return userType?.text;
+  const typeNode = findChild(typeAnnotation, "user_type")
+    ?? findChild(typeAnnotation, "optional_type")
+    ?? findChild(typeAnnotation, "array_type")
+    ?? findChild(typeAnnotation, "tuple_type");
+  return typeNode?.text;
 }
 
 function extractInheritanceSpecifiers(node: TreeSitterNode): {
@@ -138,27 +147,94 @@ export class SwiftExtractor implements LanguageExtractor {
   extractCallGraph(rootNode: TreeSitterNode): CallGraphEntry[] {
     const entries: CallGraphEntry[] = [];
     const functionStack: string[] = [];
+    const ownerStack: string[] = [];
+    const typeScopes = new TypeScopeStack();
+    const fieldScopes: Array<Map<string, TypeBinding>> = [];
+    const fieldsByOwner = new Map<string, Map<string, TypeBinding>>();
 
     const walkForCalls = (node: TreeSitterNode) => {
       let pushedName = false;
+      let pushedOwner = false;
+      let pushedFunctionScope = false;
+      let pushedOwnerScope = false;
+      let pushedBlockScope = false;
+      let savedOwnerTypeScopes: Array<Map<string, TypeBinding>> | undefined;
+      const savedFunctionStack = functionStack.slice();
+      const isolatesFunctionScope = this.isOwnerDeclaration(node);
+
+      if (isolatesFunctionScope) {
+        functionStack.length = 0;
+      }
+
+      if (this.isOwnerDeclaration(node)) {
+        const ownerName = this.extractDeclarationName(node);
+        if (ownerName) {
+          ownerStack.push(ownerName);
+          pushedOwner = true;
+        }
+        savedOwnerTypeScopes = typeScopes.snapshot();
+        typeScopes.reset();
+        typeScopes.pushScope();
+        pushedOwnerScope = true;
+        const fields = ownerName
+          ? fieldsByOwner.get(ownerName) ?? new Map<string, TypeBinding>()
+          : new Map<string, TypeBinding>();
+        if (ownerName) fieldsByOwner.set(ownerName, fields);
+        fieldScopes.push(fields);
+        this.bindOwnerFields(node, typeScopes, fields);
+      }
 
       if (node.type === "function_declaration") {
         const nameNode = node.childForFieldName("name") ?? findChild(node, "simple_identifier");
         if (nameNode) {
           functionStack.push(nameNode.text);
           pushedName = true;
+          typeScopes.pushScope();
+          pushedFunctionScope = true;
+          this.bindFunctionParameters(node, typeScopes);
         }
+      }
+
+      if (node.type === "statements" && functionStack.length > 0) {
+        typeScopes.pushScope();
+        pushedBlockScope = true;
       }
 
       if (node.type === "call_expression" && functionStack.length > 0) {
         const callee = this.extractCallExpressionName(node);
         if (callee) {
+          const caller = functionStack[functionStack.length - 1];
+          const callerOwner = ownerStack[ownerStack.length - 1];
+          const receiver = this.extractReceiver(callee);
+          const methodName = this.extractMethodName(callee);
           entries.push({
-            caller: functionStack[functionStack.length - 1],
+            caller,
             callee,
             lineNumber: node.startPosition.row + 1,
+            columnNumber: node.startPosition.column + 1,
+            ...(receiver ? { receiver } : {}),
+            methodName,
+            argumentCount: this.extractArgumentCount(node),
+            callText: node.text,
+            ...(callerOwner ? { callerOwner } : {}),
+            ...(callerOwner ? { callerQualifiedName: `${callerOwner}#${caller}` } : {}),
+            ...(receiver
+              ? this.resolveReceiver(receiver, methodName, typeScopes, fieldScopes)
+              : {}),
           });
         }
+      }
+
+      if (node.type === "property_declaration" && functionStack.length > 0) {
+        for (let i = 0; i < node.childCount; i++) {
+          const child = node.child(i);
+          if (child) walkForCalls(child);
+        }
+        this.bindTypedProperty(node, "local", typeScopes);
+        if (pushedBlockScope) {
+          typeScopes.popScope();
+        }
+        return;
       }
 
       for (let i = 0; i < node.childCount; i++) {
@@ -166,13 +242,137 @@ export class SwiftExtractor implements LanguageExtractor {
         if (child) walkForCalls(child);
       }
 
+      if (pushedBlockScope) {
+        typeScopes.popScope();
+      }
+      if (pushedFunctionScope) {
+        typeScopes.popScope();
+      }
       if (pushedName) {
         functionStack.pop();
+      }
+      if (pushedOwner) {
+        ownerStack.pop();
+      }
+      if (pushedOwnerScope) {
+        fieldScopes.pop();
+        typeScopes.popScope();
+      }
+      if (savedOwnerTypeScopes) {
+        typeScopes.restore(savedOwnerTypeScopes);
+      }
+      if (isolatesFunctionScope) {
+        functionStack.length = 0;
+        functionStack.push(...savedFunctionStack);
       }
     };
 
     walkForCalls(rootNode);
     return entries;
+  }
+
+  private bindOwnerFields(
+    node: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    fields: Map<string, TypeBinding>,
+  ): void {
+    for (const [name, binding] of fields) {
+      typeScopes.set(name, binding);
+    }
+
+    const body = node.childForFieldName("body")
+      ?? findChild(node, "class_body")
+      ?? findChild(node, "enum_class_body");
+    if (!body) return;
+
+    for (let i = 0; i < body.childCount; i++) {
+      const child = body.child(i);
+      if (child?.type === "property_declaration") {
+        this.bindTypedProperty(child, "field", typeScopes, fields);
+      }
+    }
+  }
+
+  private bindFunctionParameters(
+    node: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+  ): void {
+    for (const param of findChildren(node, "parameter")) {
+      const nameNode = param.childForFieldName("name");
+      const typeNode = findChild(param, "user_type")
+        ?? findChild(param, "array_type")
+        ?? findChild(param, "optional_type")
+        ?? findChild(param, "tuple_type");
+      if (!nameNode || !typeNode) continue;
+
+      this.bindNamedType(nameNode.text, typeNode.text, "parameter", typeScopes);
+    }
+  }
+
+  private bindTypedProperty(
+    node: TreeSitterNode,
+    kind: TypeBinding["kind"],
+    typeScopes: TypeScopeStack,
+    bindings?: Map<string, TypeBinding>,
+  ): void {
+    const name = extractPropertyName(node);
+    const type = extractPropertyType(node);
+    if (!name || !type) return;
+
+    const binding = this.bindNamedType(name, type, kind, typeScopes);
+    bindings?.set(name, binding);
+  }
+
+  private bindNamedType(
+    name: string,
+    type: string,
+    kind: TypeBinding["kind"],
+    typeScopes: TypeScopeStack,
+  ): TypeBinding {
+    const strippedType = simpleTypeName(type);
+    const binding: TypeBinding = {
+      type: strippedType,
+      qualifiedType: strippedType,
+      kind,
+    };
+    typeScopes.set(name, binding);
+    return binding;
+  }
+
+  private resolveReceiver(
+    receiver: string,
+    methodName: string,
+    typeScopes: TypeScopeStack,
+    fieldScopes: Array<Map<string, TypeBinding>>,
+  ): Partial<CallGraphEntry> {
+    if (receiver.startsWith("self.")) {
+      const fieldName = receiver.slice("self.".length);
+      if (fieldName.includes(".")) return { resolutionKind: "unresolved" };
+      const binding = fieldScopes[fieldScopes.length - 1]?.get(fieldName);
+      return binding
+        ? this.buildResolvedReceiver(binding, methodName)
+        : { resolutionKind: "unresolved" };
+    }
+
+    const binding = typeScopes.resolve(receiver);
+    return binding
+      ? this.buildResolvedReceiver(binding, methodName)
+      : { resolutionKind: "unresolved" };
+  }
+
+  private buildResolvedReceiver(
+    binding: TypeBinding,
+    methodName: string,
+  ): Partial<CallGraphEntry> {
+    return {
+      receiverType: binding.type,
+      ...(binding.qualifiedType ? { receiverQualifiedType: binding.qualifiedType } : {}),
+      calleeOwner: binding.type,
+      ...(binding.qualifiedType
+        ? { calleeQualifiedName: buildQualifiedMethodName(binding.qualifiedType, methodName) }
+        : {}),
+      resolutionKind: binding.kind,
+    };
   }
 
   private extractCallExpressionName(node: TreeSitterNode): string | null {
@@ -191,6 +391,47 @@ export class SwiftExtractor implements LanguageExtractor {
     if (identifier) return identifier.text;
 
     return null;
+  }
+
+  private isOwnerDeclaration(node: TreeSitterNode): boolean {
+    return (
+      node.type === "class_declaration" ||
+      node.type === "protocol_declaration" ||
+      node.type === "extension_declaration" ||
+      node.type === "actor_declaration"
+    );
+  }
+
+  private extractDeclarationName(node: TreeSitterNode): string | null {
+    return (
+      node.childForFieldName("name") ??
+      node.childForFieldName("extended_type") ??
+      findChild(node, "type_identifier") ??
+      findChild(node, "user_type")
+    )?.text ?? null;
+  }
+
+  private extractReceiver(callee: string): string | undefined {
+    const dotIndex = callee.lastIndexOf(".");
+    return dotIndex === -1 ? undefined : callee.slice(0, dotIndex);
+  }
+
+  private extractMethodName(callee: string): string {
+    const dotIndex = callee.lastIndexOf(".");
+    return dotIndex === -1 ? callee : callee.slice(dotIndex + 1);
+  }
+
+  private extractArgumentCount(node: TreeSitterNode): number {
+    const suffix = findChild(node, "call_suffix");
+    const argsNode = suffix ? findChild(suffix, "value_arguments") : null;
+    const valueArgumentCount = argsNode
+      ? findChildren(argsNode, "value_argument").length
+      : 0;
+    const trailingClosureCount = suffix
+      ? findChildren(suffix, "lambda_literal").length
+      : 0;
+
+    return valueArgumentCount + trailingClosureCount;
   }
 
   private extractImport(

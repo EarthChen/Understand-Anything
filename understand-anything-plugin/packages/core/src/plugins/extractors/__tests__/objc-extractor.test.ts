@@ -265,17 +265,17 @@ describe("ObjcExtractor", () => {
       const result = extractor.extractCallGraph(root);
 
       expect(result).toHaveLength(3);
-      expect(result[0]).toEqual({
+      expect(result[0]).toMatchObject({
         caller: "process",
         callee: "self.validate",
         lineNumber: 3,
       });
-      expect(result[1]).toEqual({
+      expect(result[1]).toMatchObject({
         caller: "process",
         callee: "repo.save",
         lineNumber: 4,
       });
-      expect(result[2]).toEqual({
+      expect(result[2]).toMatchObject({
         caller: "process",
         callee: "obj.insertObject:atIndex:",
         lineNumber: 5,
@@ -293,6 +293,264 @@ describe("ObjcExtractor", () => {
       const result = extractor.extractCallGraph(root);
 
       expect(result).toHaveLength(0);
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("records message metadata so selectors and owning methods stay unambiguous", () => {
+      const { tree, parser, root } = parse(`@implementation Svc
+- (void)process {
+  [self validate];
+  [repo save];
+  [obj insertObject:item atIndex:idx];
+}
+@end
+`);
+      const result = extractor.extractCallGraph(root);
+
+      expect(result).toHaveLength(3);
+      expect(result[0]).toMatchObject({
+        caller: "process",
+        callee: "self.validate",
+        lineNumber: 3,
+        columnNumber: 3,
+        receiver: "self",
+        methodName: "validate",
+        argumentCount: 0,
+        callText: "[self validate]",
+        callerOwner: "Svc",
+        callerQualifiedName: "Svc#process",
+      });
+      expect(result[1]).toMatchObject({
+        receiver: "repo",
+        methodName: "save",
+        argumentCount: 0,
+        callText: "[repo save]",
+      });
+      expect(result[2]).toMatchObject({
+        caller: "process",
+        callee: "obj.insertObject:atIndex:",
+        lineNumber: 5,
+        columnNumber: 3,
+        receiver: "obj",
+        methodName: "insertObject:atIndex:",
+        argumentCount: 2,
+        callText: "[obj insertObject:item atIndex:idx]",
+        callerOwner: "Svc",
+        callerQualifiedName: "Svc#process",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("resolves field, parameter, and local receivers", () => {
+      const { tree, parser, root } = parse(`@interface QuickMessageService
+@property(nonatomic, strong) UserProfileMoaWrapperService *fieldService;
+@end
+
+@implementation QuickMessageService
+- (void)getQuickMessage:(UserProfileMoaWrapperService *)parameterService {
+    [self.fieldService queryUserExtend:1];
+    [parameterService queryUserExtend];
+    OtherService *fieldService = [OtherService new];
+    [fieldService queryUserExtend];
+}
+@end
+`);
+      const result = extractor.extractCallGraph(root);
+      const queryCalls = result.filter(
+        (entry) => entry.methodName === "queryUserExtend:"
+          || entry.methodName === "queryUserExtend",
+      );
+
+      expect(queryCalls).toHaveLength(3);
+      expect(queryCalls[0]).toMatchObject({
+        receiver: "self.fieldService",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#queryUserExtend:",
+        resolutionKind: "field",
+      });
+      expect(queryCalls[1]).toMatchObject({
+        receiver: "parameterService",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#queryUserExtend",
+        resolutionKind: "parameter",
+      });
+      expect(queryCalls[2]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "OtherService",
+        receiverQualifiedType: "OtherService",
+        calleeOwner: "OtherService",
+        calleeQualifiedName: "OtherService#queryUserExtend",
+        resolutionKind: "local",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("keeps full multi-part selectors for property receiver calls with literal and message arguments", () => {
+      const { tree, parser, root } = parse(`@interface QuickMessageService
+@property(nonatomic, strong) UserProfileMoaWrapperService *fieldService;
+@end
+
+@implementation QuickMessageService
+- (void)getQuickMessage:(id)arg {
+    [self.fieldService doThing:[OtherService new] other:arg];
+    [self.fieldService setA:1 b:2];
+}
+@end
+`);
+      const result = extractor.extractCallGraph(root);
+      const doThingCall = result.find(
+        (entry) => entry.methodName === "doThing:other:",
+      );
+      const setACall = result.find(
+        (entry) => entry.methodName === "setA:b:",
+      );
+
+      expect(doThingCall).toMatchObject({
+        receiver: "self.fieldService",
+        callee: "self.fieldService.doThing:other:",
+        methodName: "doThing:other:",
+        argumentCount: 2,
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#doThing:other:",
+        resolutionKind: "field",
+      });
+      expect(setACall).toMatchObject({
+        receiver: "self.fieldService",
+        callee: "self.fieldService.setA:b:",
+        methodName: "setA:b:",
+        argumentCount: 2,
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#setA:b:",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("does not leak compound block locals outside Objective-C lexical scopes", () => {
+      const { tree, parser, root } = parse(`@interface ScopeService
+@property(nonatomic, strong) FieldService *fieldService;
+@end
+
+@implementation ScopeService
+- (void)run:(BOOL)flag {
+    if (flag) {
+        LocalService *fieldService = [LocalService new];
+        [fieldService call];
+    }
+    [fieldService call];
+}
+@end
+`);
+      const result = extractor.extractCallGraph(root);
+      const callEntries = result.filter(
+        (entry) => entry.receiver === "fieldService" && entry.methodName === "call",
+      );
+
+      expect(callEntries).toHaveLength(2);
+      expect(callEntries[0]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "LocalService",
+        receiverQualifiedType: "LocalService",
+        calleeOwner: "LocalService",
+        calleeQualifiedName: "LocalService#call",
+        resolutionKind: "local",
+      });
+      expect(callEntries[1]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "FieldService",
+        receiverQualifiedType: "FieldService",
+        calleeOwner: "FieldService",
+        calleeQualifiedName: "FieldService#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("does not resolve chained self receivers as direct Objective-C property calls", () => {
+      const { tree, parser, root } = parse(`@interface ChainedSelfService
+@property(nonatomic, strong) DepService *dep;
+@end
+
+@implementation ChainedSelfService
+- (void)run {
+    [self.dep.child call];
+    [self.dep call];
+}
+@end
+`);
+      const result = extractor.extractCallGraph(root);
+      const callEntries = result.filter((entry) => entry.methodName === "call");
+
+      expect(callEntries).toHaveLength(2);
+      expect(callEntries[0]).toMatchObject({
+        receiver: "self.dep.child",
+        resolutionKind: "unresolved",
+      });
+      expect(callEntries[0].calleeOwner).toBeUndefined();
+      expect(callEntries[0].calleeQualifiedName).toBeUndefined();
+      expect(callEntries[1]).toMatchObject({
+        receiver: "self.dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeOwner: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("reuses interface properties when resolving calls inside Objective-C categories", () => {
+      const { tree, parser, root } = parse(`@interface CategoryService
+@property(nonatomic, strong) DepService *dep;
+@end
+
+@implementation CategoryService (Extra)
+- (void)run {
+    [dep call];
+    [self.dep call];
+}
+@end
+`);
+      const result = extractor.extractCallGraph(root);
+      const callEntries = result.filter((entry) => entry.methodName === "call");
+
+      expect(callEntries).toHaveLength(2);
+      expect(callEntries[0]).toMatchObject({
+        receiver: "dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeOwner: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
+      expect(callEntries[1]).toMatchObject({
+        receiver: "self.dep",
+        receiverType: "DepService",
+        receiverQualifiedType: "DepService",
+        calleeOwner: "DepService",
+        calleeQualifiedName: "DepService#call",
+        resolutionKind: "field",
+      });
 
       tree.delete();
       parser.delete();
