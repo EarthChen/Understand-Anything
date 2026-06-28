@@ -807,6 +807,43 @@ public class ScopeService {
         tree.delete();
         parser.delete();
       });
+
+      it("resolves explicit this fields before shadowing parameters", () => {
+        const { tree, parser, root } = parse(`package com.example;
+
+public class ExplicitFieldService {
+    private FieldService service;
+
+    public void run(OtherService service) {
+        service.call();
+        this.service.call();
+    }
+}
+`);
+        const result = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "call");
+
+        expect(result).toEqual([
+          expect.objectContaining({
+            receiver: "service",
+            receiverType: "OtherService",
+            receiverQualifiedType: "com.example.OtherService",
+            calleeOwner: "OtherService",
+            calleeQualifiedName: "com.example.OtherService#call",
+            resolutionKind: "parameter",
+          }),
+          expect.objectContaining({
+            receiver: "this.service",
+            receiverType: "FieldService",
+            receiverQualifiedType: "com.example.FieldService",
+            calleeOwner: "FieldService",
+            calleeQualifiedName: "com.example.FieldService#call",
+            resolutionKind: "field",
+          }),
+        ]);
+
+        tree.delete();
+        parser.delete();
+      });
     });
   });
 

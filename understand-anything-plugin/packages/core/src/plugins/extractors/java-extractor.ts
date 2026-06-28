@@ -1,5 +1,6 @@
 import type { StructuralAnalysis, CallGraphEntry, AnnotationInfo, PropertyInfo, EndpointInfo } from "../../types.js";
 import type { LanguageExtractor, TreeSitterNode } from "./types.js";
+import type { TypeBinding } from "./callgraph-resolution.js";
 import { findChild, findChildren } from "./base-extractor.js";
 import {
   buildQualifiedMethodName,
@@ -328,10 +329,12 @@ export class JavaExtractor implements LanguageExtractor {
     const knownTypes = this.extractKnownTypes(rootNode, packageName, imports);
     const typeContext = { packageName, imports, knownTypes };
     const typeScopes = new TypeScopeStack();
+    const fieldScopes: Array<Map<string, TypeBinding>> = [];
 
     const walkForCalls = (node: TreeSitterNode) => {
       let pushedName = false;
       let pushedOwner = false;
+      let pushedFieldScope = false;
       let pushedTypeScope = false;
       const savedFunctionStack = functionStack.slice();
       const isolatesFunctionScope = this.isOwnerDeclaration(node);
@@ -348,7 +351,8 @@ export class JavaExtractor implements LanguageExtractor {
         }
         typeScopes.pushScope();
         pushedTypeScope = true;
-        this.bindClassFields(node, typeScopes, typeContext);
+        fieldScopes.push(this.bindClassFields(node, typeScopes, typeContext));
+        pushedFieldScope = true;
       }
 
       // Track entering method/constructor declarations
@@ -389,6 +393,7 @@ export class JavaExtractor implements LanguageExtractor {
                 objectNode.text,
                 nameNode?.text,
                 typeScopes,
+                fieldScopes,
                 typeContext,
               )
               : {};
@@ -442,8 +447,10 @@ export class JavaExtractor implements LanguageExtractor {
         if (this.isAnonymousClassBody(node, child)) {
           const savedAnonymousFunctionStack = functionStack.slice();
           const savedAnonymousOwnerStack = ownerStack.slice();
+          const savedAnonymousFieldScopes = fieldScopes.slice();
           functionStack.length = 0;
           ownerStack.length = 0;
+          fieldScopes.length = 0;
           typeScopes.pushScope();
           walkForCalls(child);
           typeScopes.popScope();
@@ -451,6 +458,8 @@ export class JavaExtractor implements LanguageExtractor {
           functionStack.push(...savedAnonymousFunctionStack);
           ownerStack.length = 0;
           ownerStack.push(...savedAnonymousOwnerStack);
+          fieldScopes.length = 0;
+          fieldScopes.push(...savedAnonymousFieldScopes);
           continue;
         }
 
@@ -462,6 +471,9 @@ export class JavaExtractor implements LanguageExtractor {
       }
       if (pushedOwner) {
         ownerStack.pop();
+      }
+      if (pushedFieldScope) {
+        fieldScopes.pop();
       }
       if (pushedTypeScope) {
         typeScopes.popScope();
@@ -598,15 +610,18 @@ export class JavaExtractor implements LanguageExtractor {
       imports: Map<string, string>;
       knownTypes: Map<string, string>;
     },
-  ): void {
+  ): Map<string, TypeBinding> {
+    const fields = new Map<string, TypeBinding>();
     const body = ownerNode.childForFieldName("body");
-    if (!body) return;
+    if (!body) return fields;
 
     for (let i = 0; i < body.childCount; i++) {
       const child = body.child(i);
       if (child?.type !== "field_declaration") continue;
-      this.bindTypedDeclarators(child, "field", typeScopes, typeContext);
+      this.bindTypedDeclarators(child, "field", typeScopes, typeContext, fields);
     }
+
+    return fields;
   }
 
   private bindParameters(
@@ -649,6 +664,7 @@ export class JavaExtractor implements LanguageExtractor {
       imports: Map<string, string>;
       knownTypes: Map<string, string>;
     },
+    bindings?: Map<string, TypeBinding>,
   ): void {
     const typeNode = node.childForFieldName("type");
     if (!typeNode) return;
@@ -657,11 +673,13 @@ export class JavaExtractor implements LanguageExtractor {
       const nameNode = declarator.childForFieldName("name");
       if (!nameNode) continue;
 
-      typeScopes.set(nameNode.text, {
+      const binding: TypeBinding = {
         type: simpleTypeName(typeNode.text),
         qualifiedType: qualifyTypeName(typeNode.text, typeContext),
         kind,
-      });
+      };
+      typeScopes.set(nameNode.text, binding);
+      bindings?.set(nameNode.text, binding);
     }
   }
 
@@ -669,26 +687,26 @@ export class JavaExtractor implements LanguageExtractor {
     receiver: string,
     methodName: string | undefined,
     typeScopes: TypeScopeStack,
+    fieldScopes: Array<Map<string, TypeBinding>>,
     typeContext: {
       packageName?: string;
       imports: Map<string, string>;
       knownTypes: Map<string, string>;
     },
   ): Partial<CallGraphEntry> {
-    const lookupName = receiver.startsWith("this.")
-      ? receiver.slice("this.".length)
-      : receiver;
-    const binding = typeScopes.resolve(lookupName);
+    if (receiver.startsWith("this.")) {
+      const fieldName = receiver.slice("this.".length);
+      const binding = fieldScopes[fieldScopes.length - 1]?.get(fieldName);
+      if (binding) {
+        return this.buildResolvedReceiver(binding, methodName);
+      }
+
+      return { resolutionKind: "unresolved" };
+    }
+
+    const binding = typeScopes.resolve(receiver);
     if (binding) {
-      return {
-        receiverType: binding.type,
-        ...(binding.qualifiedType ? { receiverQualifiedType: binding.qualifiedType } : {}),
-        calleeOwner: binding.type,
-        ...(binding.qualifiedType
-          ? { calleeQualifiedName: buildQualifiedMethodName(binding.qualifiedType, methodName) }
-          : {}),
-        resolutionKind: binding.kind,
-      };
+      return this.buildResolvedReceiver(binding, methodName);
     }
 
     if (/^[A-Z]/.test(receiver)) {
@@ -706,6 +724,21 @@ export class JavaExtractor implements LanguageExtractor {
     }
 
     return { resolutionKind: "unresolved" };
+  }
+
+  private buildResolvedReceiver(
+    binding: TypeBinding,
+    methodName: string | undefined,
+  ): Partial<CallGraphEntry> {
+    return {
+      receiverType: binding.type,
+      ...(binding.qualifiedType ? { receiverQualifiedType: binding.qualifiedType } : {}),
+      calleeOwner: binding.type,
+      ...(binding.qualifiedType
+        ? { calleeQualifiedName: buildQualifiedMethodName(binding.qualifiedType, methodName) }
+        : {}),
+      resolutionKind: binding.kind,
+    };
   }
 
   private extractImport(
