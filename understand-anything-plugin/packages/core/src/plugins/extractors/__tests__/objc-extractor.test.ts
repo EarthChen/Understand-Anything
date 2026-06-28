@@ -441,6 +441,48 @@ describe("ObjcExtractor", () => {
       tree.delete();
       parser.delete();
     });
+
+    it("does not leak compound block locals outside Objective-C lexical scopes", () => {
+      const { tree, parser, root } = parse(`@interface ScopeService
+@property(nonatomic, strong) FieldService *fieldService;
+@end
+
+@implementation ScopeService
+- (void)run:(BOOL)flag {
+    if (flag) {
+        LocalService *fieldService = [LocalService new];
+        [fieldService call];
+    }
+    [fieldService call];
+}
+@end
+`);
+      const result = extractor.extractCallGraph(root);
+      const callEntries = result.filter(
+        (entry) => entry.receiver === "fieldService" && entry.methodName === "call",
+      );
+
+      expect(callEntries).toHaveLength(2);
+      expect(callEntries[0]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "LocalService",
+        receiverQualifiedType: "LocalService",
+        calleeOwner: "LocalService",
+        calleeQualifiedName: "LocalService#call",
+        resolutionKind: "local",
+      });
+      expect(callEntries[1]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "FieldService",
+        receiverQualifiedType: "FieldService",
+        calleeOwner: "FieldService",
+        calleeQualifiedName: "FieldService#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
   });
 
   describe("comprehensive Objective-C file", () => {

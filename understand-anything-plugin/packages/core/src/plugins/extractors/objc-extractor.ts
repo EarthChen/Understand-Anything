@@ -281,6 +281,7 @@ export class ObjcExtractor implements LanguageExtractor {
       let pushedOwner = false;
       let pushedFunctionScope = false;
       let pushedOwnerScope = false;
+      let pushedBlockScope = false;
       const savedFunctionStack = functionStack.slice();
       const isolatesFunctionScope = this.isOwnerDeclaration(node);
 
@@ -313,6 +314,11 @@ export class ObjcExtractor implements LanguageExtractor {
         }
       }
 
+      if (node.type === "compound_statement" && functionStack.length > 0) {
+        typeScopes.pushScope();
+        pushedBlockScope = true;
+      }
+
       if (node.type === "message_expression" && functionStack.length > 0) {
         const receiver = node.childForFieldName("receiver");
         const selector = extractMessageSelector(node);
@@ -343,6 +349,9 @@ export class ObjcExtractor implements LanguageExtractor {
           if (child) walkForCalls(child);
         }
         this.bindLocalDeclaration(node, typeScopes);
+        if (pushedBlockScope) {
+          typeScopes.popScope();
+        }
         return;
       }
 
@@ -351,6 +360,9 @@ export class ObjcExtractor implements LanguageExtractor {
         if (child) walkForCalls(child);
       }
 
+      if (pushedBlockScope) {
+        typeScopes.popScope();
+      }
       if (pushedFunctionScope) {
         typeScopes.popScope();
       }

@@ -426,6 +426,44 @@ class Foo {}
       parser.delete();
     });
 
+    it("does not leak block locals outside Swift lexical scopes", () => {
+      const { tree, parser, root } = parse(`class ScopeService {
+    private let fieldService: FieldService
+
+    func run(flag: Bool) {
+        if flag {
+            let fieldService: LocalService = LocalService()
+            fieldService.call()
+        }
+        fieldService.call()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const callEntries = result.filter((entry) => entry.methodName === "call");
+
+      expect(callEntries).toHaveLength(2);
+      expect(callEntries[0]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "LocalService",
+        receiverQualifiedType: "LocalService",
+        calleeOwner: "LocalService",
+        calleeQualifiedName: "LocalService#call",
+        resolutionKind: "local",
+      });
+      expect(callEntries[1]).toMatchObject({
+        receiver: "fieldService",
+        receiverType: "FieldService",
+        receiverQualifiedType: "FieldService",
+        calleeOwner: "FieldService",
+        calleeQualifiedName: "FieldService#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
     it("keeps nested class calls under their own owner and leaves top-level callers unowned", () => {
       const { tree, parser, root } = parse(`func topLevel() {
     work()

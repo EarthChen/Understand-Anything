@@ -153,6 +153,7 @@ export class SwiftExtractor implements LanguageExtractor {
       let pushedOwner = false;
       let pushedFunctionScope = false;
       let pushedOwnerScope = false;
+      let pushedBlockScope = false;
       const savedFunctionStack = functionStack.slice();
       const isolatesFunctionScope = this.isOwnerDeclaration(node);
 
@@ -182,6 +183,11 @@ export class SwiftExtractor implements LanguageExtractor {
           pushedFunctionScope = true;
           this.bindFunctionParameters(node, typeScopes);
         }
+      }
+
+      if (node.type === "statements" && functionStack.length > 0) {
+        typeScopes.pushScope();
+        pushedBlockScope = true;
       }
 
       if (node.type === "call_expression" && functionStack.length > 0) {
@@ -215,6 +221,9 @@ export class SwiftExtractor implements LanguageExtractor {
           if (child) walkForCalls(child);
         }
         this.bindTypedProperty(node, "local", typeScopes);
+        if (pushedBlockScope) {
+          typeScopes.popScope();
+        }
         return;
       }
 
@@ -223,6 +232,9 @@ export class SwiftExtractor implements LanguageExtractor {
         if (child) walkForCalls(child);
       }
 
+      if (pushedBlockScope) {
+        typeScopes.popScope();
+      }
       if (pushedFunctionScope) {
         typeScopes.popScope();
       }
