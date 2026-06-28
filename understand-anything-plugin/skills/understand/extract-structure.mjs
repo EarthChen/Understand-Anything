@@ -160,11 +160,7 @@ function processFiles(files, projectRoot, registry, importData) {
       try {
         const cg = registry.extractCallGraph(file.path, content);
         if (cg && cg.length > 0) {
-          callGraph = cg.map(entry => ({
-            caller: entry.caller,
-            callee: entry.callee,
-            lineNumber: entry.lineNumber,
-          }));
+          callGraph = cg.map(entry => ({ ...entry }));
         }
       } catch {
         // Call graph extraction failed — non-fatal
