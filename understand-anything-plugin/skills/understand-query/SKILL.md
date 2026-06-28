@@ -210,7 +210,7 @@ For callgraph exact callee search:
 - `--exact --callee Class#method` matches resolved `calleeOwner` / qualified owner first, then falls back to the legacy lower-camel receiver heuristic for old indexes.
 - `--exact --callee methodName` remains useful for quick method-name lookup across all owners.
 - Use `--argc N` with exact callee queries to split overloads by argument count. Same-arity overloads are not separated by this MVP.
-- For existing projects, run `daily-update.mjs --mode reextract --force` to regenerate structure indexes with resolved callee metadata. Upper KG/wiki data does not need to be regenerated for callgraph exact matching.
+- For existing projects, run `node scripts/daily-update.mjs /path/to/project --mode reextract --force` to regenerate structure indexes with resolved callee metadata. Upper KG/wiki data does not need to be regenerated for callgraph exact matching.
 
 For caller exact search, use a plain method; `Class#method` / `FQN#method` requires structured `callerQualifiedName` data, and caller search has no `receiver.method` semantics.
 
