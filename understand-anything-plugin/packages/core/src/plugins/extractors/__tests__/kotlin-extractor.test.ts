@@ -715,6 +715,64 @@ class LambdaService {
       tree.delete();
       parser.delete();
     });
+
+    it("resolves explicit this-qualified receivers to fields despite parameter or local shadows", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+class ExplicitFieldService {
+    private val dep: FieldDep = FieldDep()
+
+    fun runWithParameter(dep: OtherDep) {
+        dep.call()
+        this.dep.call()
+    }
+
+    fun runWithLocal() {
+        val dep: OtherDep = OtherDep()
+        dep.call()
+        this.dep.call()
+    }
+}
+`);
+      const calls = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "call");
+
+      expect(calls).toHaveLength(4);
+      expect(calls[0]).toMatchObject({
+        caller: "runWithParameter",
+        receiver: "dep",
+        receiverType: "OtherDep",
+        receiverQualifiedType: "com.example.OtherDep",
+        calleeQualifiedName: "com.example.OtherDep#call",
+        resolutionKind: "parameter",
+      });
+      expect(calls[1]).toMatchObject({
+        caller: "runWithParameter",
+        receiver: "this.dep",
+        receiverType: "FieldDep",
+        receiverQualifiedType: "com.example.FieldDep",
+        calleeQualifiedName: "com.example.FieldDep#call",
+        resolutionKind: "field",
+      });
+      expect(calls[2]).toMatchObject({
+        caller: "runWithLocal",
+        receiver: "dep",
+        receiverType: "OtherDep",
+        receiverQualifiedType: "com.example.OtherDep",
+        calleeQualifiedName: "com.example.OtherDep#call",
+        resolutionKind: "local",
+      });
+      expect(calls[3]).toMatchObject({
+        caller: "runWithLocal",
+        receiver: "this.dep",
+        receiverType: "FieldDep",
+        receiverQualifiedType: "com.example.FieldDep",
+        calleeQualifiedName: "com.example.FieldDep#call",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
   });
 
   // ---- HTTP Endpoint Extraction ----

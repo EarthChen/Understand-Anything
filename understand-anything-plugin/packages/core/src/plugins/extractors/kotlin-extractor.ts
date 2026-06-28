@@ -341,11 +341,13 @@ export class KotlinExtractor implements LanguageExtractor {
     const ownerStack: string[] = [];
     const typeScopes = new TypeScopeStack();
     const typeContext = this.buildTypeContext(rootNode);
+    const fieldScopes: Array<Map<string, TypeBinding>> = [];
 
     const walkForCalls = (node: TreeSitterNode) => {
       let pushedName = false;
       let pushedOwner = false;
       let pushedTypeScope = false;
+      let pushedFieldScope = false;
       const savedFunctionStack = functionStack.slice();
       const isolatesFunctionScope = this.isOwnerDeclaration(node);
 
@@ -361,7 +363,8 @@ export class KotlinExtractor implements LanguageExtractor {
         }
         typeScopes.pushScope();
         pushedTypeScope = true;
-        this.bindClassReceiverTypes(node, typeScopes, typeContext);
+        fieldScopes.push(this.bindClassReceiverTypes(node, typeScopes, typeContext));
+        pushedFieldScope = true;
       }
 
       if (node.type === "function_declaration") {
@@ -410,6 +413,7 @@ export class KotlinExtractor implements LanguageExtractor {
               methodName,
               receiverNode,
               typeScopes,
+              fieldScopes,
               typeContext,
             )
             : {};
@@ -439,6 +443,9 @@ export class KotlinExtractor implements LanguageExtractor {
       }
       if (pushedOwner) {
         ownerStack.pop();
+      }
+      if (pushedFieldScope) {
+        fieldScopes.pop();
       }
       if (pushedTypeScope) {
         typeScopes.popScope();
@@ -504,7 +511,8 @@ export class KotlinExtractor implements LanguageExtractor {
     classNode: TreeSitterNode,
     typeScopes: TypeScopeStack,
     typeContext: QualificationContext,
-  ): void {
+  ): Map<string, TypeBinding> {
+    const fields = new Map<string, TypeBinding>();
     const primaryConstructor = findChild(classNode, "primary_constructor");
     const classParameters = primaryConstructor
       ? findChild(primaryConstructor, "class_parameters")
@@ -514,19 +522,21 @@ export class KotlinExtractor implements LanguageExtractor {
         const hasValOrVar =
           findChild(param, "val") !== null || findChild(param, "var") !== null;
         if (!hasValOrVar) continue;
-        this.bindTypedIdentifier(param, "field", typeScopes, typeContext);
+        this.bindTypedIdentifier(param, "field", typeScopes, typeContext, fields);
       }
     }
 
     const body = findChild(classNode, "class_body");
-    if (!body) return;
+    if (!body) return fields;
 
     for (let i = 0; i < body.childCount; i++) {
       const child = body.child(i);
       if (child?.type === "property_declaration") {
-        this.bindTypedIdentifier(child, "field", typeScopes, typeContext);
+        this.bindTypedIdentifier(child, "field", typeScopes, typeContext, fields);
       }
     }
+
+    return fields;
   }
 
   private bindFunctionParameters(
@@ -555,17 +565,20 @@ export class KotlinExtractor implements LanguageExtractor {
     kind: TypeBinding["kind"],
     typeScopes: TypeScopeStack,
     typeContext: QualificationContext,
+    bindings?: Map<string, TypeBinding>,
   ): void {
     const declarationNode = findChild(node, "variable_declaration") ?? node;
     const nameNode = findChild(declarationNode, "identifier");
     const typeText = this.extractBindingTypeText(declarationNode);
     if (!nameNode || !typeText) return;
 
-    typeScopes.set(nameNode.text, {
+    const binding: TypeBinding = {
       type: simpleTypeName(typeText),
       qualifiedType: qualifyTypeName(typeText, typeContext),
       kind,
-    });
+    };
+    typeScopes.set(nameNode.text, binding);
+    bindings?.set(nameNode.text, binding);
   }
 
   private extractBindingTypeText(node: TreeSitterNode): string | undefined {
@@ -588,8 +601,17 @@ export class KotlinExtractor implements LanguageExtractor {
     methodName: string,
     receiverNode: TreeSitterNode | null,
     typeScopes: TypeScopeStack,
+    fieldScopes: Array<Map<string, TypeBinding>>,
     typeContext: QualificationContext,
   ): Partial<CallGraphEntry> {
+    if (receiver.startsWith("this.")) {
+      const fieldName = receiver.slice("this.".length);
+      const binding = fieldScopes[fieldScopes.length - 1]?.get(fieldName);
+      return binding
+        ? this.buildResolvedReceiver(binding, methodName)
+        : { resolutionKind: "unresolved" };
+    }
+
     const binding = typeScopes.resolve(receiver);
     if (binding) {
       return this.buildResolvedReceiver(binding, methodName);
