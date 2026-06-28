@@ -1,6 +1,14 @@
 import type { StructuralAnalysis, CallGraphEntry, AnnotationInfo, PropertyInfo, EndpointInfo } from "../../types.js";
 import type { LanguageExtractor, TreeSitterNode } from "./types.js";
 import { findChild, findChildren } from "./base-extractor.js";
+import {
+  buildQualifiedMethodName,
+  qualifyTypeName,
+  simpleTypeName,
+  TypeScopeStack,
+  type QualificationContext,
+  type TypeBinding,
+} from "./callgraph-resolution.js";
 
 const HTTP_METHOD_ANNOTATIONS: Record<string, string> = {
   GET: "GET",
@@ -331,10 +339,13 @@ export class KotlinExtractor implements LanguageExtractor {
     const entries: CallGraphEntry[] = [];
     const functionStack: string[] = [];
     const ownerStack: string[] = [];
+    const typeScopes = new TypeScopeStack();
+    const typeContext = this.buildTypeContext(rootNode);
 
     const walkForCalls = (node: TreeSitterNode) => {
       let pushedName = false;
       let pushedOwner = false;
+      let pushedTypeScope = false;
       const savedFunctionStack = functionStack.slice();
       const isolatesFunctionScope = this.isOwnerDeclaration(node);
 
@@ -348,6 +359,9 @@ export class KotlinExtractor implements LanguageExtractor {
           ownerStack.push(ownerName);
           pushedOwner = true;
         }
+        typeScopes.pushScope();
+        pushedTypeScope = true;
+        this.bindClassReceiverTypes(node, typeScopes, typeContext);
       }
 
       if (node.type === "function_declaration") {
@@ -356,6 +370,13 @@ export class KotlinExtractor implements LanguageExtractor {
           functionStack.push(nameNode.text);
           pushedName = true;
         }
+        typeScopes.pushScope();
+        pushedTypeScope = true;
+        this.bindFunctionParameters(node, typeScopes, typeContext);
+      }
+
+      if (functionStack.length > 0 && node.type === "property_declaration") {
+        this.bindLocalProperty(node, typeScopes, typeContext);
       }
 
       if (
@@ -369,6 +390,16 @@ export class KotlinExtractor implements LanguageExtractor {
           const callerOwner = ownerStack[ownerStack.length - 1];
           const receiver = this.extractReceiver(callee);
           const methodName = this.extractMethodName(callee);
+          const receiverNode = this.extractReceiverNode(node);
+          const resolution = receiver
+            ? this.resolveReceiver(
+              receiver,
+              methodName,
+              receiverNode,
+              typeScopes,
+              typeContext,
+            )
+            : {};
           entries.push({
             caller,
             callee,
@@ -380,6 +411,7 @@ export class KotlinExtractor implements LanguageExtractor {
             callText: node.text,
             ...(callerOwner ? { callerOwner } : {}),
             ...(callerOwner ? { callerQualifiedName: `${callerOwner}#${caller}` } : {}),
+            ...resolution,
           });
         }
       }
@@ -395,6 +427,9 @@ export class KotlinExtractor implements LanguageExtractor {
       if (pushedOwner) {
         ownerStack.pop();
       }
+      if (pushedTypeScope) {
+        typeScopes.popScope();
+      }
       if (isolatesFunctionScope) {
         functionStack.length = 0;
         functionStack.push(...savedFunctionStack);
@@ -403,6 +438,176 @@ export class KotlinExtractor implements LanguageExtractor {
 
     walkForCalls(rootNode);
     return entries;
+  }
+
+  private buildTypeContext(rootNode: TreeSitterNode): QualificationContext {
+    const packageName = this.extractPackageName(rootNode);
+    const imports = this.extractImportMap(rootNode);
+    const knownTypes = new Map<string, string>();
+
+    const collectKnownTypes = (node: TreeSitterNode) => {
+      if (this.isOwnerDeclaration(node)) {
+        const name = this.extractDeclarationName(node);
+        if (name && packageName) {
+          knownTypes.set(name, `${packageName}.${name}`);
+        }
+      }
+
+      for (let i = 0; i < node.childCount; i++) {
+        const child = node.child(i);
+        if (child) collectKnownTypes(child);
+      }
+    };
+
+    collectKnownTypes(rootNode);
+
+    return { packageName, imports, knownTypes };
+  }
+
+  private extractPackageName(rootNode: TreeSitterNode): string | undefined {
+    const match = rootNode.text.match(/^\s*package\s+([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)/m);
+    return match?.[1];
+  }
+
+  private extractImportMap(rootNode: TreeSitterNode): Map<string, string> {
+    const imports = new Map<string, string>();
+    const importPattern = /^\s*import\s+([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)(?:\.\*)?/gm;
+    let match: RegExpExecArray | null;
+
+    while ((match = importPattern.exec(rootNode.text)) !== null) {
+      const fullPath = match[1];
+      if (rootNode.text.slice(match.index, importPattern.lastIndex).endsWith(".*")) continue;
+      imports.set(lastComponent(fullPath), fullPath);
+    }
+
+    return imports;
+  }
+
+  private bindClassReceiverTypes(
+    classNode: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    typeContext: QualificationContext,
+  ): void {
+    const primaryConstructor = findChild(classNode, "primary_constructor");
+    const classParameters = primaryConstructor
+      ? findChild(primaryConstructor, "class_parameters")
+      : null;
+    if (classParameters) {
+      for (const param of findChildren(classParameters, "class_parameter")) {
+        const hasValOrVar =
+          findChild(param, "val") !== null || findChild(param, "var") !== null;
+        if (!hasValOrVar) continue;
+        this.bindTypedIdentifier(param, "field", typeScopes, typeContext);
+      }
+    }
+
+    const body = findChild(classNode, "class_body");
+    if (!body) return;
+
+    for (let i = 0; i < body.childCount; i++) {
+      const child = body.child(i);
+      if (child?.type === "property_declaration") {
+        this.bindTypedIdentifier(child, "field", typeScopes, typeContext);
+      }
+    }
+  }
+
+  private bindFunctionParameters(
+    functionNode: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    typeContext: QualificationContext,
+  ): void {
+    const paramsNode = findChild(functionNode, "function_value_parameters");
+    if (!paramsNode) return;
+
+    for (const param of findChildren(paramsNode, "parameter")) {
+      this.bindTypedIdentifier(param, "parameter", typeScopes, typeContext);
+    }
+  }
+
+  private bindLocalProperty(
+    propertyNode: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    typeContext: QualificationContext,
+  ): void {
+    this.bindTypedIdentifier(propertyNode, "local", typeScopes, typeContext);
+  }
+
+  private bindTypedIdentifier(
+    node: TreeSitterNode,
+    kind: TypeBinding["kind"],
+    typeScopes: TypeScopeStack,
+    typeContext: QualificationContext,
+  ): void {
+    const declarationNode = findChild(node, "variable_declaration") ?? node;
+    const nameNode = findChild(declarationNode, "identifier");
+    const typeText = this.extractBindingTypeText(declarationNode);
+    if (!nameNode || !typeText) return;
+
+    typeScopes.set(nameNode.text, {
+      type: simpleTypeName(typeText),
+      qualifiedType: qualifyTypeName(typeText, typeContext),
+      kind,
+    });
+  }
+
+  private extractBindingTypeText(node: TreeSitterNode): string | undefined {
+    const directType = extractTypeText(node);
+    if (directType) return directType;
+
+    const nullableType = findChild(node, "nullable_type");
+    return nullableType?.text;
+  }
+
+  private extractReceiverNode(node: TreeSitterNode): TreeSitterNode | null {
+    const navigation = findChild(node, "navigation_expression");
+    if (!navigation || navigation.childCount === 0) return null;
+
+    return navigation.child(0);
+  }
+
+  private resolveReceiver(
+    receiver: string,
+    methodName: string,
+    receiverNode: TreeSitterNode | null,
+    typeScopes: TypeScopeStack,
+    typeContext: QualificationContext,
+  ): Partial<CallGraphEntry> {
+    const binding = typeScopes.resolve(receiver);
+    if (binding) {
+      return this.buildResolvedReceiver(binding, methodName);
+    }
+
+    if (receiverNode?.type === "identifier" && /^[A-Z]/.test(receiver)) {
+      const receiverType = simpleTypeName(receiver);
+      const qualifiedType = qualifyTypeName(receiver, typeContext);
+      return {
+        receiverType,
+        ...(qualifiedType ? { receiverQualifiedType: qualifiedType } : {}),
+        calleeOwner: receiverType,
+        ...(qualifiedType
+          ? { calleeQualifiedName: buildQualifiedMethodName(qualifiedType, methodName) }
+          : {}),
+        resolutionKind: "static",
+      };
+    }
+
+    return { resolutionKind: "unresolved" };
+  }
+
+  private buildResolvedReceiver(
+    binding: TypeBinding,
+    methodName: string,
+  ): Partial<CallGraphEntry> {
+    return {
+      receiverType: binding.type,
+      ...(binding.qualifiedType ? { receiverQualifiedType: binding.qualifiedType } : {}),
+      calleeOwner: binding.type,
+      ...(binding.qualifiedType
+        ? { calleeQualifiedName: buildQualifiedMethodName(binding.qualifiedType, methodName) }
+        : {}),
+      resolutionKind: binding.kind,
+    };
   }
 
   private extractCallExpressionName(node: TreeSitterNode): string | null {

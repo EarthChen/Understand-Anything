@@ -506,6 +506,99 @@ class Outer {
       tree.delete();
       parser.delete();
     });
+
+    it("resolves Kotlin receiver types for fields, parameters, locals, and static-looking calls", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+import com.remote.UserProfileMoaWrapperService
+
+class QuickMessageService(
+    private val constructorService: UserProfileMoaWrapperService
+) {
+    private val fieldService: UserProfileMoaWrapperService? = null
+
+    fun getQuickMessage(parameterService: UserProfileMoaWrapperService) {
+        fieldService?.queryUserExtend(1)
+        constructorService.queryUserExtend(1, 2)
+        parameterService.queryUserExtend()
+        val fieldService: OtherService = OtherService()
+        fieldService.queryUserExtend()
+        UnknownService.queryUserExtend()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "queryUserExtend");
+
+      expect(result).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          receiver: "fieldService",
+          receiverType: "UserProfileMoaWrapperService",
+          receiverQualifiedType: "com.remote.UserProfileMoaWrapperService",
+          calleeOwner: "UserProfileMoaWrapperService",
+          calleeQualifiedName: "com.remote.UserProfileMoaWrapperService#queryUserExtend",
+          resolutionKind: "field",
+        }),
+        expect.objectContaining({
+          receiver: "constructorService",
+          argumentCount: 2,
+          receiverType: "UserProfileMoaWrapperService",
+          receiverQualifiedType: "com.remote.UserProfileMoaWrapperService",
+          resolutionKind: "field",
+        }),
+        expect.objectContaining({
+          receiver: "parameterService",
+          receiverType: "UserProfileMoaWrapperService",
+          receiverQualifiedType: "com.remote.UserProfileMoaWrapperService",
+          resolutionKind: "parameter",
+        }),
+        expect.objectContaining({
+          receiver: "fieldService",
+          receiverType: "OtherService",
+          receiverQualifiedType: "com.example.OtherService",
+          calleeQualifiedName: "com.example.OtherService#queryUserExtend",
+          resolutionKind: "local",
+        }),
+        expect.objectContaining({
+          receiver: "UnknownService",
+          receiverQualifiedType: "com.example.UnknownService",
+          calleeQualifiedName: "com.example.UnknownService#queryUserExtend",
+          resolutionKind: "static",
+        }),
+      ]));
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("does not resolve chained receiver expressions as static calls", () => {
+      const { tree, parser, root } = parse(`package com.example
+
+class Svc {
+    fun process() {
+        Factory.create().queryUserExtend()
+        pkg.Factory.queryUserExtend()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "queryUserExtend");
+
+      expect(result).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          receiver: "Factory.create()",
+          resolutionKind: "unresolved",
+        }),
+        expect.objectContaining({
+          receiver: "pkg.Factory",
+          resolutionKind: "unresolved",
+        }),
+      ]));
+      expect(result).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ resolutionKind: "static" }),
+      ]));
+
+      tree.delete();
+      parser.delete();
+    });
   });
 
   // ---- HTTP Endpoint Extraction ----
