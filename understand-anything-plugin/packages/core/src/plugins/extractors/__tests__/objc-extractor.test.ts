@@ -394,6 +394,53 @@ describe("ObjcExtractor", () => {
       tree.delete();
       parser.delete();
     });
+
+    it("keeps full multi-part selectors for property receiver calls with literal and message arguments", () => {
+      const { tree, parser, root } = parse(`@interface QuickMessageService
+@property(nonatomic, strong) UserProfileMoaWrapperService *fieldService;
+@end
+
+@implementation QuickMessageService
+- (void)getQuickMessage:(id)arg {
+    [self.fieldService doThing:[OtherService new] other:arg];
+    [self.fieldService setA:1 b:2];
+}
+@end
+`);
+      const result = extractor.extractCallGraph(root);
+      const doThingCall = result.find(
+        (entry) => entry.methodName === "doThing:other:",
+      );
+      const setACall = result.find(
+        (entry) => entry.methodName === "setA:b:",
+      );
+
+      expect(doThingCall).toMatchObject({
+        receiver: "self.fieldService",
+        callee: "self.fieldService.doThing:other:",
+        methodName: "doThing:other:",
+        argumentCount: 2,
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#doThing:other:",
+        resolutionKind: "field",
+      });
+      expect(setACall).toMatchObject({
+        receiver: "self.fieldService",
+        callee: "self.fieldService.setA:b:",
+        methodName: "setA:b:",
+        argumentCount: 2,
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#setA:b:",
+        resolutionKind: "field",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
   });
 
   describe("comprehensive Objective-C file", () => {

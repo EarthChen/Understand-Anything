@@ -150,6 +150,23 @@ function extractPropertyType(node: TreeSitterNode): string | undefined {
 function extractMessageSelector(node: TreeSitterNode): string {
   const receiver = node.childForFieldName("receiver");
   const parts: string[] = [];
+
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child || node.fieldNameForChild(i) !== "method") continue;
+
+    let part = child.text;
+    const next = node.child(i + 1);
+    if (next?.type === ":") {
+      part += ":";
+    }
+    parts.push(part);
+  }
+
+  if (parts.length > 0) {
+    return parts.join("");
+  }
+
   let state: "receiver" | "selector" | "after_selector" | "argument" = "receiver";
 
   for (let i = 0; i < node.childCount; i++) {
