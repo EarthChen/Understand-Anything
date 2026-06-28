@@ -587,6 +587,104 @@ public class Foo {}
       tree.delete();
       parser.delete();
     });
+
+    it("does not reuse the outer method when local class field initializers call methods", () => {
+      const { tree, parser, root } = parse(`public class Outer {
+    public void outer() {
+        class Local {
+            private String value = String.valueOf(1);
+
+            void inner() {
+                inside();
+            }
+        }
+
+        after();
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+
+      expect(
+        result.some(
+          (entry) => entry.callerQualifiedName === "Local#outer",
+        ),
+      ).toBe(false);
+      expect(result.some((entry) => entry.callee === "String.valueOf")).toBe(
+        false,
+      );
+      expect(result).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            caller: "inner",
+            callee: "inside",
+            callerOwner: "Local",
+            callerQualifiedName: "Local#inner",
+          }),
+          expect.objectContaining({
+            caller: "outer",
+            callee: "after",
+            callerOwner: "Outer",
+            callerQualifiedName: "Outer#outer",
+          }),
+        ]),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("does not reuse the outer owner for anonymous class method calls", () => {
+      const { tree, parser, root } = parse(`public class Outer {
+    public void outer() {
+        Runnable task = new Runnable() {
+            @Override
+            public void run() {
+                work();
+            }
+        };
+
+        task.run();
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const workCall = result.find((entry) => entry.callee === "work");
+
+      expect(workCall).toMatchObject({
+        caller: "run",
+        callee: "work",
+        methodName: "work",
+        argumentCount: 0,
+        callText: "work()",
+      });
+      expect(workCall?.callerOwner).toBeUndefined();
+      expect(workCall?.callerQualifiedName).toBeUndefined();
+      expect(
+        result.some(
+          (entry) => entry.callerQualifiedName === "Outer#run",
+        ),
+      ).toBe(false);
+      expect(result).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            caller: "outer",
+            callee: "new Runnable",
+            callerOwner: "Outer",
+            callerQualifiedName: "Outer#outer",
+          }),
+          expect.objectContaining({
+            caller: "outer",
+            callee: "task.run",
+            callerOwner: "Outer",
+            callerQualifiedName: "Outer#outer",
+          }),
+        ]),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
   });
 
   // ---- Annotations ----

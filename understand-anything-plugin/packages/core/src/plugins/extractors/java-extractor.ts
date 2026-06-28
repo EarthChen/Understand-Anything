@@ -321,6 +321,12 @@ export class JavaExtractor implements LanguageExtractor {
     const walkForCalls = (node: TreeSitterNode) => {
       let pushedName = false;
       let pushedOwner = false;
+      const savedFunctionStack = functionStack.slice();
+      const isolatesFunctionScope = this.isOwnerDeclaration(node);
+
+      if (isolatesFunctionScope) {
+        functionStack.length = 0;
+      }
 
       if (this.isOwnerDeclaration(node)) {
         const ownerName = this.extractDeclarationName(node);
@@ -395,7 +401,22 @@ export class JavaExtractor implements LanguageExtractor {
 
       for (let i = 0; i < node.childCount; i++) {
         const child = node.child(i);
-        if (child) walkForCalls(child);
+        if (!child) continue;
+
+        if (this.isAnonymousClassBody(node, child)) {
+          const savedAnonymousFunctionStack = functionStack.slice();
+          const savedAnonymousOwnerStack = ownerStack.slice();
+          functionStack.length = 0;
+          ownerStack.length = 0;
+          walkForCalls(child);
+          functionStack.length = 0;
+          functionStack.push(...savedAnonymousFunctionStack);
+          ownerStack.length = 0;
+          ownerStack.push(...savedAnonymousOwnerStack);
+          continue;
+        }
+
+        walkForCalls(child);
       }
 
       if (pushedName) {
@@ -403,6 +424,10 @@ export class JavaExtractor implements LanguageExtractor {
       }
       if (pushedOwner) {
         ownerStack.pop();
+      }
+      if (isolatesFunctionScope) {
+        functionStack.length = 0;
+        functionStack.push(...savedFunctionStack);
       }
     };
 
@@ -439,6 +464,16 @@ export class JavaExtractor implements LanguageExtractor {
       node.type === "record_declaration" ||
       node.type === "enum_declaration" ||
       node.type === "annotation_type_declaration"
+    );
+  }
+
+  private isAnonymousClassBody(
+    parent: TreeSitterNode,
+    child: TreeSitterNode,
+  ): boolean {
+    return (
+      parent.type === "object_creation_expression" &&
+      child.type === "class_body"
     );
   }
 
