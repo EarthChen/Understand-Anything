@@ -426,6 +426,41 @@ class Foo {}
       parser.delete();
     });
 
+    it("binds Swift labeled parameters by their local names", () => {
+      const { tree, parser, root } = parse(`class LabelService {
+    func run(_ parameterService: UserProfileMoaWrapperService, for otherService: OtherService) {
+        parameterService.queryUserExtend()
+        otherService.queryUserExtend()
+    }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const queryCalls = result.filter(
+        (entry) => entry.methodName === "queryUserExtend",
+      );
+
+      expect(queryCalls).toHaveLength(2);
+      expect(queryCalls[0]).toMatchObject({
+        receiver: "parameterService",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "UserProfileMoaWrapperService#queryUserExtend",
+        resolutionKind: "parameter",
+      });
+      expect(queryCalls[1]).toMatchObject({
+        receiver: "otherService",
+        receiverType: "OtherService",
+        receiverQualifiedType: "OtherService",
+        calleeOwner: "OtherService",
+        calleeQualifiedName: "OtherService#queryUserExtend",
+        resolutionKind: "parameter",
+      });
+
+      tree.delete();
+      parser.delete();
+    });
+
     it("does not leak block locals outside Swift lexical scopes", () => {
       const { tree, parser, root } = parse(`class ScopeService {
     private let fieldService: FieldService

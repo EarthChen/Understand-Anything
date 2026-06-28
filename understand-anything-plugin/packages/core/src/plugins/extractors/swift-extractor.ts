@@ -281,7 +281,7 @@ export class SwiftExtractor implements LanguageExtractor {
     typeScopes: TypeScopeStack,
   ): void {
     for (const param of findChildren(node, "parameter")) {
-      const nameNode = findChild(param, "simple_identifier");
+      const nameNode = param.childForFieldName("name");
       const typeNode = findChild(param, "user_type")
         ?? findChild(param, "array_type")
         ?? findChild(param, "optional_type")
