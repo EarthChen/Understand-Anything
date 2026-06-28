@@ -85,6 +85,58 @@ describe("callgraph exact matching", () => {
     )).toBe(true)
   })
 
+  it("matches FQN#method using resolved calleeQualifiedName before receiver heuristic", () => {
+    expect(matchesCallgraphEntry(
+      {
+        caller: "getQuickMessage",
+        callee: "profileWrapper.queryUserExtend",
+        receiver: "profileWrapper",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "com.immomo.moaservice.ultron.wrapper.user.moa.UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "com.immomo.moaservice.ultron.wrapper.user.moa.UserProfileMoaWrapperService#queryUserExtend",
+        methodName: "queryUserExtend",
+        resolutionKind: "field",
+        lineNumber: 318,
+      },
+      {
+        callee: "com.immomo.moaservice.ultron.wrapper.user.moa.UserProfileMoaWrapperService#queryUserExtend",
+        exact: true,
+      },
+    )).toBe(true)
+  })
+
+  it("rejects the wrong resolved owner even when method name matches", () => {
+    expect(matchesCallgraphEntry(
+      {
+        caller: "getQuickMessage",
+        callee: "profileWrapper.queryUserExtend",
+        receiver: "profileWrapper",
+        receiverType: "UserProfileMoaWrapperService",
+        receiverQualifiedType: "com.immomo.moaservice.ultron.wrapper.user.moa.UserProfileMoaWrapperService",
+        calleeOwner: "UserProfileMoaWrapperService",
+        calleeQualifiedName: "com.immomo.moaservice.ultron.wrapper.user.moa.UserProfileMoaWrapperService#queryUserExtend",
+        methodName: "queryUserExtend",
+        resolutionKind: "field",
+        lineNumber: 318,
+      },
+      { callee: "com.example.OtherService#queryUserExtend", exact: true },
+    )).toBe(false)
+  })
+
+  it("keeps old-index owner heuristic when resolved callee fields are absent", () => {
+    expect(matchesCallgraphEntry(
+      {
+        caller: "getQuickMessage",
+        callee: "userProfileMoaWrapperService.queryUserExtend",
+        receiver: "userProfileMoaWrapperService",
+        methodName: "queryUserExtend",
+        lineNumber: 318,
+      },
+      { callee: "UserProfileMoaWrapperService#queryUserExtend", exact: true },
+    )).toBe(true)
+  })
+
   it("rejects malformed owner-method callee queries", () => {
     const entry = { caller: "x", callee: "example.queryUserExtend", lineNumber: 1 }
 
@@ -138,6 +190,11 @@ describe("callgraph result projection", () => {
       callerQualifiedName: "OrderService#process",
       callee: "repo.save",
       receiver: "repo",
+      receiverType: "OrderRepository",
+      receiverQualifiedType: "com.example.OrderRepository",
+      calleeOwner: "OrderRepository",
+      calleeQualifiedName: "com.example.OrderRepository#save",
+      resolutionKind: "field",
       methodName: "save",
       argumentCount: 1,
       callText: "repo.save(order)",
@@ -150,6 +207,11 @@ describe("callgraph result projection", () => {
       callerQualifiedName: "OrderService#process",
       callee: "repo.save",
       receiver: "repo",
+      receiverType: "OrderRepository",
+      receiverQualifiedType: "com.example.OrderRepository",
+      calleeOwner: "OrderRepository",
+      calleeQualifiedName: "com.example.OrderRepository#save",
+      resolutionKind: "field",
       methodName: "save",
       argumentCount: 1,
       callText: "repo.save(order)",

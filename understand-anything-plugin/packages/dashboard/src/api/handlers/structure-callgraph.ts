@@ -9,6 +9,11 @@ export interface CallGraphEntry {
   callText?: string
   callerOwner?: string
   callerQualifiedName?: string
+  receiverType?: string
+  receiverQualifiedType?: string
+  calleeOwner?: string
+  calleeQualifiedName?: string
+  resolutionKind?: "field" | "parameter" | "local" | "static" | "implicit-owner" | "heuristic" | "unresolved"
 }
 
 export interface CallgraphQuery {
@@ -86,6 +91,37 @@ function lowerCamel(name: string): string {
   return name[0].toLowerCase() + name.slice(1)
 }
 
+function simpleName(qualifiedName: string): string {
+  const parts = qualifiedName.split(".").filter(Boolean)
+  return parts[parts.length - 1] ?? qualifiedName
+}
+
+function parseResolvedCalleeQualifiedName(
+  value: string,
+): { owner: string; ownerClass: string; methodName: string } | undefined {
+  const hashIndex = value.lastIndexOf("#")
+  if (hashIndex <= 0 || hashIndex >= value.length - 1) return undefined
+  const owner = value.slice(0, hashIndex)
+  return {
+    owner,
+    ownerClass: simpleName(owner),
+    methodName: value.slice(hashIndex + 1),
+  }
+}
+
+function parseOwnerMethodQuery(
+  value: string,
+): { owner: string; ownerClass: string; methodName: string } | undefined {
+  const hashIndex = value.lastIndexOf("#")
+  if (hashIndex <= 0 || hashIndex >= value.length - 1 || value.indexOf("#") !== hashIndex) return undefined
+  const owner = value.slice(0, hashIndex)
+  return {
+    owner,
+    ownerClass: simpleName(owner),
+    methodName: value.slice(hashIndex + 1),
+  }
+}
+
 function terminalMethod(callee: string): string {
   const trimmed = callee.trim()
   const separator = findLastCallSeparator(trimmed)
@@ -105,6 +141,24 @@ function entryReceiver(entry: CallGraphEntry): string | undefined {
   return entry.receiver ?? fallbackReceiver(entry.callee)
 }
 
+function matchesResolvedOwnerMethod(entry: CallGraphEntry, raw: string): boolean | undefined {
+  const requested = parseOwnerMethodQuery(raw)
+  if (!requested) return undefined
+
+  if (entry.calleeQualifiedName !== undefined) {
+    const resolved = parseResolvedCalleeQualifiedName(entry.calleeQualifiedName)
+    if (!resolved || resolved.methodName !== requested.methodName) return false
+    if (requested.owner.includes(".")) return resolved.owner === requested.owner
+    return resolved.ownerClass === requested.ownerClass
+  }
+
+  if (entry.calleeOwner !== undefined) {
+    return entry.calleeOwner === requested.ownerClass && entryMethodName(entry) === requested.methodName
+  }
+
+  return undefined
+}
+
 function matchesCallee(entry: CallGraphEntry, raw: string, exact: boolean): boolean {
   if (!exact) return entry.callee.toLowerCase().includes(raw.toLowerCase())
 
@@ -115,6 +169,8 @@ function matchesCallee(entry: CallGraphEntry, raw: string, exact: boolean): bool
   if (parsed.kind === "receiverMethod") {
     return entryReceiver(entry) === parsed.receiver && entryMethodName(entry) === parsed.methodName
   }
+  const resolvedMatch = matchesResolvedOwnerMethod(entry, raw)
+  if (resolvedMatch !== undefined) return resolvedMatch
   const expectedReceiver = lowerCamel(parsed.ownerClass)
   return entryReceiver(entry) === expectedReceiver && entryMethodName(entry) === parsed.methodName
 }
@@ -163,5 +219,10 @@ export function projectCallgraphResult(filePath: string, entry: CallGraphEntry):
     ...(entry.callText !== undefined ? { callText: entry.callText } : {}),
     ...(entry.callerOwner !== undefined ? { callerOwner: entry.callerOwner } : {}),
     ...(entry.callerQualifiedName !== undefined ? { callerQualifiedName: entry.callerQualifiedName } : {}),
+    ...(entry.receiverType !== undefined ? { receiverType: entry.receiverType } : {}),
+    ...(entry.receiverQualifiedType !== undefined ? { receiverQualifiedType: entry.receiverQualifiedType } : {}),
+    ...(entry.calleeOwner !== undefined ? { calleeOwner: entry.calleeOwner } : {}),
+    ...(entry.calleeQualifiedName !== undefined ? { calleeQualifiedName: entry.calleeQualifiedName } : {}),
+    ...(entry.resolutionKind !== undefined ? { resolutionKind: entry.resolutionKind } : {}),
   }
 }
