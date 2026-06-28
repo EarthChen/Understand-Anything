@@ -685,6 +685,78 @@ public class Foo {}
       tree.delete();
       parser.delete();
     });
+
+    describe("extractCallGraph - resolved callee owner", () => {
+      it("resolves field, parameter, local shadow, static, and unresolved receivers", () => {
+        const { tree, parser, root } = parse(`package com.example;
+
+import com.remote.UserProfileMoaWrapperService;
+import com.remote.StaticTools;
+
+public class QuickMessageService {
+    private UserProfileMoaWrapperService userProfileMoaWrapperService;
+
+    public void getQuickMessage(UserProfileMoaWrapperService parameterService) {
+        userProfileMoaWrapperService.queryUserExtend(1);
+        parameterService.queryUserExtend(1, 2);
+        OtherService userProfileMoaWrapperService = new OtherService();
+        userProfileMoaWrapperService.queryUserExtend();
+        StaticTools.queryUserExtend();
+        unknownService.queryUserExtend();
+    }
+}
+`);
+        const result = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "queryUserExtend");
+
+        expect(result).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            caller: "getQuickMessage",
+            receiver: "userProfileMoaWrapperService",
+            methodName: "queryUserExtend",
+            argumentCount: 1,
+            receiverType: "UserProfileMoaWrapperService",
+            receiverQualifiedType: "com.remote.UserProfileMoaWrapperService",
+            calleeOwner: "UserProfileMoaWrapperService",
+            calleeQualifiedName: "com.remote.UserProfileMoaWrapperService#queryUserExtend",
+            resolutionKind: "field",
+          }),
+          expect.objectContaining({
+            receiver: "parameterService",
+            argumentCount: 2,
+            receiverType: "UserProfileMoaWrapperService",
+            receiverQualifiedType: "com.remote.UserProfileMoaWrapperService",
+            calleeOwner: "UserProfileMoaWrapperService",
+            calleeQualifiedName: "com.remote.UserProfileMoaWrapperService#queryUserExtend",
+            resolutionKind: "parameter",
+          }),
+          expect.objectContaining({
+            receiver: "userProfileMoaWrapperService",
+            argumentCount: 0,
+            receiverType: "OtherService",
+            receiverQualifiedType: "com.example.OtherService",
+            calleeOwner: "OtherService",
+            calleeQualifiedName: "com.example.OtherService#queryUserExtend",
+            resolutionKind: "local",
+          }),
+          expect.objectContaining({
+            receiver: "StaticTools",
+            receiverType: "StaticTools",
+            receiverQualifiedType: "com.remote.StaticTools",
+            calleeOwner: "StaticTools",
+            calleeQualifiedName: "com.remote.StaticTools#queryUserExtend",
+            resolutionKind: "static",
+          }),
+          expect.objectContaining({
+            receiver: "unknownService",
+            methodName: "queryUserExtend",
+            resolutionKind: "unresolved",
+          }),
+        ]));
+
+        tree.delete();
+        parser.delete();
+      });
+    });
   });
 
   // ---- Annotations ----

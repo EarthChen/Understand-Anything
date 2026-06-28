@@ -1,6 +1,12 @@
 import type { StructuralAnalysis, CallGraphEntry, AnnotationInfo, PropertyInfo, EndpointInfo } from "../../types.js";
 import type { LanguageExtractor, TreeSitterNode } from "./types.js";
 import { findChild, findChildren } from "./base-extractor.js";
+import {
+  buildQualifiedMethodName,
+  qualifyTypeName,
+  simpleTypeName,
+  TypeScopeStack,
+} from "./callgraph-resolution.js";
 
 const HTTP_METHOD_ANNOTATIONS: Record<string, string> = {
   GET: "GET",
@@ -317,10 +323,16 @@ export class JavaExtractor implements LanguageExtractor {
     const entries: CallGraphEntry[] = [];
     const functionStack: string[] = [];
     const ownerStack: string[] = [];
+    const packageName = this.extractPackageName(rootNode);
+    const imports = this.extractImports(rootNode);
+    const knownTypes = this.extractKnownTypes(rootNode, packageName, imports);
+    const typeContext = { packageName, imports, knownTypes };
+    const typeScopes = new TypeScopeStack();
 
     const walkForCalls = (node: TreeSitterNode) => {
       let pushedName = false;
       let pushedOwner = false;
+      let pushedTypeScope = false;
       const savedFunctionStack = functionStack.slice();
       const isolatesFunctionScope = this.isOwnerDeclaration(node);
 
@@ -334,6 +346,9 @@ export class JavaExtractor implements LanguageExtractor {
           ownerStack.push(ownerName);
           pushedOwner = true;
         }
+        typeScopes.pushScope();
+        pushedTypeScope = true;
+        this.bindClassFields(node, typeScopes, typeContext);
       }
 
       // Track entering method/constructor declarations
@@ -346,6 +361,13 @@ export class JavaExtractor implements LanguageExtractor {
           functionStack.push(nameNode.text);
           pushedName = true;
         }
+        typeScopes.pushScope();
+        pushedTypeScope = true;
+        this.bindParameters(node, typeScopes, typeContext);
+      }
+
+      if (node.type === "local_variable_declaration") {
+        this.bindLocalVariables(node, typeScopes, typeContext);
       }
 
       // Extract method invocations: e.g. fetchFromDb(limit), System.out.println(msg)
@@ -357,6 +379,14 @@ export class JavaExtractor implements LanguageExtractor {
             const caller = functionStack[functionStack.length - 1];
             const callerOwner = ownerStack[ownerStack.length - 1];
             const objectNode = node.childForFieldName("object");
+            const resolution = objectNode
+              ? this.resolveReceiver(
+                objectNode.text,
+                nameNode?.text,
+                typeScopes,
+                typeContext,
+              )
+              : {};
             entries.push({
               caller,
               callee,
@@ -370,6 +400,7 @@ export class JavaExtractor implements LanguageExtractor {
               ...(callerOwner
                 ? { callerQualifiedName: `${callerOwner}#${caller}` }
                 : {}),
+              ...resolution,
             });
           }
         }
@@ -408,7 +439,9 @@ export class JavaExtractor implements LanguageExtractor {
           const savedAnonymousOwnerStack = ownerStack.slice();
           functionStack.length = 0;
           ownerStack.length = 0;
+          typeScopes.pushScope();
           walkForCalls(child);
+          typeScopes.popScope();
           functionStack.length = 0;
           functionStack.push(...savedAnonymousFunctionStack);
           ownerStack.length = 0;
@@ -424,6 +457,9 @@ export class JavaExtractor implements LanguageExtractor {
       }
       if (pushedOwner) {
         ownerStack.pop();
+      }
+      if (pushedTypeScope) {
+        typeScopes.popScope();
       }
       if (isolatesFunctionScope) {
         functionStack.length = 0;
@@ -495,6 +531,173 @@ export class JavaExtractor implements LanguageExtractor {
       if (argsNode.child(i)?.isNamed) count++;
     }
     return count;
+  }
+
+  private extractPackageName(rootNode: TreeSitterNode): string | undefined {
+    for (let i = 0; i < rootNode.childCount; i++) {
+      const child = rootNode.child(i);
+      if (child?.type !== "package_declaration") continue;
+      return child.text
+        .replace(/^package\s+/, "")
+        .replace(/;$/, "")
+        .trim();
+    }
+
+    return undefined;
+  }
+
+  private extractImports(rootNode: TreeSitterNode): Map<string, string> {
+    const imports = new Map<string, string>();
+    for (let i = 0; i < rootNode.childCount; i++) {
+      const child = rootNode.child(i);
+      if (child?.type !== "import_declaration") continue;
+
+      const importPath = child.text
+        .replace(/^import\s+/, "")
+        .replace(/^static\s+/, "")
+        .replace(/;$/, "")
+        .trim();
+      if (!importPath || importPath.endsWith(".*")) continue;
+
+      imports.set(lastComponent(importPath), importPath);
+    }
+
+    return imports;
+  }
+
+  private extractKnownTypes(
+    rootNode: TreeSitterNode,
+    packageName: string | undefined,
+    imports: Map<string, string>,
+  ): Map<string, string> {
+    const knownTypes = new Map<string, string>(imports);
+
+    for (let i = 0; i < rootNode.childCount; i++) {
+      const child = rootNode.child(i);
+      if (!child || !this.isOwnerDeclaration(child)) continue;
+
+      const name = this.extractDeclarationName(child);
+      if (name) {
+        knownTypes.set(name, packageName ? `${packageName}.${name}` : name);
+      }
+    }
+
+    return knownTypes;
+  }
+
+  private bindClassFields(
+    ownerNode: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    typeContext: {
+      packageName?: string;
+      imports: Map<string, string>;
+      knownTypes: Map<string, string>;
+    },
+  ): void {
+    const body = ownerNode.childForFieldName("body");
+    if (!body) return;
+
+    for (let i = 0; i < body.childCount; i++) {
+      const child = body.child(i);
+      if (child?.type !== "field_declaration") continue;
+      this.bindTypedDeclarators(child, "field", typeScopes, typeContext);
+    }
+  }
+
+  private bindParameters(
+    callableNode: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    typeContext: {
+      packageName?: string;
+      imports: Map<string, string>;
+      knownTypes: Map<string, string>;
+    },
+  ): void {
+    const paramsNode = callableNode.childForFieldName("parameters");
+    for (const param of extractParams(paramsNode ?? null)) {
+      typeScopes.set(param.name, {
+        type: simpleTypeName(param.type),
+        qualifiedType: qualifyTypeName(param.type, typeContext),
+        kind: "parameter",
+      });
+    }
+  }
+
+  private bindLocalVariables(
+    node: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    typeContext: {
+      packageName?: string;
+      imports: Map<string, string>;
+      knownTypes: Map<string, string>;
+    },
+  ): void {
+    this.bindTypedDeclarators(node, "local", typeScopes, typeContext);
+  }
+
+  private bindTypedDeclarators(
+    node: TreeSitterNode,
+    kind: "field" | "local",
+    typeScopes: TypeScopeStack,
+    typeContext: {
+      packageName?: string;
+      imports: Map<string, string>;
+      knownTypes: Map<string, string>;
+    },
+  ): void {
+    const typeNode = node.childForFieldName("type");
+    if (!typeNode) return;
+
+    for (const declarator of findChildren(node, "variable_declarator")) {
+      const nameNode = declarator.childForFieldName("name");
+      if (!nameNode) continue;
+
+      typeScopes.set(nameNode.text, {
+        type: simpleTypeName(typeNode.text),
+        qualifiedType: qualifyTypeName(typeNode.text, typeContext),
+        kind,
+      });
+    }
+  }
+
+  private resolveReceiver(
+    receiver: string,
+    methodName: string | undefined,
+    typeScopes: TypeScopeStack,
+    typeContext: {
+      packageName?: string;
+      imports: Map<string, string>;
+      knownTypes: Map<string, string>;
+    },
+  ): Partial<CallGraphEntry> {
+    const binding = typeScopes.resolve(receiver);
+    if (binding) {
+      return {
+        receiverType: binding.type,
+        ...(binding.qualifiedType ? { receiverQualifiedType: binding.qualifiedType } : {}),
+        calleeOwner: binding.type,
+        ...(binding.qualifiedType
+          ? { calleeQualifiedName: buildQualifiedMethodName(binding.qualifiedType, methodName) }
+          : {}),
+        resolutionKind: binding.kind,
+      };
+    }
+
+    if (/^[A-Z]/.test(receiver)) {
+      const qualifiedType = qualifyTypeName(receiver, typeContext);
+      const receiverType = simpleTypeName(receiver);
+      return {
+        receiverType,
+        ...(qualifiedType ? { receiverQualifiedType: qualifiedType } : {}),
+        calleeOwner: receiverType,
+        ...(qualifiedType
+          ? { calleeQualifiedName: buildQualifiedMethodName(qualifiedType, methodName) }
+          : {}),
+        resolutionKind: "static",
+      };
+    }
+
+    return { resolutionKind: "unresolved" };
   }
 
   private extractImport(
