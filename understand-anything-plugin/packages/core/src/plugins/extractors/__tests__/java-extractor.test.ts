@@ -1035,6 +1035,61 @@ public class CatchScopeService {
         tree.delete();
         parser.delete();
       });
+
+      it("binds anonymous class fields for receiver resolution", () => {
+        const { tree, parser, root } = parse(`package com.example;
+
+public class Outer {
+    private FieldService service;
+
+    public void setup() {
+        Runnable r = new Runnable() {
+            private OtherService service;
+
+            public void run() {
+                service.call();
+                this.service.call();
+            }
+        };
+        service.call();
+    }
+}
+`);
+        const result = extractor.extractCallGraph(root).filter((entry) => entry.methodName === "call");
+
+        expect(result).toEqual([
+          expect.objectContaining({
+            caller: "run",
+            receiver: "service",
+            receiverType: "OtherService",
+            receiverQualifiedType: "com.example.OtherService",
+            calleeOwner: "OtherService",
+            calleeQualifiedName: "com.example.OtherService#call",
+            resolutionKind: "field",
+          }),
+          expect.objectContaining({
+            caller: "run",
+            receiver: "this.service",
+            receiverType: "OtherService",
+            receiverQualifiedType: "com.example.OtherService",
+            calleeOwner: "OtherService",
+            calleeQualifiedName: "com.example.OtherService#call",
+            resolutionKind: "field",
+          }),
+          expect.objectContaining({
+            caller: "setup",
+            receiver: "service",
+            receiverType: "FieldService",
+            receiverQualifiedType: "com.example.FieldService",
+            calleeOwner: "FieldService",
+            calleeQualifiedName: "com.example.FieldService#call",
+            resolutionKind: "field",
+          }),
+        ]);
+
+        tree.delete();
+        parser.delete();
+      });
     });
   });
 

@@ -470,7 +470,9 @@ export class JavaExtractor implements LanguageExtractor {
           ownerStack.length = 0;
           fieldScopes.length = 0;
           typeScopes.pushScope();
+          fieldScopes.push(this.bindClassBodyFields(child, typeScopes, typeContext));
           walkForCalls(child);
+          fieldScopes.pop();
           typeScopes.popScope();
           functionStack.length = 0;
           functionStack.push(...savedAnonymousFunctionStack);
@@ -629,10 +631,22 @@ export class JavaExtractor implements LanguageExtractor {
       knownTypes: Map<string, string>;
     },
   ): Map<string, TypeBinding> {
-    const fields = new Map<string, TypeBinding>();
     const body = ownerNode.childForFieldName("body");
-    if (!body) return fields;
+    if (!body) return new Map();
 
+    return this.bindClassBodyFields(body, typeScopes, typeContext);
+  }
+
+  private bindClassBodyFields(
+    body: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    typeContext: {
+      packageName?: string;
+      imports: Map<string, string>;
+      knownTypes: Map<string, string>;
+    },
+  ): Map<string, TypeBinding> {
+    const fields = new Map<string, TypeBinding>();
     for (let i = 0; i < body.childCount; i++) {
       const child = body.child(i);
       if (child?.type !== "field_declaration") continue;
