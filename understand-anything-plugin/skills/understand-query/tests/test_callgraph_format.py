@@ -17,6 +17,7 @@ def test_callgraph_markdown_renders_match_mode_and_call_text():
                 "callee": "repo.save",
                 "argumentCount": 1,
                 "lineNumber": 42,
+                "columnNumber": 12,
                 "callText": "repo.save(order)",
             }
         ],
@@ -27,4 +28,25 @@ def test_callgraph_markdown_renders_match_mode_and_call_text():
 
     assert '# Callgraph Search: callee="queryUserExtend" (exact-method)' in md
     assert "| File | Caller | Callee | Args | Line | Call |" in md
-    assert "| OrderService.java | OrderService#process | repo.save | 1 | 42 | repo.save(order) |" in md
+    assert "| OrderService.java | OrderService#process | repo.save | 1 | 42:12 | repo.save(order) |" in md
+
+
+def test_callgraph_markdown_treats_column_number_as_structured_field():
+    data = {
+        "query": {"callee": "save", "exact": True},
+        "results": [
+            {
+                "filePath": "src/OrderService.java",
+                "caller": "process",
+                "callee": "repo.save",
+                "lineNumber": 42,
+                "columnNumber": 12,
+            }
+        ],
+        "total": 1,
+    }
+
+    md = _format_markdown(data)
+
+    assert "| File | Caller | Callee | Args | Line | Call |" in md
+    assert "| OrderService.java | process | repo.save |  | 42:12 | repo.save |" in md

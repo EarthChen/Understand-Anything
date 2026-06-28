@@ -199,7 +199,7 @@ def _format_markdown(data: Any) -> str:
         results = data.get("results", [])
         if results:
             has_structured_fields = any(
-                "callText" in r or "argumentCount" in r or "callerQualifiedName" in r
+                "callText" in r or "argumentCount" in r or "callerQualifiedName" in r or "columnNumber" in r
                 for r in results
             )
             if has_structured_fields:
@@ -212,7 +212,10 @@ def _format_markdown(data: Any) -> str:
                     caller = r.get("callerQualifiedName") or r.get("caller", "?")
                     args = r.get("argumentCount", "")
                     call = r.get("callText") or r.get("callee", "?")
-                    lines.append(f"| {short} | {caller} | {r.get('callee', '?')} | {args} | {r.get('lineNumber', '?')} | {call} |")
+                    line = r.get("lineNumber", "?")
+                    if r.get("columnNumber") is not None:
+                        line = f"{line}:{r['columnNumber']}"
+                    lines.append(f"| {short} | {caller} | {r.get('callee', '?')} | {args} | {line} | {call} |")
             else:
                 lines.append("| File | Caller | Callee | Line |")
                 lines.append("|------|--------|--------|------|")
