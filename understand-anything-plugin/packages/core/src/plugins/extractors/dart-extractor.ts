@@ -567,7 +567,10 @@ export class DartExtractor implements LanguageExtractor {
         this.bindLocalVariables(node, typeScopes, typeContext);
       }
 
-      if (functionStack.length > 0 && node.type === "block") {
+      if (
+        functionStack.length > 0 &&
+        (node.type === "block" || node.type === "for_statement")
+      ) {
         typeScopes.pushScope();
         pushedTypeScope = true;
       }
@@ -696,7 +699,10 @@ export class DartExtractor implements LanguageExtractor {
       if (!spec) continue;
 
       const combinator = findChild(spec, "combinator");
-      const specifiers = extractCombinatorSpecifiers(combinator);
+      const specifiers =
+        combinator?.child(0)?.text === "show"
+          ? extractCombinatorSpecifiers(combinator)
+          : null;
       for (const specifier of specifiers ?? []) {
         imports.set(specifier, specifier);
       }

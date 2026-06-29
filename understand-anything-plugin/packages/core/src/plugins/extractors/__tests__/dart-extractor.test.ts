@@ -774,5 +774,70 @@ void load(bool enabled) {
       tree.delete();
       parser.delete();
     });
+
+    it("does not leak for initializer local bindings after the loop", () => {
+      const { tree, parser, root } = parse(`class Api {
+  void fetch() {}
+}
+
+void load(bool enabled) {
+  for (final Api api = Api(); enabled; ) {
+    api.fetch();
+    break;
+  }
+  api.fetch();
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const apiCalls = result.filter((entry) => entry.callee === "api.fetch");
+
+      expect(apiCalls).toHaveLength(2);
+      expect(apiCalls[0]).toEqual(
+        expect.objectContaining({
+          lineNumber: 7,
+          resolutionKind: "local",
+          receiverType: "Api",
+          receiverQualifiedType: "Api",
+        }),
+      );
+      expect(apiCalls[1]).toEqual(
+        expect.objectContaining({
+          lineNumber: 10,
+          resolutionKind: "unresolved",
+        }),
+      );
+      expect(apiCalls[1]).not.toEqual(expect.objectContaining({ resolutionKind: "local" }));
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("does not treat hide import specifiers as constructor types", () => {
+      const { tree, parser, root } = parse(`import "models.dart" hide User;
+
+void main() {
+  User();
+}
+`);
+      const result = extractor.extractCallGraph(root);
+
+      const call = result.find((entry) => entry.callText === "User()");
+      expect(call).toEqual(
+        expect.objectContaining({
+          caller: "main",
+          callee: "User",
+          methodName: "User",
+          callText: "User()",
+        }),
+      );
+      expect(call).not.toEqual(expect.objectContaining({ callee: "new User" }));
+      expect(call).not.toEqual(expect.objectContaining({ resolutionKind: "static" }));
+      expect(call).not.toEqual(
+        expect.objectContaining({ calleeQualifiedName: "User#User" }),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
   });
 });
