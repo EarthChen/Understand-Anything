@@ -1,7 +1,15 @@
 export interface FileExtraction {
   path: string;
   functions: Array<{ name: string; lineRange: [number, number] }>;
-  callGraph: Array<{ caller: string; callee: string; lineNumber: number }>;
+  callGraph: Array<{
+    caller: string;
+    callee: string;
+    lineNumber: number;
+    methodName?: string;
+    callerQualifiedName?: string;
+    calleeOwner?: string;
+    calleeQualifiedName?: string;
+  }>;
   imports: Array<{ source: string; specifiers: string[] }>;
   classes: Array<{
     name: string;
@@ -73,9 +81,14 @@ export function resolveCallGraph(files: FileExtraction[]): {
     for (const entry of file.callGraph ?? []) {
       let calleeName = entry.callee;
       let resolvedFile: string | null = null;
+      const resolved = resolveFromQualifiedCall(files, entry);
+      if (resolved) {
+        calleeName = resolved.calleeFunc;
+        resolvedFile = resolved.calleeFile;
+      }
 
       // Parse callee: "obj.method" -> try type lookup
-      if (calleeName.includes(".")) {
+      if (!resolvedFile && calleeName.includes(".")) {
         const parts = calleeName.split(".");
         const objName = parts[0];
         const methodName = parts[parts.length - 1];
@@ -102,7 +115,7 @@ export function resolveCallGraph(files: FileExtraction[]): {
           }
           calleeName = methodName;
         }
-      } else {
+      } else if (!resolvedFile) {
         // Simple name: check import map first
         resolvedFile = imap.get(calleeName) ?? null;
         if (!resolvedFile) {
@@ -114,7 +127,7 @@ export function resolveCallGraph(files: FileExtraction[]): {
       if (resolvedFile) {
         edges.push({
           callerFile: file.path,
-          callerFunc: entry.caller,
+          callerFunc: methodNameFromQualifiedName(entry.callerQualifiedName) ?? entry.caller,
           calleeFile: resolvedFile,
           calleeFunc: calleeName,
           lineNumber: entry.lineNumber,
@@ -131,6 +144,22 @@ export function resolveCallGraph(files: FileExtraction[]): {
   }
 
   return { edges, unresolved };
+}
+
+function resolveFromQualifiedCall(
+  files: FileExtraction[],
+  entry: FileExtraction["callGraph"][number],
+): { calleeFile: string; calleeFunc: string } | null {
+  const owner = ownerFromQualifiedName(entry.calleeQualifiedName) ?? entry.calleeOwner;
+  if (!owner) return null;
+
+  const calleeFile = findFileContainingClass(files, owner);
+  if (!calleeFile) return null;
+
+  return {
+    calleeFile,
+    calleeFunc: methodNameFromQualifiedName(entry.calleeQualifiedName) ?? entry.methodName ?? lastPathPart(entry.callee),
+  };
 }
 
 function resolveImportPath(fromFile: string, importSource: string, files: FileExtraction[]): string | null {
@@ -168,7 +197,30 @@ function normalizePath(p: string): string {
 
 function findFileContainingClass(files: FileExtraction[], className: string): string | null {
   for (const file of files) {
-    if ((file.classes ?? []).some((c) => c.name === className)) return file.path;
+    if ((file.classes ?? []).some((c) => classNameMatches(c.name, className))) return file.path;
   }
   return null;
+}
+
+function ownerFromQualifiedName(qualifiedName: string | undefined): string | null {
+  if (!qualifiedName) return null;
+  const hashIndex = qualifiedName.indexOf("#");
+  return hashIndex > 0 ? qualifiedName.slice(0, hashIndex) : null;
+}
+
+function methodNameFromQualifiedName(qualifiedName: string | undefined): string | null {
+  if (!qualifiedName) return null;
+  const hashIndex = qualifiedName.indexOf("#");
+  return hashIndex >= 0 && hashIndex < qualifiedName.length - 1
+    ? qualifiedName.slice(hashIndex + 1)
+    : null;
+}
+
+function lastPathPart(value: string): string {
+  const parts = value.split(".");
+  return parts[parts.length - 1] || value;
+}
+
+function classNameMatches(className: string, ownerName: string): boolean {
+  return className === ownerName || ownerName.endsWith("." + className);
 }

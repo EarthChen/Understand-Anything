@@ -163,7 +163,15 @@ Read `$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex
         {"name": "App", "line": 50, "isDefault": false}
       ],
       "callGraph": [
-        {"caller": "main", "callee": "initApp", "lineNumber": 15}
+        {
+          "caller": "main",
+          "callee": "app.init",
+          "lineNumber": 15,
+          "callerQualifiedName": "Bootstrap#main",
+          "calleeOwner": "App",
+          "calleeQualifiedName": "App#init",
+          "argumentCount": 1
+        }
       ],
       "metrics": {
         "importCount": 5,
@@ -216,7 +224,7 @@ The file contains:
 }
 ```
 
-These edges are already produced by the deterministic rule engine (annotation→edge mapping, meta-annotation resolution, call graph resolution). You MUST NOT emit duplicate edges for the same (source, target, type) combination.
+These edges are already produced by the deterministic rule engine (annotation→edge mapping, meta-annotation resolution, AST-resolved call graph resolution). This includes `calls` edges derived from `callGraph[].callerQualifiedName`, `callGraph[].calleeOwner`, and `callGraph[].calleeQualifiedName` when the extractor provides them. You MUST NOT emit duplicate edges for the same (source, target, type) combination.
 
 ---
 
@@ -347,7 +355,7 @@ Using the script's structural data and file categories, create edges.
 |---|---|---|---|
 | `contains` | File contains a function or class node you created (use for ALL function/class nodes) | `1.0` | `forward` |
 | `imports` | File imports from another project file (use `batchImportData[filePath]` from batches.json loaded in Phase 0 — external imports already filtered out) | `0.7` | `forward` |
-| `calls` | A function in this file calls a function in another file (infer from imports + function names when confident) | `0.8` | `forward` |
+| `calls` | Prefer rule-engine `calls` edges from AST-resolved `callGraph`. Only emit an additional `calls` edge when the source shows a concrete call that is missing from rule engine output and both endpoint nodes exist. Do NOT infer from imports + matching names alone. | `0.8` | `forward` |
 | `inherits` | A class extends another class in the project. Use `classes[].superclass` from structural data when available. | `0.9` | `forward` |
 | `implements` | A class implements an interface in the project. Use `classes[].interfaces` from structural data when available. | `0.9` | `forward` |
 | `exports` | File exports a function or class node you created (only for exported items — use IN ADDITION to `contains`, not instead of it) | `0.8` | `forward` |
@@ -568,6 +576,7 @@ Use these hints for common edge patterns:
 - ALWAYS create a node for EVERY file in your batch, even if the file is trivial. Use the appropriate node type based on fileCategory.
 - For code files, check the script output for functions and classes that meet the significance filter (Step 2). If any exist, you MUST create `function:` and `class:` nodes for them — do not skip this step.
 - For import edges, use `batchImportData[filePath]` directly from the batch slice file (loaded in Phase 0). Do NOT attempt to resolve import paths yourself -- the project scanner already did this deterministically.
+- For call edges, preserve rule-engine `calls` edges as the authoritative deterministic result. Add LLM-generated `calls` edges only for explicit source-level calls that the rule engine missed, and never duplicate a rule-engine edge.
 - NEVER produce duplicate node IDs within your batch.
 - NEVER create self-referencing edges (where source equals target).
 - Trust the script's structural extraction. Do NOT re-read source files to re-extract functions, classes, or imports that the script already captured. Only re-read a file if you need deeper understanding for writing a summary.

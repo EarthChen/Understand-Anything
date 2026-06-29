@@ -57,6 +57,67 @@ describe("resolveCallGraph", () => {
     expect(result.edges.some((e) => e.calleeFile === "src/service.ts" && e.calleeFunc === "process")).toBe(true);
   });
 
+  it("prefers resolved owner metadata over ambiguous short method names", () => {
+    const files: FileExtraction[] = [
+      {
+        path: "lib/user_controller.dart",
+        functions: [],
+        callGraph: [{
+          caller: "load",
+          callee: "api.fetch",
+          lineNumber: 8,
+          callerQualifiedName: "UserController#load",
+          calleeOwner: "UserApi",
+          calleeQualifiedName: "UserApi#fetch",
+        }],
+        imports: [],
+        classes: [{
+          name: "UserController",
+          lineRange: [1, 12],
+          methods: ["load"],
+          properties: [],
+        }],
+      },
+      {
+        path: "lib/audit_api.dart",
+        functions: [],
+        callGraph: [],
+        imports: [],
+        classes: [{
+          name: "AuditApi",
+          lineRange: [1, 5],
+          methods: ["fetch"],
+          properties: [],
+        }],
+      },
+      {
+        path: "lib/user_api.dart",
+        functions: [],
+        callGraph: [],
+        imports: [],
+        classes: [{
+          name: "UserApi",
+          lineRange: [1, 5],
+          methods: ["fetch"],
+          properties: [],
+        }],
+      },
+    ];
+
+    const result = resolveCallGraph(files);
+
+    expect(result.unresolved).toHaveLength(0);
+    expect(result.edges).toEqual([
+      expect.objectContaining({
+        callerFile: "lib/user_controller.dart",
+        callerFunc: "load",
+        calleeFile: "lib/user_api.dart",
+        calleeFunc: "fetch",
+        lineNumber: 8,
+      }),
+    ]);
+  });
+
   it("marks unresolvable calls as unresolved", () => {
     const files: FileExtraction[] = [
       {

@@ -318,7 +318,7 @@ This phase runs **before** batch computation. It uses `reextract-structure.mjs` 
 node <SKILL_DIR>/reextract-structure.mjs $PROJECT_ROOT --skip-scan
 ```
 
-The script handles: import resolution, tree-sitter extraction, structural-analysis.json generation, and source index building. The structural index includes AST-resolved callgraph metadata where supported, such as `callerQualifiedName`, `calleeOwner`, `calleeQualifiedName`, and `argumentCount`; `/understand-query structure --callee/--caller --exact` uses these fields for precise call-site lookup.
+The script handles: import resolution, tree-sitter extraction, structural-analysis.json generation, and source index building. The structural index includes AST-resolved callgraph metadata where supported, such as `callerQualifiedName`, `calleeOwner`, `calleeQualifiedName`, and `argumentCount`. The rule engine consumes these fields to emit deterministic `calls` edges before LLM batch analysis; `/understand-query structure --callee/--caller --exact` uses the same fields for precise call-site lookup.
 
 After the script, run the rule engine separately (not included in reextract-structure.mjs):
 
