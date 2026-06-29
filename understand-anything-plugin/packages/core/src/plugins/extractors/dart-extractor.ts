@@ -716,7 +716,9 @@ export class DartExtractor implements LanguageExtractor {
       const child = body.child(i);
       if (child?.type !== "method_signature" && child?.type !== "declaration") continue;
 
-      const ctorSig = findChild(child, "constructor_signature");
+      const ctorSig =
+        findChild(child, "constructor_signature") ??
+        findChild(child, "factory_constructor_signature");
       if (!ctorSig) continue;
 
       const identifiers = findChildren(ctorSig, "identifier");

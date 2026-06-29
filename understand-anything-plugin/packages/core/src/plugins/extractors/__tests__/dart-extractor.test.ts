@@ -905,5 +905,37 @@ void main() {
       tree.delete();
       parser.delete();
     });
+
+    it("records factory named constructor calls as constructor-like entries", () => {
+      const { tree, parser, root } = parse(`class User {
+  factory User.fromJson() => User();
+}
+
+void main() {
+  User.fromJson();
+}
+`);
+      const result = extractor.extractCallGraph(root);
+
+      const call = result.find((entry) => entry.callText === "User.fromJson()");
+      expect(call).toEqual(
+        expect.objectContaining({
+          caller: "main",
+          callee: "new User.fromJson",
+          methodName: "User.fromJson",
+          receiverType: "User",
+          receiverQualifiedType: "User",
+          calleeOwner: "User",
+          calleeQualifiedName: "User#User.fromJson",
+          resolutionKind: "static",
+        }),
+      );
+      expect(call).not.toEqual(
+        expect.objectContaining({ calleeQualifiedName: "User#fromJson" }),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
   });
 });
