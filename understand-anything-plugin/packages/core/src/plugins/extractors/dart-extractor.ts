@@ -1,6 +1,13 @@
 import type { StructuralAnalysis, CallGraphEntry, AnnotationInfo, PropertyInfo } from "../../types.js";
 import type { LanguageExtractor, TreeSitterNode } from "./types.js";
 import { findChild, findChildren } from "./base-extractor.js";
+import {
+  TypeScopeStack,
+  type TypeBinding,
+  buildQualifiedMethodName,
+  qualifyTypeName,
+  simpleTypeName,
+} from "./callgraph-resolution.js";
 
 function isPrivate(name: string): boolean {
   return name.startsWith("_");
@@ -316,6 +323,122 @@ function extractCalleeFromExpressionStatement(node: TreeSitterNode): string | nu
   return parts.length > 0 ? parts.join(".") : null;
 }
 
+interface DartCallInfo {
+  callee: string;
+  receiver?: string;
+  methodName: string;
+  argumentCount: number;
+  callText: string;
+  receiverNode?: TreeSitterNode;
+  isConstructorCall: boolean;
+}
+
+function extractCallInfoFromExpressionStatement(node: TreeSitterNode): DartCallInfo | null {
+  const callee = extractCalleeFromExpressionStatement(node);
+  if (!callee) return null;
+
+  const parts = callee.split(".");
+  const methodName = parts[parts.length - 1];
+  const receiver = parts.length > 1 ? parts.slice(0, -1).join(".") : undefined;
+  const isConstructorCall = !receiver && /^[A-Z]/.test(methodName);
+  const callText = node.text.replace(/;$/, "");
+  const receiverNode = findReceiverNode(node, receiver);
+
+  return {
+    callee: isConstructorCall ? `new ${methodName}` : callee,
+    ...(receiver ? { receiver } : {}),
+    methodName,
+    argumentCount: extractArgumentCountFromExpressionStatement(node),
+    callText,
+    ...(receiverNode ? { receiverNode } : {}),
+    isConstructorCall,
+  };
+}
+
+function findReceiverNode(
+  node: TreeSitterNode,
+  receiver: string | undefined,
+): TreeSitterNode | null {
+  if (!receiver) return null;
+
+  const firstReceiverPart = receiver.split(".")[0];
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    if (
+      (child.type === "identifier" || child.type === "type_identifier") &&
+      child.text === firstReceiverPart
+    ) {
+      return child;
+    }
+    if (child.type === "this" && firstReceiverPart === "this") {
+      return child;
+    }
+    if (child.type === "super" && firstReceiverPart === "super") {
+      return child;
+    }
+  }
+
+  return null;
+}
+
+function extractArgumentCountFromExpressionStatement(node: TreeSitterNode): number {
+  const argsNode = findDescendant(node, "arguments");
+  if (!argsNode) return 0;
+
+  let count = 0;
+  for (let i = 0; i < argsNode.childCount; i++) {
+    if (argsNode.child(i)?.isNamed) count++;
+  }
+  return count;
+}
+
+function extractTypedParams(paramsNode: TreeSitterNode | null): Array<{ name: string; type: string }> {
+  if (!paramsNode) return [];
+
+  const params: Array<{ name: string; type: string }> = [];
+  const collectFrom = (node: TreeSitterNode) => {
+    for (const param of findChildren(node, "formal_parameter")) {
+      const identifiers = findChildren(param, "identifier");
+      const nameNode = identifiers[identifiers.length - 1];
+      const typeNode = findParameterTypeNode(param, nameNode);
+      if (nameNode && typeNode) {
+        params.push({ name: nameNode.text, type: typeNode.text });
+      }
+    }
+    for (const optional of findChildren(node, "optional_formal_parameters")) {
+      collectFrom(optional);
+    }
+  };
+
+  collectFrom(paramsNode);
+  return params;
+}
+
+function findParameterTypeNode(
+  param: TreeSitterNode,
+  nameNode: TreeSitterNode | undefined,
+): TreeSitterNode | null {
+  if (!nameNode) return null;
+
+  let candidate: TreeSitterNode | null = null;
+  for (let i = 0; i < param.childCount; i++) {
+    const child = param.child(i);
+    if (!child || child.id === nameNode.id) break;
+    if (
+      child.type === "type_identifier" ||
+      child.type === "void_type" ||
+      child.type.endsWith("_type") ||
+      child.type === "nullable_type" ||
+      child.type === "function_type"
+    ) {
+      candidate = child;
+    }
+  }
+
+  return candidate;
+}
+
 function addExport(
   exports: StructuralAnalysis["exports"],
   name: string,
@@ -380,28 +503,71 @@ export class DartExtractor implements LanguageExtractor {
   extractCallGraph(rootNode: TreeSitterNode): CallGraphEntry[] {
     const entries: CallGraphEntry[] = [];
     const functionStack: string[] = [];
+    const ownerStack: string[] = [];
+    const typeScopes = new TypeScopeStack();
+    const typeContext = this.buildTypeContext(rootNode);
+    const fieldScopes: Array<Map<string, TypeBinding>> = [];
 
     const walkForCalls = (node: TreeSitterNode) => {
+      let pushedFunction = false;
+      let pushedOwner = false;
+      let pushedTypeScope = false;
+      let pushedFieldScope = false;
+      let savedOwnerTypeScopes: Array<Map<string, TypeBinding>> | undefined;
+      const savedFunctionStack = functionStack.slice();
+      const isolatesFunctionScope = this.isOwnerDeclaration(node);
+
+      if (isolatesFunctionScope) {
+        functionStack.length = 0;
+      }
+
+      if (this.isOwnerDeclaration(node)) {
+        const ownerName = this.extractOwnerName(node);
+        if (ownerName) {
+          ownerStack.push(ownerName);
+          pushedOwner = true;
+        }
+        savedOwnerTypeScopes = typeScopes.snapshot();
+        typeScopes.reset();
+        typeScopes.pushScope();
+        pushedTypeScope = true;
+        fieldScopes.push(this.bindClassFields(node, typeScopes, typeContext));
+        pushedFieldScope = true;
+      }
+
       if (node.type === "function_body") {
         const name = this.extractFunctionNameFromBody(node);
         if (name) {
           functionStack.push(name);
-          for (let i = 0; i < node.childCount; i++) {
-            const child = node.child(i);
-            if (child) walkForCalls(child);
-          }
-          functionStack.pop();
-          return;
+          pushedFunction = true;
+          typeScopes.pushScope();
+          pushedTypeScope = true;
+          this.bindFunctionParameters(node, typeScopes, typeContext);
         }
       }
 
+      if (functionStack.length > 0 && node.type === "local_variable_declaration") {
+        this.bindLocalVariables(node, typeScopes, typeContext);
+      }
+
       if (node.type === "expression_statement" && functionStack.length > 0) {
-        const callee = extractCalleeFromExpressionStatement(node);
-        if (callee) {
+        const callInfo = extractCallInfoFromExpressionStatement(node);
+        if (callInfo) {
+          const caller = functionStack[functionStack.length - 1];
+          const callerOwner = ownerStack[ownerStack.length - 1];
+          const resolution = this.resolveCall(callInfo, callerOwner, typeScopes, fieldScopes, typeContext);
           entries.push({
-            caller: functionStack[functionStack.length - 1],
-            callee,
+            caller,
+            callee: callInfo.callee,
             lineNumber: node.startPosition.row + 1,
+            columnNumber: node.startPosition.column + 1,
+            ...(callInfo.receiver ? { receiver: callInfo.receiver } : {}),
+            methodName: callInfo.methodName,
+            argumentCount: callInfo.argumentCount,
+            callText: callInfo.callText,
+            ...(callerOwner ? { callerOwner } : {}),
+            ...(callerOwner ? { callerQualifiedName: buildQualifiedMethodName(callerOwner, caller) } : {}),
+            ...resolution,
           });
         }
       }
@@ -409,6 +575,26 @@ export class DartExtractor implements LanguageExtractor {
       for (let i = 0; i < node.childCount; i++) {
         const child = node.child(i);
         if (child) walkForCalls(child);
+      }
+
+      if (pushedFunction) {
+        functionStack.pop();
+      }
+      if (pushedOwner) {
+        ownerStack.pop();
+      }
+      if (pushedFieldScope) {
+        fieldScopes.pop();
+      }
+      if (pushedTypeScope) {
+        typeScopes.popScope();
+      }
+      if (savedOwnerTypeScopes) {
+        typeScopes.restore(savedOwnerTypeScopes);
+      }
+      if (isolatesFunctionScope) {
+        functionStack.length = 0;
+        functionStack.push(...savedFunctionStack);
       }
     };
 
@@ -433,6 +619,296 @@ export class DartExtractor implements LanguageExtractor {
         }
         if (sibling.type === "function_signature") {
           return extractFunctionSignatureName(sibling);
+        }
+        if (sibling.type !== "annotation") {
+          break;
+        }
+      }
+      break;
+    }
+
+    return null;
+  }
+
+  private isOwnerDeclaration(node: TreeSitterNode): boolean {
+    return (
+      node.type === "class_definition" ||
+      node.type === "mixin_declaration" ||
+      node.type === "extension_declaration" ||
+      node.type === "enum_declaration"
+    );
+  }
+
+  private extractOwnerName(node: TreeSitterNode): string | null {
+    return findChild(node, "identifier")?.text ?? null;
+  }
+
+  private buildTypeContext(rootNode: TreeSitterNode): {
+    imports: Map<string, string>;
+    knownTypes: Map<string, string>;
+  } {
+    const imports = this.extractCallGraphImports(rootNode);
+    const knownTypes = new Map<string, string>(imports);
+
+    for (let i = 0; i < rootNode.childCount; i++) {
+      const child = rootNode.child(i);
+      if (!child || !this.isOwnerDeclaration(child)) continue;
+
+      const name = this.extractOwnerName(child);
+      if (name) {
+        knownTypes.set(name, name);
+      }
+    }
+
+    return { imports, knownTypes };
+  }
+
+  private extractCallGraphImports(rootNode: TreeSitterNode): Map<string, string> {
+    const imports = new Map<string, string>();
+    for (let i = 0; i < rootNode.childCount; i++) {
+      const node = rootNode.child(i);
+      if (node?.type !== "import_or_export") continue;
+
+      const libraryImport = findChild(node, "library_import");
+      const spec = libraryImport ? findChild(libraryImport, "import_specification") : null;
+      if (!spec) continue;
+
+      const combinator = findChild(spec, "combinator");
+      const specifiers = extractCombinatorSpecifiers(combinator);
+      for (const specifier of specifiers ?? []) {
+        imports.set(specifier, specifier);
+      }
+    }
+
+    return imports;
+  }
+
+  private bindClassFields(
+    ownerNode: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+  ): Map<string, TypeBinding> {
+    const fields = new Map<string, TypeBinding>();
+    const body =
+      findChild(ownerNode, "class_body") ??
+      findChild(ownerNode, "extension_body") ??
+      findChild(ownerNode, "enum_body");
+    if (!body) return fields;
+
+    for (let i = 0; i < body.childCount; i++) {
+      const child = body.child(i);
+      if (child?.type !== "declaration") continue;
+
+      const field = extractFieldInfo(child);
+      if (!field?.type) continue;
+
+      const binding = this.buildTypeBinding(field.type, "field", typeContext);
+      typeScopes.set(field.name, binding);
+      fields.set(field.name, binding);
+    }
+
+    return fields;
+  }
+
+  private bindFunctionParameters(
+    body: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+  ): void {
+    const signature = this.extractSignatureFromBody(body);
+    const paramsNode = signature ? findChild(signature, "formal_parameter_list") : null;
+    for (const param of extractTypedParams(paramsNode)) {
+      typeScopes.set(param.name, this.buildTypeBinding(param.type, "parameter", typeContext));
+    }
+  }
+
+  private bindLocalVariables(
+    node: TreeSitterNode,
+    typeScopes: TypeScopeStack,
+    typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+  ): void {
+    const definition = findChild(node, "initialized_variable_definition");
+    if (!definition) return;
+
+    const typeNode = this.extractLocalVariableTypeNode(definition);
+    const nameNode = typeNode ? this.extractLocalVariableNameNode(definition, typeNode) : null;
+    if (!typeNode || !nameNode) return;
+
+    typeScopes.set(nameNode.text, this.buildTypeBinding(typeNode.text, "local", typeContext));
+  }
+
+  private extractLocalVariableTypeNode(node: TreeSitterNode): TreeSitterNode | null {
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (
+        child &&
+        (child.type === "type_identifier" ||
+          child.type.endsWith("_type") ||
+          child.type === "nullable_type")
+      ) {
+        return child;
+      }
+    }
+
+    return null;
+  }
+
+  private extractLocalVariableNameNode(
+    node: TreeSitterNode,
+    typeNode: TreeSitterNode,
+  ): TreeSitterNode | null {
+    let passedType = false;
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (!child) continue;
+      if (child.id === typeNode.id) {
+        passedType = true;
+        continue;
+      }
+      if (passedType && child.type === "identifier") {
+        return child;
+      }
+    }
+
+    return null;
+  }
+
+  private buildTypeBinding(
+    type: string,
+    kind: TypeBinding["kind"],
+    typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+  ): TypeBinding {
+    return {
+      type: simpleTypeName(type),
+      qualifiedType: qualifyTypeName(type, typeContext),
+      kind,
+    };
+  }
+
+  private resolveCall(
+    callInfo: DartCallInfo,
+    callerOwner: string | undefined,
+    typeScopes: TypeScopeStack,
+    fieldScopes: Array<Map<string, TypeBinding>>,
+    typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+  ): Partial<CallGraphEntry> {
+    if (callInfo.isConstructorCall) {
+      const receiverType = simpleTypeName(callInfo.methodName);
+      const qualifiedType = qualifyTypeName(callInfo.methodName, typeContext);
+      return {
+        receiverType,
+        ...(qualifiedType ? { receiverQualifiedType: qualifiedType } : {}),
+        calleeOwner: receiverType,
+        ...(qualifiedType
+          ? { calleeQualifiedName: buildQualifiedMethodName(qualifiedType, callInfo.methodName) }
+          : {}),
+        resolutionKind: "static",
+      };
+    }
+
+    if (callInfo.receiver) {
+      return this.resolveReceiver(
+        callInfo.receiver,
+        callInfo.methodName,
+        callInfo.receiverNode,
+        typeScopes,
+        fieldScopes,
+        typeContext,
+      );
+    }
+
+    if (callerOwner) {
+      return {
+        calleeOwner: callerOwner,
+        calleeQualifiedName: buildQualifiedMethodName(callerOwner, callInfo.methodName),
+        resolutionKind: "implicit-owner",
+      };
+    }
+
+    return {};
+  }
+
+  private resolveReceiver(
+    receiver: string,
+    methodName: string,
+    receiverNode: TreeSitterNode | undefined,
+    typeScopes: TypeScopeStack,
+    fieldScopes: Array<Map<string, TypeBinding>>,
+    typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+  ): Partial<CallGraphEntry> {
+    if (receiver.startsWith("this.")) {
+      const fieldName = receiver.slice("this.".length);
+      const binding = fieldScopes[fieldScopes.length - 1]?.get(fieldName);
+      return binding
+        ? this.buildResolvedReceiver(binding, methodName)
+        : { resolutionKind: "unresolved" };
+    }
+
+    const binding = typeScopes.resolve(receiver);
+    if (binding) {
+      return this.buildResolvedReceiver(binding, methodName);
+    }
+
+    if (receiverNode?.type === "identifier" && /^[A-Z]/.test(receiver)) {
+      const receiverType = simpleTypeName(receiver);
+      const qualifiedType = qualifyTypeName(receiver, typeContext);
+      return {
+        receiverType,
+        ...(qualifiedType ? { receiverQualifiedType: qualifiedType } : {}),
+        calleeOwner: receiverType,
+        ...(qualifiedType
+          ? { calleeQualifiedName: buildQualifiedMethodName(qualifiedType, methodName) }
+          : {}),
+        resolutionKind: "static",
+      };
+    }
+
+    return { resolutionKind: "unresolved" };
+  }
+
+  private buildResolvedReceiver(
+    binding: TypeBinding,
+    methodName: string,
+  ): Partial<CallGraphEntry> {
+    return {
+      receiverType: binding.type,
+      ...(binding.qualifiedType ? { receiverQualifiedType: binding.qualifiedType } : {}),
+      calleeOwner: binding.type,
+      ...(binding.qualifiedType
+        ? { calleeQualifiedName: buildQualifiedMethodName(binding.qualifiedType, methodName) }
+        : {}),
+      resolutionKind: binding.kind,
+    };
+  }
+
+  private extractSignatureFromBody(body: TreeSitterNode): TreeSitterNode | null {
+    const parent = body.parent;
+    if (!parent) return null;
+
+    for (let i = 0; i < parent.childCount; i++) {
+      const child = parent.child(i);
+      if (!child || child.id !== body.id) continue;
+
+      for (let j = i - 1; j >= 0; j--) {
+        const sibling = parent.child(j);
+        if (!sibling) continue;
+
+        if (sibling.type === "method_signature") {
+          return (
+            findChild(sibling, "function_signature") ??
+            findChild(sibling, "getter_signature") ??
+            findChild(sibling, "setter_signature") ??
+            findChild(sibling, "factory_constructor_signature")
+          );
+        }
+        if (sibling.type === "function_signature" || sibling.type === "constructor_signature") {
+          return sibling;
+        }
+        if (sibling.type === "declaration") {
+          return (
+            findChild(sibling, "function_signature") ??
+            findChild(sibling, "constructor_signature")
+          );
         }
         if (sibling.type !== "annotation") {
           break;
