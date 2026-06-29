@@ -160,6 +160,17 @@ function extractMethodName(methodSig: TreeSitterNode): string | null {
     }
   }
 
+  const ctorSig = findChild(methodSig, "constructor_signature");
+  if (ctorSig) {
+    const identifiers = findChildren(ctorSig, "identifier");
+    if (identifiers.length >= 2) {
+      return `${identifiers[0].text}.${identifiers[1].text}`;
+    }
+    if (identifiers.length === 1) {
+      return identifiers[0].text;
+    }
+  }
+
   return null;
 }
 
@@ -333,14 +344,20 @@ interface DartCallInfo {
   isConstructorCall: boolean;
 }
 
-function extractCallInfoFromExpressionStatement(node: TreeSitterNode): DartCallInfo | null {
+function extractCallInfoFromExpressionStatement(
+  node: TreeSitterNode,
+  typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+): DartCallInfo | null {
   const callee = extractCalleeFromExpressionStatement(node);
   if (!callee) return null;
 
   const parts = callee.split(".");
   const methodName = parts[parts.length - 1];
   const receiver = parts.length > 1 ? parts.slice(0, -1).join(".") : undefined;
-  const isConstructorCall = !receiver && /^[A-Z]/.test(methodName);
+  const isConstructorCall =
+    !receiver &&
+    /^[A-Z]/.test(methodName) &&
+    (typeContext.knownTypes.has(methodName) || typeContext.imports.has(methodName));
   const callText = node.text.replace(/;$/, "");
   const receiverNode = findReceiverNode(node, receiver);
 
@@ -550,8 +567,13 @@ export class DartExtractor implements LanguageExtractor {
         this.bindLocalVariables(node, typeScopes, typeContext);
       }
 
+      if (functionStack.length > 0 && node.type === "block") {
+        typeScopes.pushScope();
+        pushedTypeScope = true;
+      }
+
       if (node.type === "expression_statement" && functionStack.length > 0) {
-        const callInfo = extractCallInfoFromExpressionStatement(node);
+        const callInfo = extractCallInfoFromExpressionStatement(node, typeContext);
         if (callInfo) {
           const caller = functionStack[functionStack.length - 1];
           const callerOwner = ownerStack[ownerStack.length - 1];
@@ -837,7 +859,7 @@ export class DartExtractor implements LanguageExtractor {
     typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
   ): Partial<CallGraphEntry> {
     if (receiver.startsWith("this.")) {
-      const fieldName = receiver.slice("this.".length);
+      const fieldName = receiver.slice("this.".length).split(".")[0];
       const binding = fieldScopes[fieldScopes.length - 1]?.get(fieldName);
       return binding
         ? this.buildResolvedReceiver(binding, methodName)

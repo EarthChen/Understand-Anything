@@ -647,5 +647,132 @@ class UserFactory {
       tree.delete();
       parser.delete();
     });
+
+    it("records calls from constructor bodies with class ownership", () => {
+      const { tree, parser, root } = parse(`class C {
+  C() {
+    init();
+  }
+
+  void init() {}
+}
+`);
+      const result = extractor.extractCallGraph(root);
+
+      const initCall = result.find((entry) => entry.callText === "init()");
+      expect(initCall).toEqual(
+        expect.objectContaining({
+          caller: "C",
+          callee: "init",
+          callerOwner: "C",
+          callerQualifiedName: "C#C",
+          methodName: "init",
+          calleeOwner: "C",
+          calleeQualifiedName: "C#init",
+          resolutionKind: "implicit-owner",
+        }),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("does not classify uppercase top-level function calls as constructors", () => {
+      const { tree, parser, root } = parse(`void DoWork() {}
+
+void main() {
+  DoWork();
+}
+`);
+      const result = extractor.extractCallGraph(root);
+
+      const call = result.find((entry) => entry.callText === "DoWork()");
+      expect(call).toEqual(
+        expect.objectContaining({
+          caller: "main",
+          callee: "DoWork",
+          methodName: "DoWork",
+          callText: "DoWork()",
+        }),
+      );
+      expect(call).not.toEqual(expect.objectContaining({ callee: "new DoWork" }));
+      expect(call).not.toEqual(expect.objectContaining({ resolutionKind: "static" }));
+      expect(call).not.toEqual(
+        expect.objectContaining({ calleeQualifiedName: "DoWork#DoWork" }),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("resolves multi-level this field receivers from the root field", () => {
+      const { tree, parser, root } = parse(`class Api {
+  void fetch() {}
+}
+
+class Controller {
+  final Api api;
+  Controller(this.api);
+
+  void load() {
+    this.api.client.fetch();
+  }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+
+      const call = result.find((entry) => entry.callee === "this.api.client.fetch");
+      expect(call).toEqual(
+        expect.objectContaining({
+          receiver: "this.api.client",
+          methodName: "fetch",
+          receiverType: "Api",
+          receiverQualifiedType: "Api",
+          calleeOwner: "Api",
+          calleeQualifiedName: "Api#fetch",
+          resolutionKind: "field",
+        }),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("does not leak local bindings outside nested blocks", () => {
+      const { tree, parser, root } = parse(`class Api {
+  void fetch() {}
+}
+
+void load(bool enabled) {
+  if (enabled) {
+    final Api api = Api();
+    api.fetch();
+  }
+  api.fetch();
+}
+`);
+      const result = extractor.extractCallGraph(root);
+      const apiCalls = result.filter((entry) => entry.callee === "api.fetch");
+
+      expect(apiCalls).toHaveLength(2);
+      expect(apiCalls[0]).toEqual(
+        expect.objectContaining({
+          lineNumber: 8,
+          resolutionKind: "local",
+          receiverType: "Api",
+          receiverQualifiedType: "Api",
+        }),
+      );
+      expect(apiCalls[1]).toEqual(
+        expect.objectContaining({
+          lineNumber: 10,
+          resolutionKind: "unresolved",
+        }),
+      );
+      expect(apiCalls[1]).not.toEqual(expect.objectContaining({ resolutionKind: "local" }));
+
+      tree.delete();
+      parser.delete();
+    });
   });
 });
