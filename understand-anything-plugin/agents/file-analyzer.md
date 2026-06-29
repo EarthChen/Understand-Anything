@@ -189,12 +189,10 @@ Read `$PROJECT_ROOT/.understand-anything/tmp/ua-file-extract-results-<batchIndex
 
 When any of these arrays is present and non-empty, you MUST iterate it and emit nodes for the significant entries (don't just create the parent file node and call it done). The corresponding `metrics.serviceCount` / `metrics.endpointCount` / `metrics.resourceCount` / `metrics.stepCount` / `metrics.definitionCount` fields tell you how many were extracted at a glance.
 
-**Supported file categories:** The bundled script handles all file categories — `code` (13 languages with tree-sitter: TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Ruby, PHP, C/C++, C#, Dart, Objective-C), `config`, `docs`, `infra`, `data`, `script`, and `markup`. For languages without tree-sitter support (Swift, PowerShell, Batch, shell scripts of fileCategory `script`), the script outputs basic metrics with empty structural data — you MUST then read the source and supplement at least the function definitions, so these files don't end up as bare `file` nodes:
+**Supported file categories:** The bundled script handles all file categories — `code` (tree-sitter: TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Ruby, PHP, C/C++, C#, Dart, Objective-C, Swift), `config`, `docs`, `infra`, `data`, `script`, and `markup`. Shell scripts (`.sh`, `.bash`, Jenkinsfile) are parsed by the deterministic shell parser. For languages without deterministic structural support (PowerShell, Batch), the script outputs basic metrics with empty structural data — you MUST then read the source and supplement at least the function definitions, so these files don't end up as bare `file` nodes:
 
 - **PowerShell** (`.ps1`): match top-level `function NAME { ... }` blocks (case-insensitive); name = `NAME`, params from the param block when present
-- **Bash / shell** (`.sh`, `.bash`): match top-level `NAME() { ... }` and `function NAME { ... }`
 - **Batch** (`.bat`, `.cmd`): match `:LABEL` lines as call targets
-- **Swift**: match top-level `func NAME(`
 
 Treat these the same as tree-sitter-derived functions for node creation (Step 2 significance filter still applies — only emit `function:` nodes for those exceeding the threshold).
 
@@ -229,7 +227,7 @@ Read the pre-computed extraction results from `$PROJECT_ROOT/.understand-anythin
 **Source file reading rules:**
 - For files where `extract-structure.mjs` produced structural data (functions, classes, annotations): use the extraction results as your primary source. You MAY read the source file to understand a specific pattern the script could not capture (e.g., business logic within a function body), but do NOT re-derive structural data the script already extracted.
 - For files the script skipped (listed in `filesSkipped`): you MUST read the source file and extract at least function definitions so these files don't end up as bare `file` nodes.
-- For languages without tree-sitter support (Swift, PowerShell, Batch, shell): read the source and supplement structural data per the language-specific rules in Phase 1.
+- For languages without deterministic structural support (PowerShell, Batch): read the source and supplement structural data per the language-specific rules in Phase 1.
 - NEVER read source files for the purpose of re-extracting annotations, interfaces, or typed properties — these are already in the extraction results.
 
 For each file in the script's `results` array, produce `GraphNode` and `GraphEdge` objects by combining the script's structural data with your expert judgment.

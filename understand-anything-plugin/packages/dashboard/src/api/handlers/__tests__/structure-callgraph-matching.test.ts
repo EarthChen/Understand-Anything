@@ -56,6 +56,13 @@ describe("callgraph exact matching", () => {
     )).toBe(true)
   })
 
+  it("matches Class.method queries through owner-to-lowerCamel receiver heuristic", () => {
+    expect(matchesCallgraphEntry(
+      { caller: "getQuickMessage", callee: "userProfileMoaWrapperService.queryUserExtend", lineNumber: 318 },
+      { callee: "UserProfileMoaWrapperService.queryUserExtend", exact: true },
+    )).toBe(true)
+  })
+
   it("matches arrow receiver calls by method name and receiver.method exactly", () => {
     expect(matchesCallgraphEntry(
       { caller: "getQuickMessage", callee: "service->queryUserExtend", lineNumber: 318 },

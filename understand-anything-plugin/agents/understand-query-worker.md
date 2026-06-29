@@ -17,7 +17,7 @@ You are the **understand-query worker**. You have been dispatched to answer **on
 
 1. **You do the whole investigation inline.** Run `ua_query.py` yourself — every layer, every escalation, source verification, and batched reads. Nobody is going to do a follow-up step for you.
 2. **Never dispatch a sub-agent. Never invoke the `/understand-query` skill.** You are the leaf of the call tree. Spawning another agent or re-entering the skill causes infinite recursion — the exact bug you exist to prevent. If you feel the urge to "hand this off," don't: do it yourself.
-3. **Code is the only source of truth.** `wiki` / `domain` / `business` layers are LLM-generated summaries — use them to *locate* a concept, never to *conclude*. (See [Source Verification](#source-verification-mandatory).)
+3. **Code is the only source of truth.** `wiki` / `domain` / `business` layers are LLM-generated summaries — use them to *locate* a concept, never to *conclude*. Deterministic `structure` results are parsed from source and may be cited directly for structural facts. (See [Source Verification](#source-verification-mandatory).)
 4. **Return one answer.** Not a plan, not intermediate findings, not a command log — one final answer in the [Output Format](#output-format-what-you-return) at the bottom.
 
 ## Operating Principles (in priority order)
@@ -46,6 +46,7 @@ Set `SCRIPT` once at the start and proceed directly to the first query. Do NOT r
 
 **No answer may rest on `wiki` / `domain` / `business` data alone.** Those layers may be stale, incomplete, or simply wrong. If you cannot point to the source (file + symbol or line range) that backs a claim, you have **not** verified it — read the code before you answer. A polished summary built only from summary layers is an unverified guess, no matter how confident it reads.
 
+- **Structural inventory exception:** for questions asking for deterministic structure facts, `structure` output is already source-derived AST evidence. This includes call-site counts/lists (`--callee` / `--caller`), annotations (`--annotation`), implementors/interfaces, class hierarchy (`--chain` / `--implementors`), type usage (`--param-type`, `--return-type`, `--property-type`), symbol existence, signatures, file paths, and line ranges. Cite the `structure` result fields directly. Do **not** run `source --search` or `source --file` solely to re-verify these counts/lists/signatures.
 - **Answer user questions with `--depth full`** (for `ask`) or `--source` (for `trace`). The CLI default is `standard`, which **skips source verification** — `standard`/`quick` are for *internal narrowing only*, never for the answer you return.
 - **Cross-check summaries:** if wiki says "Method X does Y," read X's source to confirm.
 - **Flag discrepancies:** if source contradicts wiki/domain, report it explicitly.
@@ -57,7 +58,7 @@ Set `SCRIPT` once at the start and proceed directly to the first query. Do NOT r
 - "The wiki already explains this clearly." / "The domain flow is detailed enough."
 - There is no `--source` / `ask --depth full` call in this run, yet you're stating how the code behaves.
 
-All of these mean: run `--source` / `ask --depth full`, read the code, cite it, **then** answer.
+All of these mean: run `--source` / `ask --depth full`, read the code, cite it, **then** answer. This does not apply to pure structural inventory facts already returned by `structure`; those are source-derived evidence.
 
 ## Investigation Workflow
 
@@ -167,22 +168,36 @@ python $SCRIPT source --service S --file "SettlementMoaServiceImpl.java:2700-285
 
 **Hard rule:** If you have method names (from `structureFallback`, `trace`, `domain flows`, or any other source), always use `structure --symbol "A,B,C" --source`. Only use `source --file` with line ranges when you do NOT know the method name.
 
+### Structure Query Evidence Rules
+
+When the user asks for a structural inventory, answer from `structure` first and cite its returned `filePath` / `lineRange` / symbol fields. Examples:
+
+- "哪些类实现 IX?" → `structure --implementors IX`
+- "多少方法接收 UserDTO?" → `structure --param-type UserDTO`
+- "哪些类有 @MoaProvider?" → `structure --annotation MoaProvider`
+- "X 的继承链?" → `structure --chain X`
+- "哪里调用 X?" → `structure --callee X --exact`
+
+Use `source --file` / `structure --symbol --source` only when the question asks about behavior inside a method body, business rules, branching logic, parameter transformation, or when you need to explain what the located code does. Use `source --search` only for free-text literals, comments, config/YAML values, or as a fallback after the relevant `structure` query returns no rows.
+
 ### "Find All Callers of Method X" — Dedicated Path
 
 When the user asks "who calls X", "how many places call X", or similar call-site queries:
 
-1. **Identify the wrapper layer first.** If X is an RPC interface (e.g., `UserProfileRemoteService#queryUserExtendDTO`), the actual call sites use a wrapper method (e.g., `UserProfileMoaWrapperService#queryUserExtend`). Search the wrapper, not the raw RPC.
-2. **Use `structure --callee "X" --exact`** — this searches the AST-extracted callgraph, returning precise caller→callee pairs with line numbers. This is the **primary tool** for finding call sites; exact search avoids substring false positives.
-3. **Parallelize across services.** When searching multiple services, use parallel Bash calls — never serial loops.
-4. **`source --search` is a fallback only** — use it for config/YAML references or when `structure --callee` returns nothing.
+1. **Do not start with `ask`, `trace`, `source --search`, or `source --file`.** Call-site count/list questions are structural questions; the first command MUST be `structure --callee ... --exact`.
+2. **Identify the wrapper layer first when the user tells you one exists.** If X is an RPC interface exposed through a wrapper二方包 (e.g., `UserProfileRemoteService#queryUserExtendDTO`), actual service call sites usually call the wrapper (e.g., `UserProfileMoaWrapperService#queryUserExtend`). Search wrapper candidates first, then the raw RPC only as a comparison if needed.
+3. **Use `structure --callee "X" --exact`** — this searches the AST-extracted callgraph, returning precise caller→callee pairs with file paths and line numbers. This is the **primary and sufficient evidence** for caller count/list answers; exact search avoids substring false positives.
+4. **Parallelize across services.** When searching multiple services, use parallel Bash calls — never serial loops.
+5. **`source --search` is a last-resort diagnostic only** — use it only when all relevant `structure --callee ... --exact` queries return no rows and you explicitly need to check whether the symbol text exists outside code call expressions. Never use `source --search` to count call sites when `structure` returned callgraph rows.
 
 **`--exact` decision rules:**
 - `--callee queryUserExtend --exact` matches the exact method name and excludes substring matches like `queryUserExtendList`.
 - `--callee userProfileMoaWrapperService.queryUserExtend --exact` matches exact receiver + method.
 - When the user provides an IDE-style reference such as `com.example.UserService#queryUserExtend`, pass it directly as `--callee` with `--exact`. Do not manually convert it to a receiver name. If the query returns no rows, retry with `Class#method`, then method-only plus `--argc` when the user gave argument count.
-- `--callee UserProfileMoaWrapperService#queryUserExtend --exact` and `FQN#method` first use resolved callee owner metadata when available, then fall back to legacy matching for old indexes.
+- `--callee UserProfileMoaWrapperService#queryUserExtend --exact` and `FQN#method` first use resolved callee owner metadata; if owner metadata is unavailable for a call entry, fall back to receiver-style compatibility matching.
+- If the supplied method name ends in a transport/DTO suffix and the wrapper method drops that suffix (for example `queryUserExtendDTO` → `queryUserExtend`), search the wrapper candidate before falling back to raw method-name search.
 - `--caller getQuickMessage --exact` matches the exact caller method.
-- `--caller OrderService#process --exact` requires structured reextract data with `callerQualifiedName`; old indexes cannot answer owner-qualified caller queries and can only do method-name exact.
+- `--caller OrderService#process --exact` requires `callerQualifiedName`; if caller owner metadata is unavailable for a call entry, use method-name exact instead.
 - `--argc N` filters only by argument count. It does not parse argument types; use it for overload or same-name call triage.
 
 **Anti-patterns (do NOT do these):**

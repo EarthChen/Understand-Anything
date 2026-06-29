@@ -138,7 +138,15 @@ Determine whether to run a full analysis or incremental update.
      exit 1
    fi
 
-   if [ ! -f "$PLUGIN_ROOT/packages/core/dist/index.js" ]; then
+   CORE_DIST="$PLUGIN_ROOT/packages/core/dist/index.js"
+   CORE_SRC_NEWER=$(
+     if [ -f "$CORE_DIST" ]; then
+       find "$PLUGIN_ROOT/packages/core/src" "$PLUGIN_ROOT/packages/core/package.json" \
+         -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.mjs' -o -name '*.json' \) \
+         -newer "$CORE_DIST" -print -quit 2>/dev/null
+     fi
+   )
+   if [ ! -f "$CORE_DIST" ] || [ -n "$CORE_SRC_NEWER" ]; then
      cd "$PLUGIN_ROOT" && (pnpm install --frozen-lockfile 2>/dev/null || pnpm install) && pnpm --filter @understand-anything/core build
    fi
    ```
@@ -310,7 +318,7 @@ This phase runs **before** batch computation. It uses `reextract-structure.mjs` 
 node <SKILL_DIR>/reextract-structure.mjs $PROJECT_ROOT --skip-scan
 ```
 
-The script handles: import resolution, tree-sitter extraction, structural-analysis.json generation, and source index building.
+The script handles: import resolution, tree-sitter extraction, structural-analysis.json generation, and source index building. The structural index includes AST-resolved callgraph metadata where supported, such as `callerQualifiedName`, `calleeOwner`, `calleeQualifiedName`, and `argumentCount`; `/understand-query structure --callee/--caller --exact` uses these fields for precise call-site lookup.
 
 After the script, run the rule engine separately (not included in reextract-structure.mjs):
 

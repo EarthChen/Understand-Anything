@@ -122,6 +122,15 @@ function parseOwnerMethodQuery(
   }
 }
 
+function parseOwnerLikeReceiverMethod(
+  receiver: string,
+  methodName: string,
+): { owner: string; ownerClass: string; methodName: string } | undefined {
+  const ownerClass = simpleName(receiver)
+  if (!ownerClass || !/^[A-Z]/.test(ownerClass)) return undefined
+  return { owner: receiver, ownerClass, methodName }
+}
+
 function terminalMethod(callee: string): string {
   const trimmed = callee.trim()
   const separator = findLastCallSeparator(trimmed)
@@ -141,10 +150,10 @@ function entryReceiver(entry: CallGraphEntry): string | undefined {
   return entry.receiver ?? fallbackReceiver(entry.callee)
 }
 
-function matchesResolvedOwnerMethod(entry: CallGraphEntry, raw: string): boolean | undefined {
-  const requested = parseOwnerMethodQuery(raw)
-  if (!requested) return undefined
-
+function matchesResolvedOwnerMethodQuery(
+  entry: CallGraphEntry,
+  requested: { owner: string; ownerClass: string; methodName: string },
+): boolean | undefined {
   if (entry.calleeQualifiedName !== undefined) {
     const resolved = parseResolvedCalleeQualifiedName(entry.calleeQualifiedName)
     if (!resolved || resolved.methodName !== requested.methodName) return false
@@ -159,6 +168,11 @@ function matchesResolvedOwnerMethod(entry: CallGraphEntry, raw: string): boolean
   return undefined
 }
 
+function matchesResolvedOwnerMethod(entry: CallGraphEntry, raw: string): boolean | undefined {
+  const requested = parseOwnerMethodQuery(raw)
+  return requested ? matchesResolvedOwnerMethodQuery(entry, requested) : undefined
+}
+
 function matchesCallee(entry: CallGraphEntry, raw: string, exact: boolean): boolean {
   if (!exact) return entry.callee.toLowerCase().includes(raw.toLowerCase())
 
@@ -167,7 +181,12 @@ function matchesCallee(entry: CallGraphEntry, raw: string, exact: boolean): bool
     return entryMethodName(entry) === parsed.methodName
   }
   if (parsed.kind === "receiverMethod") {
-    return entryReceiver(entry) === parsed.receiver && entryMethodName(entry) === parsed.methodName
+    if (entryReceiver(entry) === parsed.receiver && entryMethodName(entry) === parsed.methodName) return true
+    const ownerLike = parseOwnerLikeReceiverMethod(parsed.receiver, parsed.methodName)
+    if (!ownerLike) return false
+    const resolvedMatch = matchesResolvedOwnerMethodQuery(entry, ownerLike)
+    if (resolvedMatch !== undefined) return resolvedMatch
+    return entryReceiver(entry) === lowerCamel(ownerLike.ownerClass) && entryMethodName(entry) === ownerLike.methodName
   }
   const resolvedMatch = matchesResolvedOwnerMethod(entry, raw)
   if (resolvedMatch !== undefined) return resolvedMatch

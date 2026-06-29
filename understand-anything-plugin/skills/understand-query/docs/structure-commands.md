@@ -2,6 +2,8 @@
 
 Query function signatures, class annotations, parameter types, return types, interface implementations, and source code from the `structural-analysis.json` pre-computed index.
 
+For structural inventory questions, `structure` output is the primary evidence. It is deterministic AST data extracted from source, so returned file paths, line ranges, signatures, annotations, type references, hierarchy, and callgraph entries are sufficient for list/count/signature answers. Read source bodies only when explaining behavior or business logic.
+
 ---
 
 ## `structure` — Code Structure: Signatures, Annotations, Types
@@ -15,6 +17,8 @@ Complements the KG (which has names/summaries but not full type info).
 - "Which classes implement `IOrderService`?" → `structure --interface IOrderService`
 - "Find all definitions of `createOrder` across the codebase" → `structure --symbol createOrder`
 - "Show me the source code of `createOrder`" → `structure --symbol createOrder --source`
+
+Do not use `source --search` as the primary mechanism for these structural inventories; use it only for free-text literals/config/comments or after the specific `structure` query returns no rows.
 
 **Flags (search mode):**
 
@@ -64,14 +68,16 @@ python3 ua_query.py structure --service S --callee queryUserExtend --exact --arg
 python3 ua_query.py structure --service S --caller OrderService#process --exact
 ```
 
+For questions like "who calls X" or "how many places call X", this callgraph output is the primary evidence: it is deterministic AST data extracted from source and includes caller, callee, file path, and line number. Do not use `source --search` to count call sites when `structure --callee --exact` returns rows.
+
 `--callee --exact` supports exact-method matching by:
 - plain method name: `queryUserExtend`
 - receiver + method: `userProfileMoaWrapperService.queryUserExtend`
 - owner-qualified method: `Class#method` or `FQN#method`
 
-For callee queries, `Class#method` / `FQN#method` uses an owner-to-lowerCamel receiver heuristic, so `UserProfileMoaWrapperService#queryUserExtend` searches for receiver-style calls such as `userProfileMoaWrapperService.queryUserExtend`. If that returns no results, fall back to the plain exact method name: `--callee queryUserExtend --exact`.
+For callee queries, `Class#method` / `FQN#method` first matches AST-resolved owner metadata (`calleeOwner` / `calleeQualifiedName`). If owner metadata is absent for a call entry, matching falls back to the owner-to-lowerCamel receiver heuristic, so `UserProfileMoaWrapperService#queryUserExtend` can still match receiver-style calls such as `userProfileMoaWrapperService.queryUserExtend`. If that returns no results, fall back to the plain exact method name: `--callee queryUserExtend --exact`.
 
-`--caller Class#method --exact` depends on `callerQualifiedName` from structured reextract data. Old indexes can only answer method-name exact caller queries, such as `--caller process --exact`.
+`--caller Class#method --exact` depends on `callerQualifiedName` metadata. If that metadata is absent for a call entry, use method-name exact caller queries such as `--caller process --exact`.
 
 `--argc N` filters only by the number of call arguments. It does not parse or match argument types; use it only to triage overloads or same-name calls with different arities.
 

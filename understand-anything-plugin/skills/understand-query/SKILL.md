@@ -13,6 +13,8 @@ Query codebase knowledge through a lightweight CLI (`ua_query.py`) backed by the
 A user question is answered by **one** dispatched `understand-query-worker` agent. That worker owns the entire investigation — layered drill-down, escalation, source verification, and batched reads — and returns one source-cited answer. **All worker behavior is defined in [`agents/understand-query-worker.md`](../../agents/understand-query-worker.md); this file is the orchestration contract plus the CLI reference the worker consults.**
 
 > **Code is the only source of truth.** `wiki` / `domain` / `business` layers are LLM summaries used to *locate* concepts; every factual claim must be corroborated by source the worker actually reads (mandatory `--depth full` / `--source`, cite file + symbol/line range). The binding version of this rule lives in the worker agent — it is noted here so the CLI reference below is read in that light.
+>
+> **Exception for structural inventories:** `structure` results are deterministic AST data extracted from source. For questions asking for call-site counts/lists, annotations, implementors, class hierarchy, type usage, symbol existence, signatures, file paths, or line ranges, those results are sufficient evidence; do not use `source --search` as the primary count/list mechanism.
 
 ---
 
@@ -78,7 +80,7 @@ Where `{skill_base_dir}` is the directory containing this SKILL.md file (the `Ba
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--server URL` | `$UNDERSTAND_SERVER` or auto-detect (localhost → fallback IP) | API server base URL |
+| `--server URL` | `$UNDERSTAND_SERVER` or `http://172.18.228.71:3001` | API server base URL |
 | `--format json\|md` | `json` | Output format |
 | `--verbose` | off | Include extra detail |
 
@@ -193,7 +195,7 @@ python3 ua_query.py ask --query "PK对战,PKBattle" --platform android --depth f
 # Callgraph: who calls queryUserExtend (exact method)
 python3 ua_query.py --format md structure --service ultron-composite --callee "queryUserExtend" --exact
 
-# Callgraph: owner-qualified exact callee; falls back for old indexes if needed
+# Callgraph: owner-qualified exact callee
 python3 ua_query.py --format md structure --service ultron-composite \
   --callee "UserProfileMoaWrapperService#queryUserExtend" --exact
 
@@ -206,11 +208,10 @@ python3 ua_query.py --format md structure --service ultron-composite --caller "g
 ```
 
 For callgraph exact callee search:
-- `--exact --callee FQN#method` first matches AST-resolved `calleeQualifiedName` when the structure index was generated after the AST resolver change.
-- `--exact --callee Class#method` matches resolved `calleeOwner` / qualified owner first, then falls back to the legacy lower-camel receiver heuristic for old indexes.
+- `--exact --callee FQN#method` matches AST-resolved `calleeQualifiedName`.
+- `--exact --callee Class#method` matches resolved `calleeOwner` / qualified owner first, then falls back to lower-camel receiver matching.
 - `--exact --callee methodName` remains useful for quick method-name lookup across all owners.
 - Use `--argc N` with exact callee queries to split overloads by argument count. Same-arity overloads are not separated by this MVP.
-- For existing projects, run `node scripts/daily-update.mjs /path/to/project --mode reextract --force` to regenerate structure indexes with resolved callee metadata. Upper KG/wiki data does not need to be regenerated for callgraph exact matching.
 
 For caller exact search, use a plain method; `Class#method` / `FQN#method` requires structured `callerQualifiedName` data, and caller search has no `receiver.method` semantics.
 
@@ -226,7 +227,7 @@ Each layer is progressively more complete but less semantically rich. Use the up
 | L2. Wiki | `wiki --search "keyword"` | Technical domain docs, service associations | LLM-generated, detailed text |
 | L3. Domain Graph | `domain --service S --search "keyword"` / `--flows` | Flow structure, relationships, step detail | LLM-generated, structured |
 | L4. Source-Level KG | `ask --query "keyword" --depth full` / `trace --source` | Class relationships, summaries, neighbors | LLM-analyzed code symbols |
-| L5a. Structure (symbols) | `structure --service S --q "keyword"` | AST class/method/file names | **Always complete (deterministic)** |
+| L5a. Structure | `structure --service S --q/--symbol/--callee/--annotation/...` | AST class/method/file names, callgraph, annotations, signatures, type usage, hierarchy | **Always complete for structural facts (deterministic)** |
 | L5b. Source Search | `source --service S --search "keyword"` | Full source content (config, comments, literals) | **Always complete, includes config/YAML** |
 | L6. File | `source --service S --file PATH` / `structure --service S --file PATH --source` | Ground-truth source lines | **Ground truth** |
 
@@ -243,7 +244,7 @@ Each layer is progressively more complete but less semantically rich. Use the up
 | Symbol + Source | "Show me the code for createOrder" | `structure --symbol createOrder --source` |
 | Bug Investigation | "API returns wrong data" | `wiki --type endpoint` → `kg --neighbors` → `trace --source` |
 | Impact Analysis | "What will changing X break?" | `impact --symbol X --direction inbound --depth 3` → `callers` / `structure --property-type X` |
-| Call Graph | "Who calls X?" / "What does X call?" | `structure --service S --callee "X" --exact` or `structure --service S --caller "X" --exact` |
+| Call Graph | "Who calls X?" / "How many places call X?" / "What does X call?" | `structure --service S --callee "X" --exact` or `structure --service S --caller "X" --exact`; do not start with `source --search` |
 | Code Hotspots | "What are the most critical classes?" | `hotspots --type class --limit 20` |
 | Test Impact | "Which tests break if I change these files?" | `affected --files path1,path2` |
 | Cross-Platform | "Client/server don't sync" | `business --features` → `business --domain X --type interactions` → `trace` per service |
@@ -314,7 +315,7 @@ None matched → report "Concept not found in any indexed layer of this service"
 
 - **Business/Wiki/Domain** are high-level summaries — intentionally omit details, may miss concepts
 - **KG** is generated by LLM analysis — may have gaps if analysis was incomplete
-- **Structure `--q`** searches AST-parsed symbol names (class, function, annotation names) — deterministic and complete for code symbols
+- **Structure** searches AST-parsed symbol names, callgraph, annotations, signatures, type usage, and hierarchy — deterministic and complete for structural facts
 - **`source --search`** searches actual source content via MiniSearch (AST-boundary chunked) — finds anything in source including config values, comments, and function bodies
 - If `source --search "PK"` returns nothing, the concept genuinely does not exist in that service's codebase
 
@@ -326,6 +327,8 @@ None matched → report "Concept not found in any indexed layer of this service"
 | Know the symbol name or part of it | Looking for a string literal, config value, or comment |
 | Fast metadata-only search | Need full source content search |
 | Example: `--q "PKBattleManager"` | Example: `source --search "timeout" --path "*.yml"` |
+
+For structural inventory questions, prefer the specific `structure` filter over broad `--q`: `--callee`, `--caller`, `--annotation`, `--implementors`, `--param-type`, `--return-type`, `--property-type`, or `--chain`.
 
 ### Cross-Service Infrastructure Search
 
@@ -401,16 +404,16 @@ Agents receiving natural-language questions (Chinese or English) can map directl
 | "Read source file by path" / "按路径读源码" | `source --service S --file PATH [--start N --end M]` | Read source code by path and line range |
 | "Read several files at once" / "一次读多个文件" | `source --service S --file "A.java:1-60,B.java,C.java"` | **Batch — many files in ONE call**, optional per-file line ranges, failed paths isolated → `{files:[…]}` (prefer over one call each) |
 | **Structure & Type Analysis** |||
-| "Who implements interface IX?" / "哪些类实现了IX？" | `structure --service S --implementors IX` | Interface implementation search |
-| "All classes with @X annotation" / "所有@X注解的类" | `structure --service S --annotation X` | Annotation batch search |
-| "Who injects X class?" / "谁注入了X类？" | `structure --service S --property-type X` | Dependency injection analysis |
-| "Inheritance chain of X" / "X的继承链" | `structure --service S --chain X --direction up` | Trace superclass hierarchy |
-| "All subclasses of X" / "X的子类" | `structure --service S --chain X --direction down` | Descendant enumeration |
-| "RPC contract for X?" / "RPC接口的参数和返回值？" | `structure --service S --annotation MoaProvider --path X` | RPC contract inspection |
-| "Which classes use OrderDTO?" / "谁用了OrderDTO？" | `structure --service S --param-type OrderDTO` + `--return-type OrderDTO` | Type usage across codebase |
+| "Who implements interface IX?" / "哪些类实现了IX？" | `structure --service S --implementors IX` | Interface implementation search; structure result is sufficient for the list/count |
+| "All classes with @X annotation" / "所有@X注解的类" | `structure --service S --annotation X` | Annotation batch search; structure result is sufficient for the list/count |
+| "Who injects X class?" / "谁注入了X类？" | `structure --service S --property-type X` | Dependency field/type inventory; structure result is sufficient for the list/count |
+| "Inheritance chain of X" / "X的继承链" | `structure --service S --chain X --direction up` | Trace superclass hierarchy; structure result is sufficient for the hierarchy |
+| "All subclasses of X" / "X的子类" | `structure --service S --chain X --direction down` | Descendant enumeration; structure result is sufficient for the list/count |
+| "RPC contract for X?" / "RPC接口的参数和返回值？" | `structure --service S --annotation MoaProvider --path X` | RPC contract inspection; source read only if behavior/body explanation is required |
+| "Which classes use OrderDTO?" / "谁用了OrderDTO？" | `structure --service S --param-type OrderDTO` + `--return-type OrderDTO` | Type usage inventory; structure result is sufficient for the list/count |
 | **Dependency & Impact** |||
 | "What breaks if I change X?" / "改X会影响什么？" | `impact --service S --symbol X --depth 3 --direction inbound` | Transitive impact analysis |
-| "Who calls X?" / "谁调用了X？" | `structure --service S --callee "X" --exact` → parallel across services | X may be method, `receiver.method`, or `Class#method` / `FQN#method`; resolved owner metadata is used first when available; add `--argc N` only for overload triage |
+| "Who calls X?" / "How many places call X?" / "谁调用了X？" / "有多少地方调用X？" | `structure --service S --callee "X" --exact` → parallel across services | X may be method, `receiver.method`, or `Class#method` / `FQN#method`; resolved owner metadata is used first when available; this is source-derived AST evidence, so do not use `source --search` to count when structure returns rows; add `--argc N` only for overload triage |
 | "What does X call?" / "X调用了谁？" | `structure --service S --caller "X" --exact` | Use a plain method; `Class#method` / `FQN#method` needs structured `callerQualifiedName`; no `receiver.method` semantics |
 | "Which tests for changed files?" / "改了要跑哪些测试？" | `affected --service S --files src/X.java,src/Y.java --depth 2` | Affected test discovery — **batch all changed files in one call** |
 | "Most critical classes?" / "最关键的类？" | `hotspots --service S --type class --limit 20` | Fan-in/fan-out hotspot scoring |
