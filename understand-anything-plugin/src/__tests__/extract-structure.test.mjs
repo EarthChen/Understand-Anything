@@ -203,4 +203,70 @@ public class QuickMessage {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it("preserves resolved Dart call graph metadata in the output JSON", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "ua-extract-structure-"));
+
+    try {
+      const projectRoot = join(tempRoot, "project");
+      mkdirSync(join(projectRoot, "lib"), { recursive: true });
+      writeFileSync(
+        join(projectRoot, "lib", "user_controller.dart"),
+        `class UserApi {
+  Future<String> fetch(String id) async => id;
+}
+
+class UserController {
+  final UserApi api;
+  UserController(this.api);
+
+  void load() {
+    api.fetch("field");
+  }
+}
+`,
+      );
+
+      const inputPath = join(tempRoot, "input.json");
+      const outputPath = join(tempRoot, "output.json");
+      writeFileSync(
+        inputPath,
+        JSON.stringify({
+          projectRoot,
+          fileList: [{
+            path: "lib/user_controller.dart",
+            language: "dart",
+            sizeLines: 12,
+            fileCategory: "code",
+          }],
+          importData: {},
+        }),
+      );
+
+      const scriptPath = join(process.cwd(), "understand-anything-plugin", "skills", "understand", "extract-structure.mjs");
+      const result = spawnSync("node", [scriptPath, inputPath, outputPath], {
+        cwd: process.cwd(),
+        encoding: "utf-8",
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+
+      const output = JSON.parse(readFileSync(outputPath, "utf-8"));
+      const fetchCall = output.results[0].callGraph.find((entry) => entry.callee === "api.fetch");
+
+      expect(fetchCall).toEqual(expect.objectContaining({
+        caller: "load",
+        receiver: "api",
+        methodName: "fetch",
+        argumentCount: 1,
+        receiverType: "UserApi",
+        receiverQualifiedType: "UserApi",
+        calleeOwner: "UserApi",
+        calleeQualifiedName: "UserApi#fetch",
+        resolutionKind: "field",
+      }));
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 });
