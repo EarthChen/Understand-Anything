@@ -839,5 +839,71 @@ void main() {
       tree.delete();
       parser.delete();
     });
+
+    it("resolves constructor parameter receivers", () => {
+      const { tree, parser, root } = parse(`class UserRepo {
+  void save() {}
+}
+
+class C {
+  C(UserRepo repo) {
+    repo.save();
+  }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+
+      const call = result.find((entry) => entry.callee === "repo.save");
+      expect(call).toEqual(
+        expect.objectContaining({
+          caller: "C",
+          callee: "repo.save",
+          callerOwner: "C",
+          callerQualifiedName: "C#C",
+          receiver: "repo",
+          methodName: "save",
+          receiverType: "UserRepo",
+          receiverQualifiedType: "UserRepo",
+          calleeOwner: "UserRepo",
+          calleeQualifiedName: "UserRepo#save",
+          resolutionKind: "parameter",
+        }),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("records named constructor calls as constructor-like entries", () => {
+      const { tree, parser, root } = parse(`class User {
+  User.named();
+}
+
+void main() {
+  User.named();
+}
+`);
+      const result = extractor.extractCallGraph(root);
+
+      const call = result.find((entry) => entry.callText === "User.named()");
+      expect(call).toEqual(
+        expect.objectContaining({
+          caller: "main",
+          callee: "new User.named",
+          methodName: "User.named",
+          receiverType: "User",
+          receiverQualifiedType: "User",
+          calleeOwner: "User",
+          calleeQualifiedName: "User#User.named",
+          resolutionKind: "static",
+        }),
+      );
+      expect(call).not.toEqual(
+        expect.objectContaining({ calleeQualifiedName: "User#named" }),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
   });
 });

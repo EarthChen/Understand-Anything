@@ -344,9 +344,15 @@ interface DartCallInfo {
   isConstructorCall: boolean;
 }
 
+interface DartTypeContext {
+  imports: Map<string, string>;
+  knownTypes: Map<string, string>;
+  namedConstructors: Map<string, Set<string>>;
+}
+
 function extractCallInfoFromExpressionStatement(
   node: TreeSitterNode,
-  typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+  typeContext: DartTypeContext,
 ): DartCallInfo | null {
   const callee = extractCalleeFromExpressionStatement(node);
   if (!callee) return null;
@@ -354,17 +360,25 @@ function extractCallInfoFromExpressionStatement(
   const parts = callee.split(".");
   const methodName = parts[parts.length - 1];
   const receiver = parts.length > 1 ? parts.slice(0, -1).join(".") : undefined;
+  const namedConstructorOwner =
+    receiver && typeContext.namedConstructors.get(receiver)?.has(methodName)
+      ? receiver
+      : undefined;
   const isConstructorCall =
-    !receiver &&
-    /^[A-Z]/.test(methodName) &&
-    (typeContext.knownTypes.has(methodName) || typeContext.imports.has(methodName));
+    namedConstructorOwner !== undefined ||
+    (!receiver &&
+      /^[A-Z]/.test(methodName) &&
+      (typeContext.knownTypes.has(methodName) || typeContext.imports.has(methodName)));
+  const constructorMethodName = namedConstructorOwner
+    ? `${namedConstructorOwner}.${methodName}`
+    : methodName;
   const callText = node.text.replace(/;$/, "");
   const receiverNode = findReceiverNode(node, receiver);
 
   return {
-    callee: isConstructorCall ? `new ${methodName}` : callee,
-    ...(receiver ? { receiver } : {}),
-    methodName,
+    callee: isConstructorCall ? `new ${constructorMethodName}` : callee,
+    ...(receiver && !namedConstructorOwner ? { receiver } : {}),
+    methodName: constructorMethodName,
     argumentCount: extractArgumentCountFromExpressionStatement(node),
     callText,
     ...(receiverNode ? { receiverNode } : {}),
@@ -668,12 +682,10 @@ export class DartExtractor implements LanguageExtractor {
     return findChild(node, "identifier")?.text ?? null;
   }
 
-  private buildTypeContext(rootNode: TreeSitterNode): {
-    imports: Map<string, string>;
-    knownTypes: Map<string, string>;
-  } {
+  private buildTypeContext(rootNode: TreeSitterNode): DartTypeContext {
     const imports = this.extractCallGraphImports(rootNode);
     const knownTypes = new Map<string, string>(imports);
+    const namedConstructors = new Map<string, Set<string>>();
 
     for (let i = 0; i < rootNode.childCount; i++) {
       const child = rootNode.child(i);
@@ -682,10 +694,38 @@ export class DartExtractor implements LanguageExtractor {
       const name = this.extractOwnerName(child);
       if (name) {
         knownTypes.set(name, name);
+        const constructors = this.extractNamedConstructors(child, name);
+        if (constructors.size > 0) {
+          namedConstructors.set(name, constructors);
+        }
       }
     }
 
-    return { imports, knownTypes };
+    return { imports, knownTypes, namedConstructors };
+  }
+
+  private extractNamedConstructors(
+    ownerNode: TreeSitterNode,
+    ownerName: string,
+  ): Set<string> {
+    const constructors = new Set<string>();
+    const body = findChild(ownerNode, "class_body") ?? findChild(ownerNode, "enum_body");
+    if (!body) return constructors;
+
+    for (let i = 0; i < body.childCount; i++) {
+      const child = body.child(i);
+      if (child?.type !== "method_signature" && child?.type !== "declaration") continue;
+
+      const ctorSig = findChild(child, "constructor_signature");
+      if (!ctorSig) continue;
+
+      const identifiers = findChildren(ctorSig, "identifier");
+      if (identifiers.length >= 2 && identifiers[0].text === ownerName) {
+        constructors.add(identifiers[1].text);
+      }
+    }
+
+    return constructors;
   }
 
   private extractCallGraphImports(rootNode: TreeSitterNode): Map<string, string> {
@@ -714,7 +754,7 @@ export class DartExtractor implements LanguageExtractor {
   private bindClassFields(
     ownerNode: TreeSitterNode,
     typeScopes: TypeScopeStack,
-    typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+    typeContext: DartTypeContext,
   ): Map<string, TypeBinding> {
     const fields = new Map<string, TypeBinding>();
     const body =
@@ -741,7 +781,7 @@ export class DartExtractor implements LanguageExtractor {
   private bindFunctionParameters(
     body: TreeSitterNode,
     typeScopes: TypeScopeStack,
-    typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+    typeContext: DartTypeContext,
   ): void {
     const signature = this.extractSignatureFromBody(body);
     const paramsNode = signature ? findChild(signature, "formal_parameter_list") : null;
@@ -753,7 +793,7 @@ export class DartExtractor implements LanguageExtractor {
   private bindLocalVariables(
     node: TreeSitterNode,
     typeScopes: TypeScopeStack,
-    typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+    typeContext: DartTypeContext,
   ): void {
     const definition = findChild(node, "initialized_variable_definition");
     if (!definition) return;
@@ -804,7 +844,7 @@ export class DartExtractor implements LanguageExtractor {
   private buildTypeBinding(
     type: string,
     kind: TypeBinding["kind"],
-    typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+    typeContext: DartTypeContext,
   ): TypeBinding {
     return {
       type: simpleTypeName(type),
@@ -818,11 +858,11 @@ export class DartExtractor implements LanguageExtractor {
     callerOwner: string | undefined,
     typeScopes: TypeScopeStack,
     fieldScopes: Array<Map<string, TypeBinding>>,
-    typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+    typeContext: DartTypeContext,
   ): Partial<CallGraphEntry> {
     if (callInfo.isConstructorCall) {
-      const receiverType = simpleTypeName(callInfo.methodName);
-      const qualifiedType = qualifyTypeName(callInfo.methodName, typeContext);
+      const receiverType = simpleTypeName(callInfo.methodName.split(".")[0]);
+      const qualifiedType = qualifyTypeName(receiverType, typeContext);
       return {
         receiverType,
         ...(qualifiedType ? { receiverQualifiedType: qualifiedType } : {}),
@@ -862,7 +902,7 @@ export class DartExtractor implements LanguageExtractor {
     receiverNode: TreeSitterNode | undefined,
     typeScopes: TypeScopeStack,
     fieldScopes: Array<Map<string, TypeBinding>>,
-    typeContext: { imports: Map<string, string>; knownTypes: Map<string, string> },
+    typeContext: DartTypeContext,
   ): Partial<CallGraphEntry> {
     if (receiver.startsWith("this.")) {
       const fieldName = receiver.slice("this.".length).split(".")[0];
@@ -926,7 +966,8 @@ export class DartExtractor implements LanguageExtractor {
             findChild(sibling, "function_signature") ??
             findChild(sibling, "getter_signature") ??
             findChild(sibling, "setter_signature") ??
-            findChild(sibling, "factory_constructor_signature")
+            findChild(sibling, "factory_constructor_signature") ??
+            findChild(sibling, "constructor_signature")
           );
         }
         if (sibling.type === "function_signature" || sibling.type === "constructor_signature") {
