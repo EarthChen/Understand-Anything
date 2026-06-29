@@ -494,5 +494,157 @@ class User {}
       tree.delete();
       parser.delete();
     });
+
+    it("resolves Dart field, this.field, parameter, local, static, and implicit owner calls", () => {
+      const { tree, parser, root } = parse(`class UserApi {
+  Future<String> fetch(String id) async => id;
+  static void warmup() {}
+}
+
+class UserRepo {
+  void save() {}
+}
+class UserController {
+  final UserApi api;
+  UserController(this.api);
+
+  void load(UserRepo repo) {
+    final UserApi localApi = UserApi();
+    api.fetch("field");
+    this.api.fetch("this-field");
+    repo.save();
+    localApi.fetch("local");
+    UserApi.warmup();
+    notify();
+  }
+
+  void notify() {}
+}
+`);
+      const result = extractor.extractCallGraph(root);
+
+      const fieldCall = result.find((entry) => entry.callee === "api.fetch");
+      expect(fieldCall).toEqual(
+        expect.objectContaining({
+          caller: "load",
+          callee: "api.fetch",
+          lineNumber: 15,
+          columnNumber: 5,
+          receiver: "api",
+          methodName: "fetch",
+          argumentCount: 1,
+          callText: 'api.fetch("field")',
+          callerOwner: "UserController",
+          callerQualifiedName: "UserController#load",
+          receiverType: "UserApi",
+          receiverQualifiedType: "UserApi",
+          calleeOwner: "UserApi",
+          calleeQualifiedName: "UserApi#fetch",
+          resolutionKind: "field",
+        }),
+      );
+
+      const thisFieldCall = result.find((entry) => entry.callee === "this.api.fetch");
+      expect(thisFieldCall).toEqual(
+        expect.objectContaining({
+          receiver: "this.api",
+          methodName: "fetch",
+          receiverType: "UserApi",
+          receiverQualifiedType: "UserApi",
+          calleeOwner: "UserApi",
+          calleeQualifiedName: "UserApi#fetch",
+          resolutionKind: "field",
+        }),
+      );
+
+      const parameterCall = result.find((entry) => entry.callee === "repo.save");
+      expect(parameterCall).toEqual(
+        expect.objectContaining({
+          receiver: "repo",
+          methodName: "save",
+          receiverType: "UserRepo",
+          receiverQualifiedType: "UserRepo",
+          calleeOwner: "UserRepo",
+          calleeQualifiedName: "UserRepo#save",
+          resolutionKind: "parameter",
+        }),
+      );
+
+      const localCall = result.find((entry) => entry.callee === "localApi.fetch");
+      expect(localCall).toEqual(
+        expect.objectContaining({
+          receiver: "localApi",
+          methodName: "fetch",
+          receiverType: "UserApi",
+          receiverQualifiedType: "UserApi",
+          calleeOwner: "UserApi",
+          calleeQualifiedName: "UserApi#fetch",
+          resolutionKind: "local",
+        }),
+      );
+
+      const staticCall = result.find((entry) => entry.callee === "UserApi.warmup");
+      expect(staticCall).toEqual(
+        expect.objectContaining({
+          receiver: "UserApi",
+          methodName: "warmup",
+          receiverType: "UserApi",
+          receiverQualifiedType: "UserApi",
+          calleeOwner: "UserApi",
+          calleeQualifiedName: "UserApi#warmup",
+          resolutionKind: "static",
+        }),
+      );
+
+      const implicitOwnerCall = result.find((entry) => entry.callee === "notify");
+      expect(implicitOwnerCall).toEqual(
+        expect.objectContaining({
+          callerOwner: "UserController",
+          callerQualifiedName: "UserController#load",
+          methodName: "notify",
+          calleeOwner: "UserController",
+          calleeQualifiedName: "UserController#notify",
+          resolutionKind: "implicit-owner",
+        }),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
+
+    it("records constructor-like Dart calls with argument counts", () => {
+      const { tree, parser, root } = parse(`class User {}
+
+class UserFactory {
+  void create() {
+    User();
+  }
+}
+`);
+      const result = extractor.extractCallGraph(root);
+
+      const constructorCall = result.find((entry) => entry.callText === "User()");
+      expect(constructorCall).toEqual(
+        expect.objectContaining({
+          caller: "create",
+          callee: "new User",
+          lineNumber: 5,
+          columnNumber: 5,
+          methodName: "User",
+          argumentCount: 0,
+          callText: "User()",
+          callerOwner: "UserFactory",
+          callerQualifiedName: "UserFactory#create",
+          receiverType: "User",
+          receiverQualifiedType: "User",
+          calleeOwner: "User",
+          calleeQualifiedName: "User#User",
+          resolutionKind: "static",
+        }),
+      );
+
+      tree.delete();
+      parser.delete();
+    });
   });
 });
