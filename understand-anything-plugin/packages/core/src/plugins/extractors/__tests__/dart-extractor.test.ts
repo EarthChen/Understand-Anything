@@ -504,6 +504,7 @@ class User {}
 class UserRepo {
   void save() {}
 }
+
 class UserController {
   final UserApi api;
   UserController(this.api);
@@ -528,7 +529,7 @@ class UserController {
         expect.objectContaining({
           caller: "load",
           callee: "api.fetch",
-          lineNumber: 15,
+          lineNumber: 16,
           columnNumber: 5,
           receiver: "api",
           methodName: "fetch",
